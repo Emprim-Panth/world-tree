@@ -13,12 +13,17 @@ struct SettingsView: View {
                     Label("General", systemImage: "gear")
                 }
 
+            apiTab
+                .tabItem {
+                    Label("API", systemImage: "bolt.fill")
+                }
+
             connectionTab
                 .tabItem {
                     Label("Connection", systemImage: "network")
                 }
         }
-        .frame(width: 450, height: 300)
+        .frame(width: 480, height: 350)
     }
 
     // MARK: - General
@@ -35,6 +40,58 @@ struct SettingsView: View {
 
             Section("Context") {
                 Stepper("Messages on fork: \(contextDepth)", value: $contextDepth, in: 3...50)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    // MARK: - API
+
+    private var apiTab: some View {
+        Form {
+            Section("Anthropic API") {
+                let hasKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil
+
+                Label(
+                    hasKey ? "API key found in environment" : "No ANTHROPIC_API_KEY in environment",
+                    systemImage: hasKey ? "checkmark.circle.fill" : "xmark.circle"
+                )
+                .foregroundStyle(hasKey ? .green : .orange)
+
+                if hasKey {
+                    Text("Direct API mode active — tools execute locally with managed context.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Set ANTHROPIC_API_KEY in your shell profile to enable direct API mode.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("Falling back to Claude CLI (no tool persistence between messages).")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+
+            Section("Mode") {
+                let hasKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil
+
+                HStack {
+                    Image(systemName: hasKey ? "bolt.fill" : "terminal")
+                        .foregroundStyle(hasKey ? .blue : .secondary)
+                    VStack(alignment: .leading) {
+                        Text(hasKey ? "Direct API" : "CLI Fallback")
+                            .fontWeight(.medium)
+                        Text(hasKey
+                            ? "Persistent tools, prompt caching, managed context"
+                            : "Spawns claude CLI per message, no tool persistence"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
             }
         }
         .formStyle(.grouped)

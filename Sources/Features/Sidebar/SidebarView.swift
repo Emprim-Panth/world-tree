@@ -6,7 +6,8 @@ struct SidebarView: View {
     @State private var showNewTreeSheet = false
     @State private var newTreeName = ""
     @State private var newTreeProject = ""
-    @State private var newTreeWorkingDir = ""
+    private static let defaultWorkingDir = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Development"
+    @State private var newTreeWorkingDir = SidebarView.defaultWorkingDir
 
     var body: some View {
         VStack(spacing: 0) {
@@ -129,12 +130,15 @@ struct SidebarView: View {
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: newTreeProject) { _, newValue in
                     // Auto-fill working directory from project name
-                    if !newValue.isEmpty && newTreeWorkingDir.isEmpty {
+                    // Only override if still at default (user hasn't manually changed it)
+                    if !newValue.isEmpty {
                         let home = FileManager.default.homeDirectoryForCurrentUser.path
                         let candidate = "\(home)/Development/\(newValue)"
                         if FileManager.default.fileExists(atPath: candidate) {
                             newTreeWorkingDir = candidate
                         }
+                    } else {
+                        newTreeWorkingDir = Self.defaultWorkingDir
                     }
                 }
 
@@ -160,7 +164,7 @@ struct SidebarView: View {
                     showNewTreeSheet = false
                     newTreeName = ""
                     newTreeProject = ""
-                    newTreeWorkingDir = ""
+                    newTreeWorkingDir = Self.defaultWorkingDir
                 }
                 .keyboardShortcut(.cancelAction)
 
@@ -168,12 +172,11 @@ struct SidebarView: View {
 
                 Button("Create") {
                     let project = newTreeProject.isEmpty ? nil : newTreeProject
-                    let cwd = newTreeWorkingDir.isEmpty ? nil : newTreeWorkingDir
-                    viewModel.createTree(name: newTreeName, project: project, workingDirectory: cwd)
+                    viewModel.createTree(name: newTreeName, project: project, workingDirectory: newTreeWorkingDir)
                     showNewTreeSheet = false
                     newTreeName = ""
                     newTreeProject = ""
-                    newTreeWorkingDir = ""
+                    newTreeWorkingDir = Self.defaultWorkingDir
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(newTreeName.isEmpty)

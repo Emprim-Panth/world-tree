@@ -10,6 +10,7 @@ struct ForkMenu: View {
     @State private var title: String = ""
     @State private var selectedModel: String = CortanaConstants.defaultModel
     @State private var implementationNote: String = ""
+    @State private var workingDirectory: String = ""
     @State private var isCreating: Bool = false
     @State private var error: String?
 
@@ -97,6 +98,32 @@ struct ForkMenu: View {
                 }
             }
 
+            // Working directory override — for branching into a different project
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Working directory")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                HStack {
+                    TextField("Inherit from tree", text: $workingDirectory)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.callout)
+                    Button("Browse") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseDirectories = true
+                        panel.canChooseFiles = false
+                        panel.allowsMultipleSelection = false
+                        panel.directoryURL = URL(fileURLWithPath: "\(FileManager.default.homeDirectoryForCurrentUser.path)/Development")
+                        if panel.runModal() == .OK, let url = panel.url {
+                            workingDirectory = url.path
+                        }
+                    }
+                    .controlSize(.small)
+                }
+                Text("Leave empty to inherit from parent tree")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
             if let error {
                 Text(error)
                     .font(.caption)
@@ -146,7 +173,9 @@ struct ForkMenu: View {
 
             let branchTitle = title.isEmpty ? nil : title
 
-            // Create the branch
+            // Create the branch — pass explicit cwd if user overrode it
+            let branchCwd = workingDirectory.isEmpty ? nil : workingDirectory
+
             let newBranch = try TreeStore.shared.createBranch(
                 treeId: parentBranch.treeId,
                 parentBranch: parentBranch.id,
@@ -155,7 +184,7 @@ struct ForkMenu: View {
                 title: branchTitle,
                 model: selectedModel,
                 contextSnapshot: context,
-                workingDirectory: nil // Inherit from tree
+                workingDirectory: branchCwd
             )
 
             onCreated(newBranch.id)

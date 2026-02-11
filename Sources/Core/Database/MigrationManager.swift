@@ -64,6 +64,36 @@ enum MigrationManager {
                 """)
         }
 
+        // Migration 2: API conversation state + token tracking
+        migrator.registerMigration("v2_api_state") { db in
+            // Serialized API conversation state per session
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_api_state (
+                    session_id TEXT PRIMARY KEY,
+                    api_messages TEXT NOT NULL,
+                    system_prompt TEXT NOT NULL,
+                    token_usage TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+
+            // Per-turn token usage tracking
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_token_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    branch_id TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL DEFAULT 0,
+                    output_tokens INTEGER NOT NULL DEFAULT 0,
+                    cache_hit_tokens INTEGER NOT NULL DEFAULT 0,
+                    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_token_usage_session ON canvas_token_usage(session_id)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_token_usage_date ON canvas_token_usage(recorded_at)")
+        }
+
         try migrator.migrate(dbPool)
     }
 }

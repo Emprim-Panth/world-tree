@@ -9,6 +9,8 @@ final class BranchViewModel: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var isResponding: Bool = false
     @Published var streamingResponse: String = ""
+    @Published var toolActivities: [ToolActivity] = []
+    @Published var tokenUsage: SessionTokenUsage?
     @Published var error: String?
 
     private let branchId: String
@@ -70,13 +72,11 @@ final class BranchViewModel: ObservableObject {
         inputText = ""
 
         do {
-            // Insert user message
             _ = try MessageStore.shared.sendMessage(
                 sessionId: sessionId,
                 role: .user,
                 content: content
             )
-            // Update tree timestamp
             if let treeId = branch?.treeId {
                 try TreeStore.shared.updateTreeTimestamp(treeId)
             }
@@ -86,38 +86,68 @@ final class BranchViewModel: ObservableObject {
             return
         }
 
-        // Trigger Claude response
         requestResponse(for: content, sessionId: sessionId)
     }
 
-    /// Spawn claude CLI and stream the response back
+    /// Send message via direct API with tool execution, or CLI fallback.
     private func requestResponse(for message: String, sessionId: String) {
         isResponding = true
         streamingResponse = ""
+        toolActivities = []
 
-        let bridge = ClaudeBridge()
-        self.claudeBridge = bridge
+        // Persist bridge across messages for API state continuity
+        if claudeBridge == nil {
+            claudeBridge = ClaudeBridge()
+        }
+        let bridge = claudeBridge!
 
-        // Get tree context for project awareness and cwd
         let tree = try? TreeStore.shared.getTree(branch?.treeId ?? "")
+        let branchCwd: String? = {
+            guard let sid = branch?.sessionId else { return nil }
+            return try? MessageStore.shared.getSessionWorkingDirectory(sessionId: sid)
+        }()
 
         responseTask = Task {
             var accumulated = ""
 
             let stream = bridge.send(
                 message: message,
-                conversationHistory: messages,
+                sessionId: sessionId,
+                branchId: branchId,
                 model: branch?.model,
-                workingDirectory: tree?.workingDirectory,
+                workingDirectory: branchCwd ?? tree?.workingDirectory,
                 project: tree?.project
             )
 
-            for await chunk in stream {
-                accumulated += chunk
-                streamingResponse = accumulated
+            for await event in stream {
+                switch event {
+                case .text(let chunk):
+                    accumulated += chunk
+                    streamingResponse = accumulated
+
+                case .toolStart(let name, let input):
+                    let activity = ToolActivity(
+                        name: name,
+                        input: input,
+                        status: .running
+                    )
+                    toolActivities.append(activity)
+
+                case .toolEnd(let name, let result, let isError):
+                    if let idx = toolActivities.lastIndex(where: { $0.name == name && $0.status == .running }) {
+                        toolActivities[idx].status = isError ? .failed : .completed
+                        toolActivities[idx].output = String(result.prefix(200))
+                    }
+
+                case .done(let usage):
+                    tokenUsage = usage
+
+                case .error(let msg):
+                    self.error = msg
+                }
             }
 
-            // Stream complete — save the full response as an assistant message
+            // Save final text response as assistant message
             let finalResponse = accumulated.trimmingCharacters(in: .whitespacesAndNewlines)
             if !finalResponse.isEmpty {
                 do {
@@ -133,7 +163,7 @@ final class BranchViewModel: ObservableObject {
 
             streamingResponse = ""
             isResponding = false
-            claudeBridge = nil
+            toolActivities = []
         }
     }
 
@@ -142,12 +172,14 @@ final class BranchViewModel: ObservableObject {
         responseTask?.cancel()
         isResponding = false
         streamingResponse = ""
-        claudeBridge = nil
+        toolActivities = []
     }
 
     func stopObserving() {
         observation?.cancel()
         observation = nil
         cancelResponse()
+        // Persist bridge state before stopping
+        claudeBridge = nil
     }
 }

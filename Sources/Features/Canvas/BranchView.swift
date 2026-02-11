@@ -128,11 +128,41 @@ struct BranchView: View {
                     ProgressView()
                         .controlSize(.mini)
                 }
-                Text(viewModel.streamingResponse)
-                    .textSelection(.enabled)
-                    .padding(10)
-                    .background(Color.primary.opacity(0.08))
-                    .cornerRadius(12)
+
+                // Tool activity indicators
+                if !viewModel.toolActivities.isEmpty {
+                    ForEach(viewModel.toolActivities) { activity in
+                        HStack(spacing: 6) {
+                            switch activity.status {
+                            case .running:
+                                ProgressView()
+                                    .controlSize(.mini)
+                            case .completed:
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                    .font(.caption2)
+                            case .failed:
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.red)
+                                    .font(.caption2)
+                            }
+                            Text(activity.displayDescription)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 2)
+                    }
+                }
+
+                // Streaming text
+                if !viewModel.streamingResponse.isEmpty {
+                    Text(viewModel.streamingResponse)
+                        .textSelection(.enabled)
+                        .padding(10)
+                        .background(Color.primary.opacity(0.08))
+                        .cornerRadius(12)
+                }
             }
             .frame(maxWidth: 600, alignment: .leading)
             Spacer(minLength: 80)

@@ -97,6 +97,17 @@ final class MessageStore {
         }
     }
 
+    /// Get the working directory for a session
+    func getSessionWorkingDirectory(sessionId: String) throws -> String? {
+        try db.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT working_directory FROM sessions WHERE id = ?",
+                arguments: [sessionId]
+            )
+        }
+    }
+
     /// Get the summary for a session (from existing summaries table)
     func getSessionSummary(sessionId: String) throws -> String? {
         try db.read { db in
