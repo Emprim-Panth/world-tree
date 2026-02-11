@@ -21,11 +21,46 @@ final class ClaudeBridge {
     private let maxToolLoopIterations = 25
 
     init() {
-        if let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] {
+        if let key = Self.resolveAPIKey() {
             self.apiClient = AnthropicClient(apiKey: key)
         } else {
             self.apiClient = nil
         }
+    }
+
+    /// Resolve API key from environment, launchctl, or ~/.anthropic file
+    private static func resolveAPIKey() -> String? {
+        // 1. Direct environment variable
+        if let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !key.isEmpty {
+            return key
+        }
+
+        // 2. launchctl getenv (macOS GUI apps don't inherit shell env)
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        proc.arguments = ["getenv", "ANTHROPIC_API_KEY"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        if let _ = try? proc.run() {
+            proc.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let key = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !key.isEmpty {
+                return key
+            }
+        }
+
+        // 3. File-based fallback (~/.anthropic/api_key)
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let keyFile = "\(home)/.anthropic/api_key"
+        if let key = try? String(contentsOfFile: keyFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !key.isEmpty {
+            return key
+        }
+
+        return nil
     }
 
     var isRunning: Bool { currentTask != nil && !isCancelled }
