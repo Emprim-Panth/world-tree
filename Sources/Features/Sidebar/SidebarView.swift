@@ -6,6 +6,7 @@ struct SidebarView: View {
     @State private var showNewTreeSheet = false
     @State private var newTreeName = ""
     @State private var newTreeProject = ""
+    @State private var newTreeWorkingDir = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -126,12 +127,40 @@ struct SidebarView: View {
 
             TextField("Project (optional)", text: $newTreeProject)
                 .textFieldStyle(.roundedBorder)
+                .onChange(of: newTreeProject) { _, newValue in
+                    // Auto-fill working directory from project name
+                    if !newValue.isEmpty && newTreeWorkingDir.isEmpty {
+                        let home = FileManager.default.homeDirectoryForCurrentUser.path
+                        let candidate = "\(home)/Development/\(newValue)"
+                        if FileManager.default.fileExists(atPath: candidate) {
+                            newTreeWorkingDir = candidate
+                        }
+                    }
+                }
+
+            HStack {
+                TextField("Working directory", text: $newTreeWorkingDir)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.callout)
+                Button("Browse") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true
+                    panel.canChooseFiles = false
+                    panel.allowsMultipleSelection = false
+                    panel.directoryURL = URL(fileURLWithPath: "\(FileManager.default.homeDirectoryForCurrentUser.path)/Development")
+                    if panel.runModal() == .OK, let url = panel.url {
+                        newTreeWorkingDir = url.path
+                    }
+                }
+                .controlSize(.small)
+            }
 
             HStack {
                 Button("Cancel") {
                     showNewTreeSheet = false
                     newTreeName = ""
                     newTreeProject = ""
+                    newTreeWorkingDir = ""
                 }
                 .keyboardShortcut(.cancelAction)
 
@@ -139,16 +168,18 @@ struct SidebarView: View {
 
                 Button("Create") {
                     let project = newTreeProject.isEmpty ? nil : newTreeProject
-                    viewModel.createTree(name: newTreeName, project: project)
+                    let cwd = newTreeWorkingDir.isEmpty ? nil : newTreeWorkingDir
+                    viewModel.createTree(name: newTreeName, project: project, workingDirectory: cwd)
                     showNewTreeSheet = false
                     newTreeName = ""
                     newTreeProject = ""
+                    newTreeWorkingDir = ""
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(newTreeName.isEmpty)
             }
         }
         .padding(20)
-        .frame(width: 350)
+        .frame(width: 420)
     }
 }

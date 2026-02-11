@@ -69,15 +69,20 @@ final class SidebarViewModel: ObservableObject {
         })
     }
 
-    func createTree(name: String, project: String? = nil) {
+    func createTree(name: String, project: String? = nil, workingDirectory: String? = nil) {
         do {
-            let tree = try TreeStore.shared.createTree(name: name, project: project)
+            let tree = try TreeStore.shared.createTree(
+                name: name,
+                project: project,
+                workingDirectory: workingDirectory
+            )
 
             // Auto-create root branch
             let branch = try TreeStore.shared.createBranch(
                 treeId: tree.id,
                 type: .conversation,
-                title: "Main"
+                title: "Main",
+                workingDirectory: workingDirectory
             )
 
             AppState.shared.selectBranch(branch.id, in: tree.id)

@@ -98,8 +98,8 @@ final class BranchViewModel: ObservableObject {
         let bridge = ClaudeBridge()
         self.claudeBridge = bridge
 
-        // Get working directory from tree
-        let cwd = (try? TreeStore.shared.getTree(branch?.treeId ?? ""))?.workingDirectory
+        // Get tree context for project awareness and cwd
+        let tree = try? TreeStore.shared.getTree(branch?.treeId ?? "")
 
         responseTask = Task {
             var accumulated = ""
@@ -108,7 +108,8 @@ final class BranchViewModel: ObservableObject {
                 message: message,
                 conversationHistory: messages,
                 model: branch?.model,
-                workingDirectory: cwd
+                workingDirectory: tree?.workingDirectory,
+                project: tree?.project
             )
 
             for await chunk in stream {

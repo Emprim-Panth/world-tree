@@ -177,9 +177,7 @@ struct BranchView: View {
                     .textFieldStyle(.plain)
                     .lineLimit(1...8)
                     .onSubmit {
-                        if NSEvent.modifierFlags.contains(.command) {
-                            viewModel.sendMessage()
-                        }
+                        viewModel.sendMessage()
                     }
 
                 Button {
@@ -191,7 +189,6 @@ struct BranchView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .keyboardShortcut(.return, modifiers: .command)
             }
         }
         .padding(12)
