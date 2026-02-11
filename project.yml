@@ -1,0 +1,38 @@
+name: CortanaCanvas
+options:
+  bundleIdPrefix: com.heiloprojects
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGNING_ALLOWED: "YES"
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift.git
+    from: 6.24.0
+
+targets:
+  CortanaCanvas:
+    type: application
+    platform: macOS
+    sources:
+      - Sources
+    resources:
+      - path: Resources
+        buildPhase: resources
+    dependencies:
+      - package: GRDB
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.heiloprojects.cortana-canvas
+        PRODUCT_NAME: "Cortana Canvas"
+        GENERATE_INFOPLIST_FILE: true
+        INFOPLIST_KEY_LSUIElement: false

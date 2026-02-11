@@ -1,0 +1,100 @@
+import Foundation
+import GRDB
+
+@MainActor
+final class SidebarViewModel: ObservableObject {
+    @Published var trees: [ConversationTree] = []
+    @Published var searchText: String = ""
+    @Published var isLoading: Bool = false
+    @Published var error: String?
+
+    private var observation: AnyDatabaseCancellable?
+
+    var filteredTrees: [ConversationTree] {
+        guard !searchText.isEmpty else { return trees }
+        let query = searchText.lowercased()
+        return trees.filter {
+            $0.name.lowercased().contains(query) ||
+            ($0.project?.lowercased().contains(query) ?? false)
+        }
+    }
+
+    /// Group trees by project for sidebar sections
+    var groupedTrees: [(project: String, trees: [ConversationTree])] {
+        let grouped = Dictionary(grouping: filteredTrees) { $0.project ?? "General" }
+        return grouped.sorted { $0.key < $1.key }
+            .map { (project: $0.key, trees: $0.value) }
+    }
+
+    func loadTrees() {
+        isLoading = true
+        do {
+            trees = try TreeStore.shared.listTrees()
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    func startObserving() {
+        guard let dbPool = DatabaseManager.shared.dbPool else { return }
+
+        // GRDB ValueObservation: auto-refreshes when canvas_trees changes
+        let observation = ValueObservation.tracking { db -> [ConversationTree] in
+            let sql = """
+                SELECT t.*,
+                    (SELECT COUNT(*) FROM canvas_branches b
+                     JOIN messages m ON m.session_id = b.session_id
+                     WHERE b.tree_id = t.id) as message_count
+                FROM canvas_trees t
+                WHERE t.archived = 0
+                ORDER BY t.updated_at DESC
+                """
+            return try Row.fetchAll(db, sql: sql).map { row in
+                var tree = ConversationTree(row: row)
+                tree.messageCount = row["message_count"] ?? 0
+                return tree
+            }
+        }
+
+        self.observation = observation.start(in: dbPool, onError: { error in
+            Task { @MainActor in
+                self.error = error.localizedDescription
+            }
+        }, onChange: { [weak self] trees in
+            Task { @MainActor in
+                self?.trees = trees
+            }
+        })
+    }
+
+    func createTree(name: String, project: String? = nil) {
+        do {
+            let tree = try TreeStore.shared.createTree(name: name, project: project)
+
+            // Auto-create root branch
+            let branch = try TreeStore.shared.createBranch(
+                treeId: tree.id,
+                type: .conversation,
+                title: "Main"
+            )
+
+            AppState.shared.selectBranch(branch.id, in: tree.id)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func archiveTree(_ id: String) {
+        do {
+            try TreeStore.shared.archiveTree(id)
+            if AppState.shared.selectedTreeId == id {
+                AppState.shared.selectedTreeId = nil
+                AppState.shared.selectedBranchId = nil
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
