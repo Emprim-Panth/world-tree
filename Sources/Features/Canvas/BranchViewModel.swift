@@ -7,10 +7,14 @@ final class BranchViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var inputText: String = ""
     @Published var isLoading: Bool = false
+    @Published var isResponding: Bool = false
+    @Published var streamingResponse: String = ""
     @Published var error: String?
 
     private let branchId: String
     private var observation: AnyDatabaseCancellable?
+    private var claudeBridge: ClaudeBridge?
+    private var responseTask: Task<Void, Never>?
 
     init(branchId: String) {
         self.branchId = branchId
@@ -61,10 +65,12 @@ final class BranchViewModel: ObservableObject {
     func sendMessage() {
         let content = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !content.isEmpty, let sessionId = branch?.sessionId else { return }
+        guard !isResponding else { return }
 
         inputText = ""
 
         do {
+            // Insert user message
             _ = try MessageStore.shared.sendMessage(
                 sessionId: sessionId,
                 role: .user,
@@ -76,12 +82,71 @@ final class BranchViewModel: ObservableObject {
             }
         } catch {
             self.error = error.localizedDescription
-            inputText = content // Restore on failure
+            inputText = content
+            return
         }
+
+        // Trigger Claude response
+        requestResponse(for: content, sessionId: sessionId)
+    }
+
+    /// Spawn claude CLI and stream the response back
+    private func requestResponse(for message: String, sessionId: String) {
+        isResponding = true
+        streamingResponse = ""
+
+        let bridge = ClaudeBridge()
+        self.claudeBridge = bridge
+
+        // Get working directory from tree
+        let cwd = (try? TreeStore.shared.getTree(branch?.treeId ?? ""))?.workingDirectory
+
+        responseTask = Task {
+            var accumulated = ""
+
+            let stream = bridge.send(
+                message: message,
+                conversationHistory: messages,
+                model: branch?.model,
+                workingDirectory: cwd
+            )
+
+            for await chunk in stream {
+                accumulated += chunk
+                streamingResponse = accumulated
+            }
+
+            // Stream complete — save the full response as an assistant message
+            let finalResponse = accumulated.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !finalResponse.isEmpty {
+                do {
+                    _ = try MessageStore.shared.sendMessage(
+                        sessionId: sessionId,
+                        role: .assistant,
+                        content: finalResponse
+                    )
+                } catch {
+                    self.error = error.localizedDescription
+                }
+            }
+
+            streamingResponse = ""
+            isResponding = false
+            claudeBridge = nil
+        }
+    }
+
+    func cancelResponse() {
+        claudeBridge?.cancel()
+        responseTask?.cancel()
+        isResponding = false
+        streamingResponse = ""
+        claudeBridge = nil
     }
 
     func stopObserving() {
         observation?.cancel()
         observation = nil
+        cancelResponse()
     }
 }

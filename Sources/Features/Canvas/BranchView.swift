@@ -47,15 +47,20 @@ struct BranchView: View {
                             }
                             .id(message.id)
                         }
+
+                        // Streaming response
+                        if viewModel.isResponding && !viewModel.streamingResponse.isEmpty {
+                            streamingResponseView
+                                .id("streaming")
+                        }
                     }
                     .padding(.vertical, 12)
                 }
                 .onChange(of: viewModel.messages.count) { _, _ in
-                    if let lastId = viewModel.messages.last?.id {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(lastId, anchor: .bottom)
-                        }
-                    }
+                    scrollToBottom(proxy: proxy)
+                }
+                .onChange(of: viewModel.streamingResponse) { _, _ in
+                    scrollToBottom(proxy: proxy)
                 }
             }
 
@@ -108,29 +113,86 @@ struct BranchView: View {
         }
     }
 
+    // MARK: - Streaming Response
+
+    private var streamingResponseView: some View {
+        HStack(alignment: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    Image(systemName: "diamond.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.cyan)
+                    Text("Cortana")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ProgressView()
+                        .controlSize(.mini)
+                }
+                Text(viewModel.streamingResponse)
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .background(Color.primary.opacity(0.08))
+                    .cornerRadius(12)
+            }
+            .frame(maxWidth: 600, alignment: .leading)
+            Spacer(minLength: 80)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
+    }
+
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        if viewModel.isResponding {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo("streaming", anchor: .bottom)
+            }
+        } else if let lastId = viewModel.messages.last?.id {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(lastId, anchor: .bottom)
+            }
+        }
+    }
+
     // MARK: - Input Bar
 
     private var inputBar: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField("Message Cortana...", text: $viewModel.inputText, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...8)
-                .onSubmit {
-                    if NSEvent.modifierFlags.contains(.command) {
-                        viewModel.sendMessage()
-                    }
+            if viewModel.isResponding {
+                // Show cancel button while Cortana is responding
+                Button {
+                    viewModel.cancelResponse()
+                } label: {
+                    Label("Stop", systemImage: "stop.circle.fill")
+                        .foregroundStyle(.red)
                 }
+                .buttonStyle(.plain)
+                Spacer()
+                ProgressView()
+                    .controlSize(.small)
+                Text("Cortana is thinking...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                TextField("Message Cortana...", text: $viewModel.inputText, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...8)
+                    .onSubmit {
+                        if NSEvent.modifierFlags.contains(.command) {
+                            viewModel.sendMessage()
+                        }
+                    }
 
-            Button {
-                viewModel.sendMessage()
-            } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(.blue)
+                Button {
+                    viewModel.sendMessage()
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .keyboardShortcut(.return, modifiers: .command)
             }
-            .buttonStyle(.plain)
-            .disabled(viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .keyboardShortcut(.return, modifiers: .command)
         }
         .padding(12)
     }
