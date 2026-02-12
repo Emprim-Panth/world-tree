@@ -141,6 +141,13 @@ struct BranchView: View {
                                 .padding(.top, 4)
                         }
 
+                        // Observability panels (collapsed by default)
+                        if !viewModel.toolTimelineEvents.isEmpty {
+                            observabilityPanels
+                                .padding(.horizontal, 16)
+                                .padding(.top, 4)
+                        }
+
                         // Bottom padding so input isn't cramped
                         Color.clear.frame(height: 20)
                         }
@@ -441,6 +448,38 @@ struct BranchView: View {
                 .padding(.vertical, 4)
                 .onTapGesture {
                     appState.selectBranch(child.id, in: branch.treeId)
+                }
+            }
+        }
+    }
+
+    // MARK: - Observability Panels
+
+    private var observabilityPanels: some View {
+        VStack(spacing: 4) {
+            DisclosureGroup {
+                SwimLaneView(branchId: branchId)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chart.bar.horizontal.page")
+                        .font(.caption2)
+                        .foregroundStyle(.cyan)
+                    Text("Activity Lanes")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            DisclosureGroup {
+                CrewDelegationView(branchId: branchId)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.3.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.cyan)
+                    Text("Crew Activity")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }

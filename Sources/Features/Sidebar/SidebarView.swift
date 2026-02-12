@@ -10,6 +10,8 @@ struct SidebarView: View {
     @State private var newTreeProject = ""
     private static let defaultWorkingDir = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Development"
     @State private var newTreeWorkingDir = SidebarView.defaultWorkingDir
+    @State private var selectedTemplate: WorkflowTemplate?
+    @State private var showTemplatePicker = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -155,9 +157,44 @@ struct SidebarView: View {
     // MARK: - New Tree Sheet
 
     private var newTreeSheet: some View {
+        Group {
+            if showTemplatePicker {
+                TemplatePicker(
+                    onSelect: { template in
+                        selectedTemplate = template
+                        showTemplatePicker = false
+                    },
+                    onSkip: {
+                        selectedTemplate = nil
+                        showTemplatePicker = false
+                    }
+                )
+            } else {
+                newTreeForm
+            }
+        }
+    }
+
+    private var newTreeForm: some View {
         VStack(spacing: 16) {
-            Text("New Conversation Tree")
-                .font(.headline)
+            HStack {
+                if let template = selectedTemplate {
+                    Image(systemName: template.icon)
+                        .foregroundStyle(.cyan)
+                    Text("New Tree — \(template.name)")
+                        .font(.headline)
+                } else {
+                    Text("New Conversation Tree")
+                        .font(.headline)
+                }
+                Spacer()
+                if selectedTemplate != nil {
+                    Button("Change Template") {
+                        showTemplatePicker = true
+                    }
+                    .controlSize(.small)
+                }
+            }
 
             TextField("Name", text: $newTreeName)
                 .textFieldStyle(.roundedBorder)
@@ -165,8 +202,6 @@ struct SidebarView: View {
             TextField("Project (optional)", text: $newTreeProject)
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: newTreeProject) { _, newValue in
-                    // Auto-fill working directory from project name
-                    // Only override if still at default (user hasn't manually changed it)
                     if !newValue.isEmpty {
                         let home = FileManager.default.homeDirectoryForCurrentUser.path
                         let candidate = "\(home)/Development/\(newValue)"
@@ -197,10 +232,7 @@ struct SidebarView: View {
 
             HStack {
                 Button("Cancel") {
-                    showNewTreeSheet = false
-                    newTreeName = ""
-                    newTreeProject = ""
-                    newTreeWorkingDir = Self.defaultWorkingDir
+                    resetNewTreeState()
                 }
                 .keyboardShortcut(.cancelAction)
 
@@ -208,11 +240,14 @@ struct SidebarView: View {
 
                 Button("Create") {
                     let project = newTreeProject.isEmpty ? nil : newTreeProject
-                    viewModel.createTree(name: newTreeName, project: project, workingDirectory: newTreeWorkingDir)
+                    viewModel.createTree(
+                        name: newTreeName,
+                        project: project,
+                        workingDirectory: newTreeWorkingDir,
+                        template: selectedTemplate
+                    )
                     showNewTreeSheet = false
-                    newTreeName = ""
-                    newTreeProject = ""
-                    newTreeWorkingDir = Self.defaultWorkingDir
+                    resetNewTreeState()
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(newTreeName.isEmpty)
@@ -220,5 +255,14 @@ struct SidebarView: View {
         }
         .padding(20)
         .frame(width: 420)
+    }
+
+    private func resetNewTreeState() {
+        showNewTreeSheet = false
+        showTemplatePicker = true
+        selectedTemplate = nil
+        newTreeName = ""
+        newTreeProject = ""
+        newTreeWorkingDir = Self.defaultWorkingDir
     }
 }

@@ -69,7 +69,7 @@ final class SidebarViewModel: ObservableObject {
         })
     }
 
-    func createTree(name: String, project: String? = nil, workingDirectory: String? = nil) {
+    func createTree(name: String, project: String? = nil, workingDirectory: String? = nil, template: WorkflowTemplate? = nil) {
         do {
             let tree = try TreeStore.shared.createTree(
                 name: name,
@@ -77,15 +77,30 @@ final class SidebarViewModel: ObservableObject {
                 workingDirectory: workingDirectory
             )
 
-            // Auto-create root branch
+            // Auto-create root branch — use template config if provided
+            let branchType = template?.branchType ?? .conversation
+            let branchTitle = template?.name ?? "Main"
+            let contextSnapshot = template?.systemContext
+
             let branch = try TreeStore.shared.createBranch(
                 treeId: tree.id,
-                type: .conversation,
-                title: "Main",
+                type: branchType,
+                title: branchTitle,
+                contextSnapshot: contextSnapshot,
                 workingDirectory: workingDirectory
             )
 
             AppState.shared.selectBranch(branch.id, in: tree.id)
+
+            // If template has an initial prompt, send it as the first message
+            if let initialPrompt = template?.initialPrompt,
+               let sessionId = branch.sessionId {
+                _ = try MessageStore.shared.sendMessage(
+                    sessionId: sessionId,
+                    role: .user,
+                    content: initialPrompt
+                )
+            }
         } catch {
             self.error = error.localizedDescription
         }
