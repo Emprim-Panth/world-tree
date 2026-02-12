@@ -153,8 +153,11 @@ final class DaemonService: ObservableObject {
     /// Runs `tmux list-sessions` off the main thread and parses results.
     nonisolated private static func discoverTmuxSessions() -> [TmuxSession] {
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        proc.arguments = ["tmux", "list-sessions", "-F",
+        // Use absolute path — GUI apps don't have Homebrew in PATH
+        let tmuxPath = "/opt/homebrew/bin/tmux"
+        guard FileManager.default.fileExists(atPath: tmuxPath) else { return [] }
+        proc.executableURL = URL(fileURLWithPath: tmuxPath)
+        proc.arguments = ["list-sessions", "-F",
                           "#{session_name}||#{session_windows}||#{session_created}||#{session_attached}||#{session_activity}"]
 
         let pipe = Pipe()
