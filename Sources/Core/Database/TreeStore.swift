@@ -188,6 +188,53 @@ final class TreeStore {
         }
     }
 
+    // MARK: - Branch Navigation
+
+    /// Returns the path from the root branch to the given branch (inclusive).
+    func branchPath(to branchId: String) throws -> [Branch] {
+        let allBranches = try db.read { db in
+            // Get the tree ID for this branch, then load all branches in that tree
+            guard let branch = try Branch.fetchOne(db, key: branchId) else { return [Branch]() }
+            return try Branch.filter(Column("tree_id") == branch.treeId)
+                .order(Column("created_at"))
+                .fetchAll(db)
+        }
+
+        // Walk up from branchId to root
+        var path: [Branch] = []
+        let lookup = Dictionary(uniqueKeysWithValues: allBranches.map { ($0.id, $0) })
+        var currentId: String? = branchId
+
+        while let id = currentId, let branch = lookup[id] {
+            path.insert(branch, at: 0)
+            currentId = branch.parentBranchId
+        }
+
+        return path
+    }
+
+    /// Returns sibling branches (same parent) excluding the given branch.
+    func getSiblings(of branchId: String) throws -> [Branch] {
+        try db.read { db in
+            guard let branch = try Branch.fetchOne(db, key: branchId) else { return [] }
+
+            if let parentId = branch.parentBranchId {
+                return try Branch
+                    .filter(Column("parent_branch_id") == parentId && Column("id") != branchId)
+                    .order(Column("created_at"))
+                    .fetchAll(db)
+            } else {
+                // Root branches — siblings are other root branches in same tree
+                return try Branch
+                    .filter(Column("tree_id") == branch.treeId
+                            && Column("parent_branch_id") == nil
+                            && Column("id") != branchId)
+                    .order(Column("created_at"))
+                    .fetchAll(db)
+            }
+        }
+    }
+
     // MARK: - Tree Building
 
     /// Builds a tree hierarchy from a flat list of branches

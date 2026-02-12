@@ -3,67 +3,54 @@ import SwiftUI
 struct MessageRow: View {
     let message: Message
     let onFork: (Message, BranchType) -> Void
+    var onEdit: ((Message, String) -> Void)?
 
     @State private var isHovering = false
+    @State private var isEditing = false
+    @State private var editText = ""
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            if message.role == .user {
-                Spacer(minLength: 80)
-            }
+            // Role gutter
+            roleGutter
+                .frame(width: 48, alignment: .trailing)
+                .padding(.trailing, 8)
 
-            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
-                // Role label
-                HStack(spacing: 4) {
-                    if message.role == .assistant {
-                        Image(systemName: "diamond.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.cyan)
-                    }
-                    Text(roleName)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            // Accent bar
+            RoundedRectangle(cornerRadius: 1)
+                .fill(accentColor)
+                .frame(width: 2)
 
-                    if message.hasBranches {
-                        Image(systemName: "arrow.triangle.branch")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-
-                    Spacer()
-
-                    Text(message.timestamp, style: .time)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-
-                // Content
+            // Content
+            VStack(alignment: .leading, spacing: 4) {
                 if message.role == .system {
-                    systemMessageContent
+                    systemContent
+                } else if isEditing {
+                    editingContent
                 } else {
-                    Text(message.content)
-                        .textSelection(.enabled)
-                        .padding(10)
-                        .background(bubbleBackground)
-                        .cornerRadius(12)
+                    markdownContent
                 }
 
-                // Fork button on hover
-                if isHovering && message.role != .system {
-                    forkButtons
+                // Fork badge
+                if message.hasBranches && !isEditing {
+                    forkBadge
                 }
             }
-            .frame(maxWidth: 600, alignment: message.role == .user ? .trailing : .leading)
+            .padding(.leading, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            if message.role == .assistant || message.role == .system {
-                Spacer(minLength: 80)
+            // Hover actions
+            if isHovering && !isEditing && message.role != .system {
+                hoverActions
+                    .padding(.trailing, 4)
+                    .transition(.opacity)
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 4)
-        .onHover { hovering in
-            isHovering = hovering
-        }
+        .padding(.vertical, 2)
+        .background(isHovering ? Color.primary.opacity(0.02) : .clear)
+        .onHover { isHovering = $0 }
         .contextMenu {
             Button("Branch from here") {
                 onFork(message, .conversation)
@@ -75,6 +62,11 @@ struct MessageRow: View {
                 onFork(message, .exploration)
             }
             Divider()
+            if message.role == .user, onEdit != nil {
+                Button("Edit message") {
+                    startEditing()
+                }
+            }
             Button("Copy") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(message.content, forType: .string)
@@ -82,43 +74,162 @@ struct MessageRow: View {
         }
     }
 
-    private var roleName: String {
+    // MARK: - Role Gutter
+
+    private var roleGutter: some View {
+        Group {
+            switch message.role {
+            case .user:
+                Text("You")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+            case .assistant:
+                HStack(spacing: 2) {
+                    Image(systemName: "diamond.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.cyan)
+                    Text("C")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.cyan)
+                }
+            case .system:
+                Text("sys")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    // MARK: - Accent Colors
+
+    private var accentColor: Color {
         switch message.role {
-        case .user: "You"
-        case .assistant: "Cortana"
-        case .system: "System"
+        case .user: .blue.opacity(0.6)
+        case .assistant: .cyan.opacity(0.6)
+        case .system: .gray.opacity(0.3)
         }
     }
 
-    private var bubbleBackground: Color {
-        switch message.role {
-        case .user: .blue.opacity(0.2)
-        case .assistant: .primary.opacity(0.08)
-        case .system: .clear
+    // MARK: - Markdown Content
+
+    private var markdownContent: some View {
+        Group {
+            if let attributed = try? AttributedString(markdown: message.content, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+                Text(attributed)
+                    .textSelection(.enabled)
+                    .font(.body)
+            } else {
+                Text(message.content)
+                    .textSelection(.enabled)
+                    .font(.body)
+            }
         }
     }
 
-    private var systemMessageContent: some View {
+    // MARK: - System Content
+
+    private var systemContent: some View {
         Text(message.content)
             .font(.caption)
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
-            .padding(8)
-            .frame(maxWidth: .infinity)
-            .background(.quaternary)
-            .cornerRadius(8)
     }
 
-    private var forkButtons: some View {
-        HStack(spacing: 8) {
+    // MARK: - Fork Badge
+
+    private var forkBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.triangle.branch")
+                .font(.caption2)
+            Text("has branches")
+                .font(.caption2)
+        }
+        .foregroundStyle(.orange.opacity(0.8))
+        .padding(.top, 2)
+    }
+
+    // MARK: - Hover Actions
+
+    private var hoverActions: some View {
+        VStack(spacing: 4) {
+            if message.role == .user, onEdit != nil {
+                Button {
+                    startEditing()
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Edit message")
+            }
+
             Button {
                 onFork(message, .conversation)
             } label: {
-                Label("Branch", systemImage: "arrow.triangle.branch")
+                Image(systemName: "arrow.triangle.branch")
                     .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
+            .help("Branch from here")
+
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(message.content, forType: .string)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Copy")
         }
-        .transition(.opacity.combined(with: .move(edge: .top)))
+        .padding(.top, 4)
+    }
+
+    // MARK: - Editing
+
+    private var editingContent: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextEditor(text: $editText)
+                .font(.body)
+                .frame(minHeight: 40, maxHeight: 200)
+                .scrollContentBackground(.hidden)
+                .padding(6)
+                .background(Color.primary.opacity(0.05))
+                .cornerRadius(8)
+
+            HStack(spacing: 8) {
+                Button("Cancel") {
+                    isEditing = false
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+
+                Button("Save & Branch") {
+                    let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        onEdit?(message, trimmed)
+                    }
+                    isEditing = false
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Text("Creates a new branch")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func startEditing() {
+        editText = message.content
+        isEditing = true
     }
 }

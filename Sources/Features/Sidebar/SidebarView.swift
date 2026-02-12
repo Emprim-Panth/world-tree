@@ -11,6 +11,13 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Projects section (collapsible)
+            ProjectListView()
+                .frame(height: 200)
+            
+            Divider()
+            
+
             // Search
             HStack {
                 Image(systemName: "magnifyingglass")

@@ -12,7 +12,10 @@ final class BranchViewModel: ObservableObject {
     @Published var toolActivities: [ToolActivity] = []
     @Published var tokenUsage: SessionTokenUsage?
     @Published var error: String?
+    @Published var branchPath: [Branch] = []
+    @Published var siblings: [Branch] = []
 
+    @Published var shouldAutoScroll: Bool = true
     private let branchId: String
     private var observation: AnyDatabaseCancellable?
     private var claudeBridge: ClaudeBridge?
@@ -29,6 +32,8 @@ final class BranchViewModel: ObservableObject {
             if let sessionId = branch?.sessionId {
                 messages = try MessageStore.shared.getMessages(sessionId: sessionId)
             }
+            branchPath = try TreeStore.shared.branchPath(to: branchId)
+            siblings = try TreeStore.shared.getSiblings(of: branchId)
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -109,6 +114,7 @@ final class BranchViewModel: ObservableObject {
 
         responseTask = Task {
             var accumulated = ""
+            canvasLog("[BranchVM] starting response, hasAPI=\(bridge.hasAPIAccess)")
 
             let stream = bridge.send(
                 message: message,
@@ -124,8 +130,12 @@ final class BranchViewModel: ObservableObject {
                 case .text(let chunk):
                     accumulated += chunk
                     streamingResponse = accumulated
+                    if accumulated.count < 100 {
+                        canvasLog("[BranchVM] text chunk: \(chunk.prefix(50))")
+                    }
 
                 case .toolStart(let name, let input):
+                    canvasLog("[BranchVM] toolStart: \(name)")
                     let activity = ToolActivity(
                         name: name,
                         input: input,
@@ -140,9 +150,11 @@ final class BranchViewModel: ObservableObject {
                     }
 
                 case .done(let usage):
+                    canvasLog("[BranchVM] done, turns=\(usage.turnCount)")
                     tokenUsage = usage
 
                 case .error(let msg):
+                    canvasLog("[BranchVM] error: \(msg)")
                     self.error = msg
                 }
             }
@@ -164,6 +176,58 @@ final class BranchViewModel: ObservableObject {
             streamingResponse = ""
             isResponding = false
             toolActivities = []
+        }
+    }
+
+    /// Edit a message by creating a new branch with the edited content.
+    /// Returns the new branch ID for navigation, or nil on failure.
+    func editMessage(_ message: Message, newContent: String) -> String? {
+        guard let branch = branch, let sessionId = branch.sessionId else { return nil }
+
+        do {
+            // Find the fork point (message before the edited one)
+            let forkFromId: Int? = {
+                if let idx = messages.firstIndex(where: { $0.id == message.id }), idx > 0 {
+                    return messages[idx - 1].id
+                }
+                return nil
+            }()
+
+            let editTitle = "Edit: \(String(newContent.prefix(40)))"
+
+            // Create new branch
+            let newBranch = try TreeStore.shared.createBranch(
+                treeId: branch.treeId,
+                parentBranch: branch.id,
+                forkFromMessage: forkFromId,
+                type: branch.branchType,
+                title: editTitle,
+                model: branch.model
+            )
+
+            guard let newSessionId = newBranch.sessionId else { return nil }
+
+            // Copy messages up to the edited message
+            _ = try MessageStore.shared.copyMessages(
+                from: sessionId,
+                upTo: message.id,
+                to: newSessionId
+            )
+
+            // Insert the edited content as a new user message
+            _ = try MessageStore.shared.sendMessage(
+                sessionId: newSessionId,
+                role: .user,
+                content: newContent
+            )
+
+            // Update tree timestamp
+            try TreeStore.shared.updateTreeTimestamp(branch.treeId)
+
+            return newBranch.id
+        } catch {
+            self.error = error.localizedDescription
+            return nil
         }
     }
 

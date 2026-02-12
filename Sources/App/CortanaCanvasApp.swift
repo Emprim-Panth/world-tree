@@ -11,6 +11,7 @@ struct CortanaCanvasApp: App {
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear {
                     setupDatabase()
+                    startProjectRefresh()
                 }
         }
         .windowStyle(.titleBar)
@@ -49,6 +50,10 @@ struct CortanaCanvasApp: App {
         } catch {
             print("[Canvas] Database setup failed: \(error)")
         }
+    }
+    
+    private func startProjectRefresh() {
+        ProjectRefreshService.shared.startAutoRefresh()
     }
 }
 

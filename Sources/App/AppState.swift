@@ -8,6 +8,7 @@ final class AppState: ObservableObject {
 
     @Published var selectedTreeId: String?
     @Published var selectedBranchId: String?
+    @Published var selectedProjectPath: String?
     @Published var daemonConnected: Bool = false
 
     /// Navigation history for branch back/forward
@@ -42,4 +43,8 @@ final class AppState: ObservableObject {
 
     var canGoBack: Bool { branchHistoryIndex > 0 }
     var canGoForward: Bool { branchHistoryIndex < branchHistory.count - 1 }
+    
+    func selectProject(_ path: String) {
+        selectedProjectPath = path
+    }
 }

@@ -1,5 +1,19 @@
 import Foundation
 
+/// Debug logger that writes to a file (print() doesn't work in GUI apps launched outside Xcode)
+func canvasLog(_ msg: String) {
+    let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(msg)\n"
+    let path = FileManager.default.homeDirectoryForCurrentUser.path + "/.cortana/logs/canvas-debug.log"
+    if let handle = FileHandle(forWritingAtPath: path) {
+        handle.seekToEndOfFile()
+        handle.write(line.data(using: .utf8)!)
+        handle.closeFile()
+    } else {
+        FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))
+    }
+    print(msg) // Also print for Xcode console
+}
+
 /// Raw HTTP client for the Anthropic Messages API with SSE streaming support.
 final class AnthropicClient: Sendable {
     private let apiKey: String
@@ -23,11 +37,19 @@ final class AnthropicClient: Sendable {
                     let encoder = JSONEncoder()
                     urlRequest.httpBody = try encoder.encode(request)
 
+                    if let bodyData = urlRequest.httpBody,
+                       let bodyStr = String(data: bodyData, encoding: .utf8) {
+                        canvasLog("[AnthropicClient] request body (first 500): \(String(bodyStr.prefix(500)))")
+                    }
+                    canvasLog("[AnthropicClient] sending request to \(self.baseURL)")
                     let (bytes, response) = try await self.session.bytes(for: urlRequest)
 
                     guard let httpResponse = response as? HTTPURLResponse else {
+                        canvasLog("[AnthropicClient] invalid response (not HTTPURLResponse)")
                         throw AnthropicClientError.invalidResponse
                     }
+
+                    canvasLog("[AnthropicClient] HTTP \(httpResponse.statusCode)")
 
                     // Handle non-200 responses
                     if httpResponse.statusCode != 200 {
@@ -41,38 +63,69 @@ final class AnthropicClient: Sendable {
                     }
 
                     // Parse SSE stream
+                    // NOTE: URLSession.AsyncBytes.lines strips empty lines,
+                    // so we flush the buffered event when a new "event:" arrives
+                    // rather than relying on empty-line delimiters.
                     var currentEventType = ""
                     var dataBuffer = ""
+                    var lineCount = 0
+                    var eventCount = 0
+                    var shouldStop = false
+
+                    /// Flush buffered data as a parsed SSE event
+                    func flushEvent() throws -> Bool {
+                        guard !dataBuffer.isEmpty else { return false }
+                        eventCount += 1
+                        do {
+                            if let event = try self.parseSSEEvent(
+                                type: currentEventType,
+                                data: dataBuffer
+                            ) {
+                                continuation.yield(event)
+                                if case .messageStop = event {
+                                    return true // signal stop
+                                }
+                            }
+                        } catch {
+                            canvasLog("[AnthropicClient] SSE parse error #\(eventCount) for '\(currentEventType)': \(error)")
+                            canvasLog("[AnthropicClient] data: \(String(dataBuffer.prefix(300)))")
+                        }
+                        return false
+                    }
 
                     for try await line in bytes.lines {
-                        if Task.isCancelled { break }
+                        if Task.isCancelled || shouldStop { break }
+                        lineCount += 1
 
                         if line.hasPrefix("event: ") {
+                            // New event starting — flush any previous buffered event
+                            if !dataBuffer.isEmpty {
+                                shouldStop = try flushEvent()
+                                dataBuffer = ""
+                            }
                             currentEventType = String(line.dropFirst(7))
                         } else if line.hasPrefix("data: ") {
                             dataBuffer += String(line.dropFirst(6))
                         } else if line.isEmpty {
-                            // End of SSE event
+                            // Also handle empty lines if they do appear
                             if !dataBuffer.isEmpty {
-                                if let event = try? self.parseSSEEvent(
-                                    type: currentEventType,
-                                    data: dataBuffer
-                                ) {
-                                    continuation.yield(event)
-
-                                    // Stop on message_stop
-                                    if case .messageStop = event {
-                                        break
-                                    }
-                                }
+                                shouldStop = try flushEvent()
+                                dataBuffer = ""
+                                currentEventType = ""
                             }
-                            currentEventType = ""
-                            dataBuffer = ""
                         }
                     }
 
+                    // Flush any remaining buffered event after stream ends
+                    if !dataBuffer.isEmpty && !shouldStop {
+                        _ = try flushEvent()
+                    }
+
+                    canvasLog("[AnthropicClient] SSE stream ended: \(lineCount) lines, \(eventCount) events")
+
                     continuation.finish()
                 } catch {
+                    canvasLog("[AnthropicClient] stream error: \(error)")
                     continuation.finish(throwing: error)
                 }
             }

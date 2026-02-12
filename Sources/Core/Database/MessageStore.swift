@@ -66,6 +66,36 @@ final class MessageStore {
         }
     }
 
+    // MARK: - Copy Messages (for branch-on-edit)
+
+    /// Copy messages from source session up to (not including) a given message ID.
+    /// Returns the number of messages copied.
+    func copyMessages(from sourceSessionId: String, upTo messageId: Int, to targetSessionId: String) throws -> Int {
+        try db.write { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT role, content FROM messages
+                    WHERE session_id = ? AND id < ?
+                    ORDER BY timestamp ASC
+                    """,
+                arguments: [sourceSessionId, messageId]
+            )
+            for row in rows {
+                let role: String = row["role"]
+                let content: String = row["content"]
+                try db.execute(
+                    sql: """
+                        INSERT INTO messages (session_id, role, content, timestamp)
+                        VALUES (?, ?, ?, datetime('now'))
+                        """,
+                    arguments: [targetSessionId, role, content]
+                )
+            }
+            return rows.count
+        }
+    }
+
     // MARK: - Search
 
     /// Search messages using the existing FTS5 index.

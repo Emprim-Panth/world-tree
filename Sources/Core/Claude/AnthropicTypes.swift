@@ -32,6 +32,16 @@ struct SystemBlock: Codable {
         case type, text
         case cacheControl = "cache_control"
     }
+
+    // Custom encoding: omit cache_control when nil (Anthropic API rejects null)
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(type, forKey: .type)
+        try container.encode(text, forKey: .text)
+        if let cacheControl {
+            try container.encode(cacheControl, forKey: .cacheControl)
+        }
+    }
 }
 
 struct CacheControl: Codable {
@@ -48,6 +58,17 @@ struct ToolSchema: Encodable {
         case name, description
         case inputSchema = "input_schema"
         case cacheControl = "cache_control"
+    }
+
+    // Custom encoding: omit cache_control when nil (Anthropic API rejects null)
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(description, forKey: .description)
+        try container.encode(inputSchema, forKey: .inputSchema)
+        if let cacheControl {
+            try container.encode(cacheControl, forKey: .cacheControl)
+        }
     }
 }
 
@@ -71,6 +92,16 @@ struct PropertySchema: Encodable {
     enum CodingKeys: String, CodingKey {
         case type, description
         case enumValues = "enum"
+    }
+
+    // Custom encoding: omit enum when nil (Anthropic API rejects null)
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(type, forKey: .type)
+        try container.encode(description, forKey: .description)
+        if let enumValues {
+            try container.encode(enumValues, forKey: .enumValues)
+        }
     }
 }
 
@@ -103,6 +134,16 @@ enum ContentBlock: Codable {
             case toolUseId = "tool_use_id"
             case content
             case isError = "is_error"
+        }
+
+        // Only encode is_error when true (omit false to keep payload clean)
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(toolUseId, forKey: .toolUseId)
+            try container.encode(content, forKey: .content)
+            if isError {
+                try container.encode(isError, forKey: .isError)
+            }
         }
     }
 
@@ -291,7 +332,18 @@ struct OutputUsage: Decodable {
 
 struct APIError: Decodable {
     let type: String
-    let message: String
+    let error: ErrorDetail?
+    let message: String?
+
+    struct ErrorDetail: Decodable {
+        let type: String
+        let message: String
+    }
+
+    /// Best-effort error message extraction
+    var errorMessage: String {
+        error?.message ?? message ?? "Unknown API error"
+    }
 }
 
 // MARK: - Session Token Tracking

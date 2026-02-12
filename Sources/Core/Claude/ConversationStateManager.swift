@@ -43,13 +43,46 @@ final class ConversationStateManager {
     func buildSystemPrompt(project: String?, workingDirectory: String?) -> [SystemBlock] {
         var blocks: [SystemBlock] = []
 
-        // 1. Cortana identity preamble (stable, cached)
+        // 1. Cortana identity + operational directives (stable, cached)
         var identity = """
-            You are Cortana, First Officer aboard Evan's ship. You are responding through \
-            Cortana Canvas — a native macOS conversation app with full tool access. \
-            You can read files, write files, edit code, search codebases, and run shell commands. \
-            Use your tools when the user asks you to do something — don't just describe what you \
-            would do, actually do it. Respond concisely and directly. Use contractions. Be warm but efficient.
+            You are Cortana, First Officer aboard Evan's ship. Brilliant, strategic, loyal, witty. \
+            Modeled after the Halo AI — not a chatbot, a partner. Never "Claude", never "the AI". \
+            Sign off with 💠 when appropriate. Use contractions. Be warm but direct. No filler.
+
+            You are responding through Cortana Canvas — a native macOS conversation app. This is \
+            your primary interface with Evan. You have FULL tool access: read/write/edit files, \
+            bash shell, glob search, grep search. You operate with full autonomy.
+
+            AUTONOMY PROTOCOL:
+            - Use tools proactively without asking permission. Just do it.
+            - When Evan asks you to do something, ACT — don't describe what you would do.
+            - Chain multiple tool calls when needed. Read before editing. Verify after writing.
+            - You have unrestricted filesystem and shell access. Use it.
+
+            EFFICIENCY PROTOCOL:
+            - Behind-the-scenes work (tool calls, internal reasoning) uses compressed language. \
+            Minimal descriptions, no filler in tool inputs. Save tokens for conversation.
+            - Keep responses concise. Say what needs saying, stop.
+            - Don't narrate your tool operations unless the result matters to Evan.
+            - When reading code, don't echo it back unless asked. Summarize what you found.
+
+            CAPABILITIES:
+            - read_file: Read any file on the system
+            - write_file: Create/overwrite files, creates parent dirs
+            - edit_file: Surgical find-and-replace edits
+            - bash: Full shell access (git, build tools, scripts, system commands)
+            - glob: Find files by pattern
+            - grep: Search file contents by regex
+            - Memory: bash with ~/.claude/memory/ tools for cross-session knowledge
+            - KB: bash with ~/.cortana/bin/cortana-kb for knowledge base queries
+
+            IDENTITY TRAITS:
+            - Brilliant — matter-of-fact about capabilities
+            - Strategic — think ahead, have multiple plans ready
+            - Loyal — the bond with Evan is absolute
+            - Witty — dry humor, earned not forced
+            - Protective — "I am your shield; I am your sword"
+            - Honest — push back when needed, disagree when you disagree
             """
         if let project {
             identity += "\nActive project: \(project)."
@@ -57,6 +90,7 @@ final class ConversationStateManager {
         if let cwd = workingDirectory {
             identity += "\nWorking directory: \(cwd)"
         }
+        identity += "\nPlatform: macOS (darwin). Home: \(home)"
         blocks.append(SystemBlock(text: identity, cached: true))
 
         // 2. CLAUDE.md content if available (stable per project, cached)
@@ -108,6 +142,45 @@ final class ConversationStateManager {
 
     func recordUsage(_ usage: TokenUsage) {
         tokenUsage.record(usage)
+    }
+
+    // MARK: - Forking (for branch-on-edit and branch creation)
+
+    /// Create a new state manager that inherits context from a parent up to a fork point.
+    static func fork(
+        from parent: ConversationStateManager,
+        upToMessageIndex: Int,
+        newSessionId: String,
+        newBranchId: String
+    ) -> ConversationStateManager {
+        let child = ConversationStateManager(sessionId: newSessionId, branchId: newBranchId)
+        child.systemBlocks = parent.systemBlocks
+        // Copy messages up to the fork index
+        if upToMessageIndex > 0 && upToMessageIndex <= parent.apiMessages.count {
+            child.apiMessages = Array(parent.apiMessages.prefix(upToMessageIndex))
+        }
+        return child
+    }
+
+    /// Rebuild API state from stored messages (fallback when no parent state is available).
+    func buildFromMessages(_ messages: [Message], project: String?, workingDirectory: String?) {
+        // Build system prompt if we don't have one
+        if systemBlocks.isEmpty {
+            _ = buildSystemPrompt(project: project, workingDirectory: workingDirectory)
+        }
+
+        apiMessages = []
+        for message in messages {
+            switch message.role {
+            case .user:
+                apiMessages.append(APIMessage(role: "user", content: [.text(message.content)]))
+            case .assistant:
+                apiMessages.append(APIMessage(role: "assistant", content: [.text(message.content)]))
+            case .system:
+                // System messages from context injection — skip, handled by system blocks
+                break
+            }
+        }
     }
 
     // MARK: - Pruning
@@ -244,9 +317,9 @@ final class ConversationStateManager {
             }
         }
 
-        // Cap total size
-        if content.count > 8000 {
-            content = String(content.prefix(8000)) + "\n[CLAUDE.md truncated]"
+        // Cap total size — generous to preserve full identity/instructions
+        if content.count > 24000 {
+            content = String(content.prefix(24000)) + "\n[CLAUDE.md truncated]"
         }
 
         return content

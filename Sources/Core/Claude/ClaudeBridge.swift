@@ -22,8 +22,10 @@ final class ClaudeBridge {
 
     init() {
         if let key = Self.resolveAPIKey() {
+            canvasLog("[ClaudeBridge] API key found (\(key.prefix(8))...)")
             self.apiClient = AnthropicClient(apiKey: key)
         } else {
+            canvasLog("[ClaudeBridge] No API key found — using CLI fallback")
             self.apiClient = nil
         }
     }
@@ -92,6 +94,8 @@ final class ClaudeBridge {
         return AsyncStream { continuation in
             currentTask = Task { @MainActor in
                 do {
+                    canvasLog("[ClaudeBridge] send() started for session=\(sessionId)")
+
                     // Get or restore state manager
                     let state = try getOrCreateStateManager(
                         sessionId: sessionId,
@@ -99,16 +103,20 @@ final class ClaudeBridge {
                         project: project,
                         workingDirectory: workingDirectory
                     )
+                    canvasLog("[ClaudeBridge] state manager ready, system blocks=\(state.systemBlocks.count)")
 
                     // Query KB for this message
                     let kbContext = queryKnowledgeBase(message: message)
                     state.appendKBContext(kbContext)
+                    canvasLog("[ClaudeBridge] KB context: \(kbContext.count) chars")
 
                     // Add user message
                     state.addUserMessage(message)
+                    canvasLog("[ClaudeBridge] messages for API: \(state.messagesForAPI().count)")
 
                     let selectedModel = model ?? CortanaConstants.defaultModel
                     let cwd = resolveWorkingDirectory(workingDirectory, project: project)
+                    canvasLog("[ClaudeBridge] model=\(selectedModel), cwd=\(cwd)")
                     let executor = ToolExecutor(workingDirectory: URL(fileURLWithPath: cwd))
                     var cumulativeUsage = TokenUsage.zero
 
@@ -133,6 +141,7 @@ final class ClaudeBridge {
                         var currentToolInputJSON = ""
                         var stopReason: String?
 
+                        canvasLog("[ClaudeBridge] sending API request...")
                         let stream = apiClient.stream(request: request)
 
                         for try await event in stream {
@@ -180,8 +189,12 @@ final class ClaudeBridge {
                                     cumulativeUsage.outputTokens += usage.outputTokens
                                 }
 
-                            case .messageStop, .ping, .error:
+                            case .messageStop, .ping:
                                 break
+
+                            case .error(let apiError):
+                                canvasLog("[ClaudeBridge] API error event: \(apiError.errorMessage)")
+                                continuation.yield(.error(apiError.errorMessage))
                             }
                         }
 
@@ -193,6 +206,8 @@ final class ClaudeBridge {
                         for tu in toolUseBlocks {
                             assistantBlocks.append(.toolUse(tu))
                         }
+
+                        canvasLog("[ClaudeBridge] loop iteration done: stopReason=\(stopReason ?? "nil"), text=\(textAccumulator.count) chars, tools=\(toolUseBlocks.count)")
                         state.addAssistantResponse(assistantBlocks)
 
                         // Handle stop reason
@@ -237,6 +252,7 @@ final class ClaudeBridge {
                     continuation.yield(.done(usage: state.tokenUsage))
                     continuation.finish()
                 } catch {
+                    canvasLog("[ClaudeBridge] ERROR: \(error)")
                     continuation.yield(.error(error.localizedDescription))
                     continuation.finish()
                 }
@@ -275,10 +291,38 @@ final class ClaudeBridge {
             return existing
         }
 
-        // Try to restore from database
+        // Try to restore this session's own persisted state
         if let restored = try ConversationStateManager.restore(sessionId: sessionId, branchId: branchId) {
             stateManager = restored
             return restored
+        }
+
+        // Try to inherit from parent branch's API state
+        if let branch = try TreeStore.shared.getBranch(branchId),
+           let parentBranchId = branch.parentBranchId,
+           let parentBranch = try TreeStore.shared.getBranch(parentBranchId),
+           let parentSessionId = parentBranch.sessionId,
+           let parentState = try ConversationStateManager.restore(sessionId: parentSessionId, branchId: parentBranchId) {
+
+            canvasLog("[ClaudeBridge] inheriting API state from parent branch \(parentBranchId)")
+            let forked = ConversationStateManager.fork(
+                from: parentState,
+                upToMessageIndex: parentState.apiMessages.count,
+                newSessionId: sessionId,
+                newBranchId: branchId
+            )
+            stateManager = forked
+            return forked
+        }
+
+        // Rebuild from stored messages as fallback
+        let messages = try MessageStore.shared.getMessages(sessionId: sessionId)
+        if !messages.isEmpty {
+            canvasLog("[ClaudeBridge] rebuilding API state from \(messages.count) stored messages")
+            let manager = ConversationStateManager(sessionId: sessionId, branchId: branchId)
+            manager.buildFromMessages(messages, project: project, workingDirectory: workingDirectory)
+            stateManager = manager
+            return manager
         }
 
         // Create fresh
