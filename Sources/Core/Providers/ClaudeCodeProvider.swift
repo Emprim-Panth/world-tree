@@ -96,6 +96,7 @@ final class ClaudeCodeProvider: LLMProvider {
             var args = [
                 "--output-format", "stream-json",
                 "--verbose",
+                "--include-partial-messages",
                 "--dangerously-skip-permissions",
                 "-p", context.message,
             ]

@@ -32,6 +32,10 @@ final class CLIStreamParser {
     private var currentToolId: String?
     private var currentToolName: String?
 
+    /// Track whether we've emitted text via stream_event deltas,
+    /// so the assistant fallback doesn't duplicate the full message.
+    private var hasEmittedText: Bool = false
+
     /// Incomplete line buffer for handling partial reads
     private var lineBuffer = ""
 
@@ -110,19 +114,20 @@ final class CLIStreamParser {
         return nil // Internal event, no BridgeEvent emitted
     }
 
-    /// `{"type":"stream_event","event":{"event":"content_block_delta","data":{...}}}`
+    /// `{"type":"stream_event","event":{"type":"content_block_delta","delta":{...}}}`
+    /// Note: CLI uses `event.type` (not `event.event`) and data is inline (not in `event.data`)
     private func parseStreamEvent(_ json: [String: Any]) -> [BridgeEvent]? {
         guard let eventWrapper = json["event"] as? [String: Any],
-              let eventType = eventWrapper["event"] as? String,
-              let eventData = eventWrapper["data"] as? [String: Any] else {
+              let eventType = eventWrapper["type"] as? String else {
             return nil
         }
 
+        // The event data IS the eventWrapper itself (no nested "data" key)
         switch eventType {
         case "content_block_start":
-            return parseContentBlockStart(eventData)
+            return parseContentBlockStart(eventWrapper)
         case "content_block_delta":
-            return parseContentBlockDelta(eventData)
+            return parseContentBlockDelta(eventWrapper)
         case "content_block_stop":
             currentToolName = nil
             currentToolId = nil
@@ -163,6 +168,7 @@ final class CLIStreamParser {
         switch deltaType {
         case "text_delta":
             if let text = delta["text"] as? String, !text.isEmpty {
+                hasEmittedText = true
                 return [.text(text)]
             }
         case "input_json_delta":
@@ -176,7 +182,7 @@ final class CLIStreamParser {
     }
 
     /// `{"type":"assistant","message":{"role":"assistant","content":[...]},"session_id":"..."}`
-    /// Fallback: if we missed stream_event for a tool_use, emit toolStart here.
+    /// Fallback: emits text and toolStart for any content blocks not already streamed.
     private func parseAssistant(_ json: [String: Any]) -> [BridgeEvent]? {
         // Update session ID if present
         if let sid = json["session_id"] as? String {
@@ -193,7 +199,13 @@ final class CLIStreamParser {
         for block in content {
             guard let blockType = block["type"] as? String else { continue }
 
-            if blockType == "tool_use" {
+            if blockType == "text" {
+                // Fallback: emit full text if we didn't get streaming deltas
+                // (happens when --include-partial-messages is not set)
+                if let text = block["text"] as? String, !text.isEmpty, !hasEmittedText {
+                    events.append(.text(text))
+                }
+            } else if blockType == "tool_use" {
                 let name = block["name"] as? String ?? "unknown"
                 let id = block["id"] as? String ?? ""
                 // Only emit if we didn't already emit via stream_event (check by ID)
