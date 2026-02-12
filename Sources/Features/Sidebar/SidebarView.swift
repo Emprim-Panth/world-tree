@@ -32,8 +32,9 @@ struct SidebarView: View {
                         .fontWeight(.medium)
                         .foregroundStyle(.secondary)
 
-                    if !daemonService.activeSessions.isEmpty {
-                        Text("\(daemonService.activeSessions.count)")
+                    let totalSessions = daemonService.activeSessions.count + daemonService.tmuxSessions.count
+                    if totalSessions > 0 {
+                        Text("\(totalSessions)")
                             .font(.caption2)
                             .fontWeight(.medium)
                             .foregroundStyle(.white)

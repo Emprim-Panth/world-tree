@@ -8,6 +8,7 @@ final class DaemonService: ObservableObject {
 
     @Published var isConnected: Bool = false
     @Published var activeSessions: [DaemonSession] = []
+    @Published var tmuxSessions: [TmuxSession] = []
     @Published var lastError: String?
 
     private let socket = DaemonSocket()
@@ -19,11 +20,15 @@ final class DaemonService: ObservableObject {
 
     func startMonitoring() {
         checkHealth()
-        Task { await refreshSessions() }
+        Task {
+            await refreshSessions()
+            refreshTmuxSessions()
+        }
         healthTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.checkHealth()
                 await self?.refreshSessions()
+                self?.refreshTmuxSessions()
             }
         }
     }
@@ -130,6 +135,63 @@ final class DaemonService: ObservableObject {
             startedAt: startedAt,
             status: status
         )
+    }
+
+    // MARK: - Tmux Sessions
+
+    /// Discover active tmux sessions by shelling out to `tmux list-sessions`.
+    func refreshTmuxSessions() {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        proc.arguments = ["tmux", "list-sessions", "-F",
+                          "#{session_name}||#{session_windows}||#{session_created}||#{session_attached}||#{session_activity}"]
+
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+        } catch {
+            tmuxSessions = []
+            return
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+
+        guard proc.terminationStatus == 0,
+              let output = String(data: data, encoding: .utf8) else {
+            tmuxSessions = []
+            return
+        }
+
+        tmuxSessions = output
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .compactMap { line -> TmuxSession? in
+                let parts = line.split(separator: "|", omittingEmptySubsequences: false)
+                    .map { String($0) }
+                // Format: name||windows||created||attached||activity
+                // split by "|" with empty subsequences gives [name, "", windows, "", created, "", attached, "", activity]
+                // Actually split(separator: "|") gives ["name","","windows","","created","","attached","","activity"]
+                // Let's use a simpler approach
+                let fields = String(line).components(separatedBy: "||")
+                guard fields.count >= 5 else { return nil }
+
+                let name = fields[0]
+                let windowCount = Int(fields[1]) ?? 0
+                let created = Date(timeIntervalSince1970: TimeInterval(fields[2]) ?? 0)
+                let isAttached = fields[3] == "1"
+                let activity = Date(timeIntervalSince1970: TimeInterval(fields[4]) ?? 0)
+
+                return TmuxSession(
+                    name: name,
+                    windowCount: windowCount,
+                    createdAt: created,
+                    isAttached: isAttached,
+                    lastActivity: activity
+                )
+            }
     }
 
     // MARK: - Status

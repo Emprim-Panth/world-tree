@@ -17,6 +17,16 @@ struct DaemonSession: Identifiable, Codable {
     let status: String
 }
 
+/// A tmux session discovered via `tmux list-sessions`.
+struct TmuxSession: Identifiable {
+    var id: String { name }
+    let name: String
+    let windowCount: Int
+    let createdAt: Date
+    let isAttached: Bool
+    let lastActivity: Date
+}
+
 struct DaemonCommand: Codable {
     let action: String
     var message: String?

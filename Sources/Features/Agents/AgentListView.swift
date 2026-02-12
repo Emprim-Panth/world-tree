@@ -46,11 +46,22 @@ struct AgentListView: View {
                 .padding(.vertical, 4)
             }
 
-            // Content
-            if daemonService.activeSessions.isEmpty {
-                emptyState
-            } else {
+            // Tmux sessions
+            if !daemonService.tmuxSessions.isEmpty {
+                tmuxList
+            }
+
+            // Daemon sessions
+            if !daemonService.activeSessions.isEmpty {
+                if !daemonService.tmuxSessions.isEmpty {
+                    Divider()
+                }
                 sessionList
+            }
+
+            // Empty state only if both are empty
+            if daemonService.activeSessions.isEmpty && daemonService.tmuxSessions.isEmpty {
+                emptyState
             }
         }
         .onAppear {
@@ -60,7 +71,10 @@ struct AgentListView: View {
 
     private var refreshButton: some View {
         Button {
-            Task { await daemonService.refreshSessions() }
+            Task {
+                await daemonService.refreshSessions()
+                daemonService.refreshTmuxSessions()
+            }
         } label: {
             Image(systemName: "arrow.clockwise")
                 .font(.caption)
@@ -69,7 +83,67 @@ struct AgentListView: View {
         .help("Refresh sessions")
     }
 
-    // MARK: - Session List
+    // MARK: - Tmux Sessions
+
+    private var tmuxList: some View {
+        ScrollView {
+            LazyVStack(spacing: 4) {
+                ForEach(daemonService.tmuxSessions) { session in
+                    tmuxRow(session)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func tmuxRow(_ session: TmuxSession) -> some View {
+        HStack(spacing: 10) {
+            // Attached indicator
+            Circle()
+                .fill(session.isAttached ? .green : .gray)
+                .frame(width: 8, height: 8)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Image(systemName: "terminal")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Text(session.name)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+
+                    Text("\(session.windowCount)w")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(.quaternary)
+                        .cornerRadius(3)
+                }
+
+                if let uptime = uptimeString(from: session.createdAt) {
+                    Text("up \(uptime)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .monospaced()
+                }
+            }
+
+            Spacer()
+
+            Text(session.isAttached ? "attached" : "detached")
+                .font(.caption2)
+                .foregroundStyle(session.isAttached ? .green : .secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.quaternary.opacity(0.5))
+        .cornerRadius(6)
+        .padding(.horizontal, 8)
+    }
+
+    // MARK: - Daemon Session List
 
     private var sessionList: some View {
         ScrollView {
