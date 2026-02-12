@@ -65,7 +65,11 @@ struct AgentListView: View {
             }
         }
         .onAppear {
-            Task { await daemonService.refreshSessions() }
+            Task {
+                await daemonService.refreshSessions()
+                daemonService.refreshTmuxSessions()
+            }
+            daemonService.startMonitoring()
         }
     }
 

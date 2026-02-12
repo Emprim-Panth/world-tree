@@ -19,6 +19,7 @@ final class DaemonService: ObservableObject {
     // MARK: - Lifecycle
 
     func startMonitoring() {
+        guard healthTimer == nil else { return } // Already monitoring
         checkHealth()
         Task {
             await refreshSessions()
@@ -141,6 +142,16 @@ final class DaemonService: ObservableObject {
 
     /// Discover active tmux sessions by shelling out to `tmux list-sessions`.
     func refreshTmuxSessions() {
+        Task.detached { [weak self] in
+            let sessions = Self.discoverTmuxSessions()
+            await MainActor.run {
+                self?.tmuxSessions = sessions
+            }
+        }
+    }
+
+    /// Runs `tmux list-sessions` off the main thread and parses results.
+    nonisolated private static func discoverTmuxSessions() -> [TmuxSession] {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         proc.arguments = ["tmux", "list-sessions", "-F",
@@ -153,8 +164,7 @@ final class DaemonService: ObservableObject {
         do {
             try proc.run()
         } catch {
-            tmuxSessions = []
-            return
+            return []
         }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -162,19 +172,12 @@ final class DaemonService: ObservableObject {
 
         guard proc.terminationStatus == 0,
               let output = String(data: data, encoding: .utf8) else {
-            tmuxSessions = []
-            return
+            return []
         }
 
-        tmuxSessions = output
+        return output
             .split(separator: "\n", omittingEmptySubsequences: true)
             .compactMap { line -> TmuxSession? in
-                let parts = line.split(separator: "|", omittingEmptySubsequences: false)
-                    .map { String($0) }
-                // Format: name||windows||created||attached||activity
-                // split by "|" with empty subsequences gives [name, "", windows, "", created, "", attached, "", activity]
-                // Actually split(separator: "|") gives ["name","","windows","","created","","attached","","activity"]
-                // Let's use a simpler approach
                 let fields = String(line).components(separatedBy: "||")
                 guard fields.count >= 5 else { return nil }
 
