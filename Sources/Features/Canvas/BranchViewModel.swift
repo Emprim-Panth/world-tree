@@ -14,12 +14,20 @@ final class BranchViewModel: ObservableObject {
     @Published var error: String?
     @Published var branchPath: [Branch] = []
     @Published var siblings: [Branch] = []
+    @Published var toolTimelineEvents: [CanvasEvent] = []
+    @Published var activityCount: Int = 0
+    @Published var contextUsage: Double = 0
 
     @Published var shouldAutoScroll: Bool = true
     private let branchId: String
     private var observation: AnyDatabaseCancellable?
     private var claudeBridge: ClaudeBridge?
     private var responseTask: Task<Void, Never>?
+
+    /// Throttled streaming: accumulate chunks, publish on timer
+    private var streamChunks: [String] = []
+    private var streamThrottleTask: Task<Void, Never>?
+    private let streamThrottleInterval: UInt64 = 50_000_000 // 50ms in nanoseconds
 
     init(branchId: String) {
         self.branchId = branchId
@@ -39,6 +47,7 @@ final class BranchViewModel: ObservableObject {
             self.error = error.localizedDescription
         }
         isLoading = false
+        refreshObservability()
     }
 
     /// Start observing messages for live updates (GRDB ValueObservation)
@@ -58,9 +67,9 @@ final class BranchViewModel: ObservableObject {
             return try Message.fetchAll(db, sql: sql, arguments: [sessionId])
         }
 
-        self.observation = observation.start(in: dbPool, onError: { error in
+        self.observation = observation.start(in: dbPool, onError: { [weak self] error in
             Task { @MainActor in
-                self.error = error.localizedDescription
+                self?.error = error.localizedDescription
             }
         }, onChange: { [weak self] messages in
             Task { @MainActor in
@@ -91,6 +100,7 @@ final class BranchViewModel: ObservableObject {
             return
         }
 
+        EventStore.shared.log(branchId: branchId, sessionId: sessionId, type: .messageUser)
         requestResponse(for: content, sessionId: sessionId)
     }
 
@@ -112,9 +122,12 @@ final class BranchViewModel: ObservableObject {
             return try? MessageStore.shared.getSessionWorkingDirectory(sessionId: sid)
         }()
 
+        // Start throttled stream publisher
+        streamChunks = []
+        startStreamThrottle()
+
         responseTask = Task {
-            var accumulated = ""
-            canvasLog("[BranchVM] starting response, hasAPI=\(bridge.hasAPIAccess)")
+            canvasLog("[BranchVM] starting response, provider=\(bridge.activeProviderName)")
 
             let stream = bridge.send(
                 message: message,
@@ -128,39 +141,56 @@ final class BranchViewModel: ObservableObject {
             for await event in stream {
                 switch event {
                 case .text(let chunk):
-                    accumulated += chunk
-                    streamingResponse = accumulated
-                    if accumulated.count < 100 {
-                        canvasLog("[BranchVM] text chunk: \(chunk.prefix(50))")
-                    }
+                    streamChunks.append(chunk)
 
                 case .toolStart(let name, let input):
                     canvasLog("[BranchVM] toolStart: \(name)")
+                    flushStreamChunks()
                     let activity = ToolActivity(
                         name: name,
                         input: input,
                         status: .running
                     )
                     toolActivities.append(activity)
+                    EventStore.shared.log(
+                        branchId: self.branchId, sessionId: sessionId,
+                        type: .toolStart, data: ["name": name, "input": String(input.prefix(200))]
+                    )
 
                 case .toolEnd(let name, let result, let isError):
                     if let idx = toolActivities.lastIndex(where: { $0.name == name && $0.status == .running }) {
                         toolActivities[idx].status = isError ? .failed : .completed
                         toolActivities[idx].output = String(result.prefix(200))
                     }
+                    EventStore.shared.log(
+                        branchId: self.branchId, sessionId: sessionId,
+                        type: isError ? .toolError : .toolEnd,
+                        data: ["name": name, "result": String(result.prefix(200))]
+                    )
 
                 case .done(let usage):
                     canvasLog("[BranchVM] done, turns=\(usage.turnCount)")
                     tokenUsage = usage
+                    EventStore.shared.log(
+                        branchId: self.branchId, sessionId: sessionId,
+                        type: .sessionEnd, data: ["turns": usage.turnCount]
+                    )
 
                 case .error(let msg):
                     canvasLog("[BranchVM] error: \(msg)")
                     self.error = msg
+                    EventStore.shared.log(
+                        branchId: self.branchId, sessionId: sessionId,
+                        type: .error, data: ["message": msg]
+                    )
                 }
             }
 
-            // Save final text response as assistant message
-            let finalResponse = accumulated.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Final flush — join all chunks once for the save
+            stopStreamThrottle()
+            let finalResponse = streamChunks.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+            streamingResponse = ""
+
             if !finalResponse.isEmpty {
                 do {
                     _ = try MessageStore.shared.sendMessage(
@@ -173,9 +203,11 @@ final class BranchViewModel: ObservableObject {
                 }
             }
 
-            streamingResponse = ""
+            streamChunks = []
             isResponding = false
             toolActivities = []
+            EventStore.shared.flush()
+            self.refreshObservability()
         }
     }
 
@@ -237,6 +269,42 @@ final class BranchViewModel: ObservableObject {
         isResponding = false
         streamingResponse = ""
         toolActivities = []
+    }
+
+    // MARK: - Stream Throttling
+
+    /// Publish accumulated chunks to streamingResponse on a 50ms timer
+    private func startStreamThrottle() {
+        streamThrottleTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: self?.streamThrottleInterval ?? 50_000_000)
+                self?.flushStreamChunks()
+            }
+        }
+    }
+
+    private func stopStreamThrottle() {
+        streamThrottleTask?.cancel()
+        streamThrottleTask = nil
+        flushStreamChunks()
+    }
+
+    /// Join chunks and publish — called on timer and before tool events
+    private func flushStreamChunks() {
+        guard !streamChunks.isEmpty else { return }
+        streamingResponse = streamChunks.joined()
+    }
+
+    /// Refresh observability metrics from EventStore.
+    func refreshObservability() {
+        activityCount = EventStore.shared.activityCount(branchId: branchId)
+        toolTimelineEvents = EventStore.shared.toolEvents(branchId: branchId)
+
+        // Estimate context usage from token data
+        if let usage = tokenUsage, usage.totalInputTokens > 0 {
+            let maxContext = 200_000  // Claude's max context
+            contextUsage = Double(usage.totalInputTokens) / Double(maxContext)
+        }
     }
 
     func stopObserving() {

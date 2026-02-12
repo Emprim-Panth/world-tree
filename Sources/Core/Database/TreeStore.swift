@@ -157,21 +157,36 @@ final class TreeStore {
         collapsed: Bool? = nil
     ) throws {
         try db.write { db in
+            var setClauses: [String] = []
+            var args: [DatabaseValueConvertible?] = []
+
             if let status {
-                try db.execute(sql: "UPDATE canvas_branches SET status = ?, updated_at = datetime('now') WHERE id = ?", arguments: [status.rawValue, id])
+                setClauses.append("status = ?")
+                args.append(status.rawValue)
             }
             if let summary {
-                try db.execute(sql: "UPDATE canvas_branches SET summary = ?, updated_at = datetime('now') WHERE id = ?", arguments: [summary, id])
+                setClauses.append("summary = ?")
+                args.append(summary)
             }
             if let title {
-                try db.execute(sql: "UPDATE canvas_branches SET title = ?, updated_at = datetime('now') WHERE id = ?", arguments: [title, id])
+                setClauses.append("title = ?")
+                args.append(title)
             }
             if let daemonTaskId {
-                try db.execute(sql: "UPDATE canvas_branches SET daemon_task_id = ?, updated_at = datetime('now') WHERE id = ?", arguments: [daemonTaskId, id])
+                setClauses.append("daemon_task_id = ?")
+                args.append(daemonTaskId)
             }
             if let collapsed {
-                try db.execute(sql: "UPDATE canvas_branches SET collapsed = ?, updated_at = datetime('now') WHERE id = ?", arguments: [collapsed ? 1 : 0, id])
+                setClauses.append("collapsed = ?")
+                args.append(collapsed ? 1 : 0)
             }
+
+            guard !setClauses.isEmpty else { return }
+            setClauses.append("updated_at = datetime('now')")
+            args.append(id)
+
+            let sql = "UPDATE canvas_branches SET \(setClauses.joined(separator: ", ")) WHERE id = ?"
+            try db.execute(sql: sql, arguments: StatementArguments(args)!)
         }
     }
 
@@ -191,26 +206,23 @@ final class TreeStore {
     // MARK: - Branch Navigation
 
     /// Returns the path from the root branch to the given branch (inclusive).
+    /// Uses a recursive CTE instead of loading every branch in the tree.
     func branchPath(to branchId: String) throws -> [Branch] {
-        let allBranches = try db.read { db in
-            // Get the tree ID for this branch, then load all branches in that tree
-            guard let branch = try Branch.fetchOne(db, key: branchId) else { return [Branch]() }
-            return try Branch.filter(Column("tree_id") == branch.treeId)
-                .order(Column("created_at"))
-                .fetchAll(db)
+        try db.read { db in
+            let sql = """
+                WITH RECURSIVE ancestors(id) AS (
+                    SELECT id FROM canvas_branches WHERE id = ?
+                    UNION ALL
+                    SELECT cb.parent_branch_id FROM canvas_branches cb
+                    JOIN ancestors a ON cb.id = a.id
+                    WHERE cb.parent_branch_id IS NOT NULL
+                )
+                SELECT cb.* FROM canvas_branches cb
+                JOIN ancestors a ON cb.id = a.id
+                ORDER BY cb.created_at ASC
+                """
+            return try Branch.fetchAll(db, sql: sql, arguments: [branchId])
         }
-
-        // Walk up from branchId to root
-        var path: [Branch] = []
-        let lookup = Dictionary(uniqueKeysWithValues: allBranches.map { ($0.id, $0) })
-        var currentId: String? = branchId
-
-        while let id = currentId, let branch = lookup[id] {
-            path.insert(branch, at: 0)
-            currentId = branch.parentBranchId
-        }
-
-        return path
     }
 
     /// Returns sibling branches (same parent) excluding the given branch.

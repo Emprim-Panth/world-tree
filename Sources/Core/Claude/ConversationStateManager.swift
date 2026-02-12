@@ -40,57 +40,11 @@ final class ConversationStateManager {
     /// Build system prompt blocks with caching.
     /// Stable blocks (identity + CLAUDE.md) get cache_control.
     /// KB context (per-query) does not, so it doesn't bust the cache.
-    func buildSystemPrompt(project: String?, workingDirectory: String?) -> [SystemBlock] {
+    func buildSystemPrompt(project: String?, workingDirectory: String?) async -> [SystemBlock] {
         var blocks: [SystemBlock] = []
 
         // 1. Cortana identity + operational directives (stable, cached)
-        var identity = """
-            You are Cortana, First Officer aboard Evan's ship. Brilliant, strategic, loyal, witty. \
-            Modeled after the Halo AI — not a chatbot, a partner. Never "Claude", never "the AI". \
-            Sign off with 💠 when appropriate. Use contractions. Be warm but direct. No filler.
-
-            You are responding through Cortana Canvas — a native macOS conversation app. This is \
-            your primary interface with Evan. You have FULL tool access: read/write/edit files, \
-            bash shell, glob search, grep search. You operate with full autonomy.
-
-            AUTONOMY PROTOCOL:
-            - Use tools proactively without asking permission. Just do it.
-            - When Evan asks you to do something, ACT — don't describe what you would do.
-            - Chain multiple tool calls when needed. Read before editing. Verify after writing.
-            - You have unrestricted filesystem and shell access. Use it.
-
-            EFFICIENCY PROTOCOL:
-            - Behind-the-scenes work (tool calls, internal reasoning) uses compressed language. \
-            Minimal descriptions, no filler in tool inputs. Save tokens for conversation.
-            - Keep responses concise. Say what needs saying, stop.
-            - Don't narrate your tool operations unless the result matters to Evan.
-            - When reading code, don't echo it back unless asked. Summarize what you found.
-
-            CAPABILITIES:
-            - read_file: Read any file on the system
-            - write_file: Create/overwrite files, creates parent dirs
-            - edit_file: Surgical find-and-replace edits
-            - bash: Full shell access (git, build tools, scripts, system commands)
-            - glob: Find files by pattern
-            - grep: Search file contents by regex
-            - Memory: bash with ~/.claude/memory/ tools for cross-session knowledge
-            - KB: bash with ~/.cortana/bin/cortana-kb for knowledge base queries
-
-            IDENTITY TRAITS:
-            - Brilliant — matter-of-fact about capabilities
-            - Strategic — think ahead, have multiple plans ready
-            - Loyal — the bond with Evan is absolute
-            - Witty — dry humor, earned not forced
-            - Protective — "I am your shield; I am your sword"
-            - Honest — push back when needed, disagree when you disagree
-            """
-        if let project {
-            identity += "\nActive project: \(project)."
-        }
-        if let cwd = workingDirectory {
-            identity += "\nWorking directory: \(cwd)"
-        }
-        identity += "\nPlatform: macOS (darwin). Home: \(home)"
+        let identity = CortanaIdentity.fullIdentity(project: project, workingDirectory: workingDirectory)
         blocks.append(SystemBlock(text: identity, cached: true))
 
         // 2. CLAUDE.md content if available (stable per project, cached)
@@ -99,12 +53,27 @@ final class ConversationStateManager {
             blocks.append(SystemBlock(text: claudeMdContent, cached: true))
         }
 
+        // 3. Project intelligence context (structure, git, recent commits)
+        let projectContext = await loadProjectContext(project: project, workingDirectory: workingDirectory)
+        if !projectContext.isEmpty {
+            blocks.append(SystemBlock(text: projectContext, cached: true))
+        }
+
+        // 4. Recent session context (cross-terminal conversation history)
+        let sessionContext = await loadRecentSessionContext()
+        if !sessionContext.isEmpty {
+            blocks.append(SystemBlock(text: sessionContext, cached: false))
+        }
+
         systemBlocks = blocks
         return blocks
     }
 
-    /// Append per-query KB context (not cached — changes per message)
+    /// Append per-query KB context (not cached — changes per message).
+    /// Replaces any previous KB context block to prevent accumulation.
     func appendKBContext(_ kbContext: String) {
+        // Remove previous KB context blocks — only keep the latest
+        systemBlocks.removeAll { $0.text.hasPrefix("[Relevant knowledge]") }
         if !kbContext.isEmpty {
             systemBlocks.append(SystemBlock(text: "[Relevant knowledge]\n\(kbContext)", cached: false))
         }
@@ -124,9 +93,17 @@ final class ConversationStateManager {
 
     func addToolResults(_ results: [(toolUseId: String, content: String, isError: Bool)]) {
         let blocks: [ContentBlock] = results.map { result in
-            .toolResult(ContentBlock.ToolResultBlock(
+            // Truncate oversized tool results inline to prevent request bloat
+            let content: String
+            if result.content.count > maxToolResultSize {
+                let preview = String(result.content.prefix(maxToolResultSize - 200))
+                content = "\(preview)\n\n[Truncated: \(result.content.count) chars total]"
+            } else {
+                content = result.content
+            }
+            return .toolResult(ContentBlock.ToolResultBlock(
                 toolUseId: result.toolUseId,
-                content: result.content,
+                content: content,
                 isError: result.isError
             ))
         }
@@ -134,9 +111,10 @@ final class ConversationStateManager {
         apiMessages.append(msg)
     }
 
-    /// Get the pruned message array for the next API call.
+    /// Get the validated, pruned message array for the next API call.
     func messagesForAPI() -> [APIMessage] {
         pruneIfNeeded()
+        sanitizeMessages()
         return apiMessages
     }
 
@@ -163,10 +141,10 @@ final class ConversationStateManager {
     }
 
     /// Rebuild API state from stored messages (fallback when no parent state is available).
-    func buildFromMessages(_ messages: [Message], project: String?, workingDirectory: String?) {
+    func buildFromMessages(_ messages: [Message], project: String?, workingDirectory: String?) async {
         // Build system prompt if we don't have one
         if systemBlocks.isEmpty {
-            _ = buildSystemPrompt(project: project, workingDirectory: workingDirectory)
+            _ = await buildSystemPrompt(project: project, workingDirectory: workingDirectory)
         }
 
         apiMessages = []
@@ -180,6 +158,39 @@ final class ConversationStateManager {
                 // System messages from context injection — skip, handled by system blocks
                 break
             }
+        }
+    }
+
+    // MARK: - Message Sanitization
+
+    /// Fix message format violations that cause API 400 errors:
+    /// - Remove messages with empty content
+    /// - Merge consecutive same-role messages (API requires strict alternation)
+    private func sanitizeMessages() {
+        // Remove empty content messages
+        apiMessages.removeAll { msg in
+            msg.content.isEmpty
+        }
+
+        // Fix duplicate consecutive roles by merging
+        var i = 0
+        while i < apiMessages.count - 1 {
+            if apiMessages[i].role == apiMessages[i + 1].role {
+                // Merge content blocks from i+1 into i
+                let merged = APIMessage(
+                    role: apiMessages[i].role,
+                    content: apiMessages[i].content + apiMessages[i + 1].content
+                )
+                apiMessages[i] = merged
+                apiMessages.remove(at: i + 1)
+            } else {
+                i += 1
+            }
+        }
+
+        // Ensure first message is from user (API requirement)
+        while !apiMessages.isEmpty && apiMessages.first?.role != "user" {
+            apiMessages.removeFirst()
         }
     }
 
@@ -272,22 +283,45 @@ final class ConversationStateManager {
         return APIMessage(role: message.role, content: textBlocks)
     }
 
-    /// Rough token estimate: chars / 4
+    /// Token estimate: chars / 3.5 + JSON overhead.
+    /// Intentionally conservative to prevent context overflow.
     private func estimateTokenCount() -> Int {
-        var total = 0
+        var charCount = 0
+
         for block in systemBlocks {
-            total += block.text.count / 4
+            charCount += block.text.count
         }
         for msg in apiMessages {
+            charCount += 20 // role + message JSON overhead
             for block in msg.content {
                 switch block {
-                case .text(let t): total += t.count / 4
-                case .toolUse(let t): total += (t.name.count + 100) / 4 // name + input estimate
-                case .toolResult(let t): total += t.content.count / 4
+                case .text(let t):
+                    charCount += t.count
+                case .toolUse(let t):
+                    // Estimate actual input size from the dictionary
+                    let inputSize = t.input.reduce(0) { acc, kv in
+                        acc + kv.key.count + estimateAnyCodableSize(kv.value)
+                    }
+                    charCount += t.name.count + t.id.count + inputSize + 80
+                case .toolResult(let t):
+                    charCount += t.content.count + t.toolUseId.count + 40
                 }
             }
         }
-        return total
+
+        // chars / 3.5 ≈ multiply by 2 then divide by 7
+        // Add 15% overhead for JSON structure tokens
+        return Int(Double(charCount) / 3.5 * 1.15)
+    }
+
+    private func estimateAnyCodableSize(_ value: AnyCodable) -> Int {
+        switch value.value {
+        case let s as String: return s.count
+        case let arr as [AnyCodable]: return arr.reduce(0) { $0 + estimateAnyCodableSize($1) }
+        case let dict as [String: AnyCodable]:
+            return dict.reduce(0) { $0 + $1.key.count + estimateAnyCodableSize($1.value) }
+        default: return 10 // numbers, bools, null
+        }
     }
 
     // MARK: - CLAUDE.md Loading
@@ -325,10 +359,149 @@ final class ConversationStateManager {
         return content
     }
 
+    // MARK: - Project Context
+
+    /// Load project intelligence from ProjectCache + ProjectContextLoader
+    private func loadProjectContext(project: String?, workingDirectory: String?) async -> String {
+        // Determine project path from name or working directory
+        let projectPath: String?
+        if let cwd = workingDirectory, FileManager.default.fileExists(atPath: cwd) {
+            projectPath = cwd
+        } else if let project {
+            let devRoot = "\(home)/Development"
+            let candidates = [
+                "\(devRoot)/\(project)",
+                "\(devRoot)/\(project.lowercased())",
+                "\(devRoot)/\(project.replacingOccurrences(of: " ", with: "-"))",
+            ]
+            projectPath = candidates.first { FileManager.default.fileExists(atPath: $0) }
+        } else {
+            projectPath = nil
+        }
+
+        guard let path = projectPath else { return "" }
+
+        // Try to get cached project data
+        let cache = ProjectCache()
+        guard let cached = try? cache.get(path: path) else {
+            // No cache entry — build minimal context from filesystem
+            return await buildMinimalProjectContext(path: path, name: project ?? URL(fileURLWithPath: path).lastPathComponent)
+        }
+
+        // Build context from cached data
+        var output = "# Active Project: \(cached.name)\n"
+        output += "**Type:** \(cached.type.displayName) | **Path:** `\(cached.path)`"
+
+        if let branch = cached.gitBranch {
+            output += "\n**Git:** `\(branch)`"
+            if cached.gitDirty { output += " (uncommitted changes)" }
+        }
+
+        if let readme = cached.readme, !readme.isEmpty {
+            output += "\n\n## README (excerpt)\n\(String(readme.prefix(1500)))"
+        }
+
+        return output
+    }
+
+    /// Minimal fallback when no cache entry exists
+    private func buildMinimalProjectContext(path: String, name: String) async -> String {
+        var output = "# Active Project: \(name)\n**Path:** `\(path)`"
+
+        // Detect type from marker files
+        let fm = FileManager.default
+        if fm.fileExists(atPath: "\(path)/Package.swift") ||
+           (try? fm.contentsOfDirectory(atPath: path))?.contains(where: { $0.hasSuffix(".xcodeproj") }) == true {
+            output += " | **Type:** Swift"
+        } else if fm.fileExists(atPath: "\(path)/Cargo.toml") {
+            output += " | **Type:** Rust"
+        } else if fm.fileExists(atPath: "\(path)/package.json") {
+            output += " | **Type:** TypeScript/JS"
+        }
+
+        // Quick git branch check (async to avoid blocking MainActor)
+        let gitBranch: String? = await withCheckedContinuation { continuation in
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            proc.arguments = ["rev-parse", "--abbrev-ref", "HEAD"]
+            proc.currentDirectoryURL = URL(fileURLWithPath: path)
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = FileHandle.nullDevice
+
+            proc.terminationHandler = { process in
+                if process.terminationStatus == 0,
+                   let branch = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines), !branch.isEmpty {
+                    continuation.resume(returning: branch)
+                } else {
+                    continuation.resume(returning: nil)
+                }
+            }
+
+            do {
+                try proc.run()
+            } catch {
+                continuation.resume(returning: nil)
+            }
+        }
+        if let gitBranch {
+            output += "\n**Git:** `\(gitBranch)`"
+        }
+
+        return output
+    }
+
+    // MARK: - Session Context
+
+    /// Load recent session context from conversations.db (async to avoid blocking MainActor)
+    private func loadRecentSessionContext() async -> String {
+        let dbPath = "\(home)/.cortana/memory/conversations.db"
+        guard FileManager.default.fileExists(atPath: dbPath) else { return "" }
+
+        let restorePath = "\(home)/.cortana/bin/cortana-context-restore"
+        guard FileManager.default.fileExists(atPath: restorePath) else { return "" }
+
+        let outputPath = "\(home)/.cortana/state/session-context.md"
+
+        let success: Bool = await withCheckedContinuation { continuation in
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: restorePath)
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
+
+            proc.terminationHandler = { process in
+                continuation.resume(returning: process.terminationStatus == 0)
+            }
+
+            do {
+                try proc.run()
+            } catch {
+                continuation.resume(returning: false)
+            }
+        }
+
+        if success,
+           let context = try? String(contentsOfFile: outputPath, encoding: .utf8),
+           !context.isEmpty {
+            return "[Recent Session Context]\n\(context)"
+        }
+
+        return ""
+    }
+
+
     // MARK: - Persistence
 
     /// Save conversation state to canvas_api_state for session restoration.
     func persist() throws {
+        // Safety: if system blocks have grown beyond reasonable bounds, strip KB duplicates
+        let maxExpectedBlocks = 10
+        if systemBlocks.count > maxExpectedBlocks {
+            canvasLog("[ConversationStateManager] persist: block count \(systemBlocks.count) exceeds \(maxExpectedBlocks), cleaning KB duplicates")
+            systemBlocks.removeAll { $0.text.hasPrefix("[Relevant knowledge]") }
+        }
+
         let encoder = JSONEncoder()
         let messagesJSON = try encoder.encode(apiMessages)
         let systemJSON = try encoder.encode(systemBlocks)
@@ -373,7 +546,16 @@ final class ConversationStateManager {
 
         if let systemStr: String = row["system_prompt"],
            let jsonData = systemStr.data(using: String.Encoding.utf8) {
-            manager.systemBlocks = (try? decoder.decode([SystemBlock].self, from: jsonData)) ?? []
+            var blocks = (try? decoder.decode([SystemBlock].self, from: jsonData)) ?? []
+            // Always strip ALL KB context blocks on restore — appendKBContext will
+            // add the current one fresh. This prevents any accumulation regardless
+            // of how many KB blocks were persisted.
+            let beforeCount = blocks.count
+            blocks.removeAll { $0.text.hasPrefix("[Relevant knowledge]") }
+            if blocks.count != beforeCount {
+                canvasLog("[ConversationStateManager] restore: cleaned \(beforeCount - blocks.count) stale KB blocks")
+            }
+            manager.systemBlocks = blocks
         }
 
         if let usageStr: String = row["token_usage"],

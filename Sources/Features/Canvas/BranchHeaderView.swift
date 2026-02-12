@@ -4,6 +4,9 @@ struct BranchHeaderView: View {
     let branch: Branch
     let branchPath: [Branch]
     let siblings: [Branch]
+    let activityCount: Int
+    let contextUsage: Double
+    let isResponding: Bool
     let onNavigateToBranch: (String) -> Void
     let onComplete: () -> Void
 
@@ -47,10 +50,18 @@ struct BranchHeaderView: View {
 
                 // Metadata row
                 HStack(spacing: 8) {
+                    ActivityPulse(eventCount: activityCount, isResponding: isResponding)
+
                     StatusBadge(status: branch.status)
 
                     if let model = branch.model {
                         ModelBadge(model: model)
+                    }
+
+                    ProviderBadge()
+
+                    if contextUsage > 0 {
+                        ContextGauge(usage: contextUsage)
                     }
 
                     Text(branch.createdAt, style: .relative)

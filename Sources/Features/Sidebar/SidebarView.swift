@@ -2,8 +2,10 @@ import SwiftUI
 
 struct SidebarView: View {
     @StateObject private var viewModel = SidebarViewModel()
+    @StateObject private var daemonService = DaemonService.shared
     @EnvironmentObject var appState: AppState
     @State private var showNewTreeSheet = false
+    @State private var sessionsExpanded = true
     @State private var newTreeName = ""
     @State private var newTreeProject = ""
     private static let defaultWorkingDir = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Development"
@@ -14,9 +16,36 @@ struct SidebarView: View {
             // Projects section (collapsible)
             ProjectListView()
                 .frame(height: 200)
-            
+
             Divider()
-            
+
+            // Active Sessions (collapsible)
+            DisclosureGroup(isExpanded: $sessionsExpanded) {
+                AgentListView(showHeader: false)
+                    .frame(minHeight: 60, maxHeight: 200)
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Active Sessions")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+
+                    if !daemonService.activeSessions.isEmpty {
+                        Text("\(daemonService.activeSessions.count)")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(.blue)
+                            .cornerRadius(6)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+
+            Divider()
 
             // Search
             HStack {

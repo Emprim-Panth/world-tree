@@ -30,6 +30,9 @@ struct BranchView: View {
                     branch: branch,
                     branchPath: viewModel.branchPath,
                     siblings: viewModel.siblings,
+                    activityCount: viewModel.activityCount,
+                    contextUsage: viewModel.contextUsage,
+                    isResponding: viewModel.isResponding,
                     onNavigateToBranch: { branchId in
                         appState.selectBranch(branchId, in: branch.treeId)
                     },
@@ -131,6 +134,13 @@ struct BranchView: View {
                                 .padding(.top, 8)
                         }
 
+                        // Tool execution timeline
+                        if !viewModel.toolTimelineEvents.isEmpty {
+                            ToolTimeline(events: viewModel.toolTimelineEvents)
+                                .padding(.horizontal, 16)
+                                .padding(.top, 4)
+                        }
+
                         // Bottom padding so input isn't cramped
                         Color.clear.frame(height: 20)
                         }
@@ -155,12 +165,6 @@ struct BranchView: View {
                 }
                 .onChange(of: viewModel.streamingResponse) { _, _ in
                     if viewModel.shouldAutoScroll {
-                        scrollToBottom(proxy: proxy)
-                    }
-                }
-                .onChange(of: viewModel.inputText) { _, _ in
-                    // Auto-scroll as user types
-                    if viewModel.shouldAutoScroll && !viewModel.inputText.isEmpty {
                         scrollToBottom(proxy: proxy)
                     }
                 }
@@ -248,32 +252,42 @@ struct BranchView: View {
                 // Tool activity indicators
                 if !viewModel.toolActivities.isEmpty {
                     ForEach(viewModel.toolActivities) { activity in
-                        HStack(spacing: 6) {
-                            switch activity.status {
-                            case .running:
-                                ProgressView()
-                                    .controlSize(.mini)
-                            case .completed:
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                                    .font(.caption2)
-                            case .failed:
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.red)
-                                    .font(.caption2)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                switch activity.status {
+                                case .running:
+                                    ProgressView()
+                                        .controlSize(.mini)
+                                case .completed:
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
+                                        .font(.caption2)
+                                case .failed:
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.red)
+                                        .font(.caption2)
+                                }
+                                Text(activity.displayDescription)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
-                            Text(activity.displayDescription)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+
+                            // Inline diff for edit_file operations
+                            if activity.hasDiffData, let diff = activity.diffData {
+                                DiffView(
+                                    oldText: diff.oldText,
+                                    newText: diff.newText,
+                                    filePath: diff.filePath
+                                )
+                                .frame(maxWidth: 600)
+                            }
                         }
                     }
                 }
 
-                // Streaming text
+                // Streaming text with markdown rendering
                 if !viewModel.streamingResponse.isEmpty {
-                    Text(viewModel.streamingResponse)
-                        .textSelection(.enabled)
-                        .font(.body)
+                    StreamingMarkdownView(text: viewModel.streamingResponse)
                 }
             }
             .padding(.leading, 10)
@@ -308,12 +322,13 @@ struct BranchView: View {
                 .frame(width: 2)
 
             // Preview text
-            Text(viewModel.inputText)
+            Text(viewModel.inputText.isEmpty ? " " : viewModel.inputText)
                 .font(.body)
                 .foregroundStyle(.secondary.opacity(0.7))
                 .padding(.leading, 10)
                 .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minHeight: 20)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 2)

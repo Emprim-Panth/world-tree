@@ -5,7 +5,9 @@ enum CanvasTools {
 
     /// All tool definitions. The last one carries cache_control for prompt caching.
     static func definitions() -> [ToolSchema] {
-        var tools = [readFile, writeFile, editFile, bash, glob, grep]
+        var tools = [readFile, writeFile, editFile, bash, glob, grep,
+                     buildProject, runTests, checkpointCreate, checkpointRevert, checkpointList,
+                     backgroundRun, listTerminals, terminalOutput]
         tools[tools.count - 1].cacheControl = CacheControl(type: "ephemeral")
         return tools
     }
@@ -135,6 +137,105 @@ enum CanvasTools {
         )
     )
 
+    static let buildProject = ToolSchema(
+        name: "build_project",
+        description: """
+            Build the current project and return structured error/warning results. \
+            Auto-detects project type: Xcode (.xcodeproj/Package.swift), Cargo (Cargo.toml), \
+            npm (package.json). Optionally specify a scheme for Xcode projects. \
+            Returns JSON array of {file, line, column, severity, message}.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "scheme": PropertySchema(
+                    type: "string",
+                    description: "Xcode scheme name. Auto-detected if not specified."
+                ),
+                "path": PropertySchema(
+                    type: "string",
+                    description: "Project directory. Defaults to working directory."
+                ),
+            ],
+            required: []
+        )
+    )
+
+    static let runTests = ToolSchema(
+        name: "run_tests",
+        description: """
+            Run tests for the current project and return structured results. \
+            Auto-detects project type. Returns JSON array of \
+            {test_name, status (pass/fail/skip), duration, failure_message, file, line}.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "scheme": PropertySchema(
+                    type: "string",
+                    description: "Xcode scheme name. Auto-detected if not specified."
+                ),
+                "filter": PropertySchema(
+                    type: "string",
+                    description: "Test name filter (e.g. 'test_login' or 'AuthTests')"
+                ),
+                "path": PropertySchema(
+                    type: "string",
+                    description: "Project directory. Defaults to working directory."
+                ),
+            ],
+            required: []
+        )
+    )
+
+    static let checkpointCreate = ToolSchema(
+        name: "checkpoint_create",
+        description: """
+            Create a named checkpoint of the current working directory state via git stash. \
+            Saves all tracked and untracked files. Use before risky multi-file operations.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "name": PropertySchema(
+                    type: "string",
+                    description: "Descriptive name for the checkpoint (e.g. 'before refactor')"
+                ),
+            ],
+            required: ["name"]
+        )
+    )
+
+    static let checkpointRevert = ToolSchema(
+        name: "checkpoint_revert",
+        description: """
+            Revert to a previously created checkpoint. Lists available checkpoints if no index given. \
+            Applies the checkpoint without removing it from the stash.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "index": PropertySchema(
+                    type: "integer",
+                    description: "Stash index to revert to (from checkpoint_list). Defaults to most recent (0)."
+                ),
+            ],
+            required: []
+        )
+    )
+
+    static let checkpointList = ToolSchema(
+        name: "checkpoint_list",
+        description: """
+            List all canvas checkpoints with their indices, names, and timestamps.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [:],
+            required: []
+        )
+    )
+
     static let grep = ToolSchema(
         name: "grep",
         description: """
@@ -163,6 +264,70 @@ enum CanvasTools {
                 ),
             ],
             required: ["pattern"]
+        )
+    )
+
+    static let backgroundRun = ToolSchema(
+        name: "background_run",
+        description: """
+            Execute a long-running command in the background. Returns a job ID immediately \
+            without waiting for completion. Output is stored in the database and a macOS \
+            notification fires when the job completes. Use for builds, test suites, \
+            deployments, or any command that takes more than a few seconds.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "command": PropertySchema(
+                    type: "string",
+                    description: "The shell command to execute in the background"
+                ),
+                "path": PropertySchema(
+                    type: "string",
+                    description: "Working directory. Defaults to branch working directory."
+                ),
+            ],
+            required: ["command"]
+        )
+    )
+
+    static let listTerminals = ToolSchema(
+        name: "list_terminals",
+        description: """
+            Discover active terminal sessions. Lists tmux sessions with window/pane info \
+            and detects running development processes (xcodebuild, cargo, npm, python, etc.). \
+            Use to understand what's currently running on the system.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [:],
+            required: []
+        )
+    )
+
+    static let terminalOutput = ToolSchema(
+        name: "terminal_output",
+        description: """
+            Capture recent output from a tmux pane. Specify the session name \
+            (and optionally window:pane). Returns the last N lines of visible output.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "session": PropertySchema(
+                    type: "string",
+                    description: "tmux session name (from list_terminals)"
+                ),
+                "pane": PropertySchema(
+                    type: "string",
+                    description: "Window and pane target (e.g. '0:0.0'). Defaults to active pane."
+                ),
+                "lines": PropertySchema(
+                    type: "integer",
+                    description: "Number of lines to capture. Default 50, max 500."
+                ),
+            ],
+            required: ["session"]
         )
     )
 }

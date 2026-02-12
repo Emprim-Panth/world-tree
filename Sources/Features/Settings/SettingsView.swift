@@ -5,9 +5,15 @@ struct SettingsView: View {
     @AppStorage("daemonSocketPath") private var daemonSocketPath = CortanaConstants.daemonSocketPath
     @AppStorage("defaultModel") private var defaultModel = CortanaConstants.defaultModel
     @AppStorage("contextDepth") private var contextDepth = CortanaConstants.defaultContextDepth
+    @ObservedObject private var providerManager = ProviderManager.shared
 
     var body: some View {
         TabView {
+            providerTab
+                .tabItem {
+                    Label("Provider", systemImage: "cpu")
+                }
+
             generalTab
                 .tabItem {
                     Label("General", systemImage: "gear")
@@ -23,7 +29,110 @@ struct SettingsView: View {
                     Label("Connection", systemImage: "network")
                 }
         }
-        .frame(width: 480, height: 350)
+        .frame(width: 480, height: 400)
+    }
+
+    // MARK: - Provider
+
+    private var providerTab: some View {
+        Form {
+            Section("Active Provider") {
+                ForEach(providerManager.providers, id: \.identifier) { provider in
+                    HStack(spacing: 10) {
+                        // Selection radio
+                        Image(systemName: provider.identifier == providerManager.selectedProviderId
+                              ? "largecircle.fill.circle" : "circle")
+                            .foregroundStyle(provider.identifier == providerManager.selectedProviderId
+                                             ? .blue : .secondary)
+                            .onTapGesture {
+                                providerManager.selectedProviderId = provider.identifier
+                            }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(provider.displayName)
+                                    .fontWeight(.medium)
+
+                                // Health dot
+                                healthDot(for: provider.identifier)
+                            }
+
+                            Text(providerDescription(provider.identifier))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        providerManager.selectedProviderId = provider.identifier
+                    }
+                }
+            }
+
+            Section("Capabilities") {
+                if let provider = providerManager.activeProvider {
+                    HStack(spacing: 8) {
+                        capabilityTag("Streaming", active: provider.capabilities.contains(.streaming))
+                        capabilityTag("Tools", active: provider.capabilities.contains(.toolExecution))
+                        capabilityTag("Resume", active: provider.capabilities.contains(.sessionResume))
+                        capabilityTag("Fork", active: provider.capabilities.contains(.sessionFork))
+                    }
+                    HStack(spacing: 8) {
+                        capabilityTag("Cache", active: provider.capabilities.contains(.promptCaching))
+                        capabilityTag("Cost", active: provider.capabilities.contains(.costTracking))
+                        capabilityTag("Models", active: provider.capabilities.contains(.modelSelection))
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .task {
+            await providerManager.refreshHealth()
+        }
+    }
+
+    private func healthDot(for identifier: String) -> some View {
+        let health = providerManager.healthStatus[identifier]
+        let color: Color = {
+            switch health {
+            case .available: return .green
+            case .degraded: return .yellow
+            case .unavailable: return .red
+            case .none: return .gray
+            }
+        }()
+
+        return Circle()
+            .fill(color)
+            .frame(width: 8, height: 8)
+            .help(health?.statusLabel ?? "Unknown")
+    }
+
+    private func providerDescription(_ identifier: String) -> String {
+        switch identifier {
+        case "claude-code":
+            return "CLI backend using Max subscription. Free, full tools + session resume."
+        case "anthropic-api":
+            return "Direct API with managed context. Requires API credits."
+        case "ollama":
+            return "Local models via Ollama. Free, private, not yet implemented."
+        default:
+            return ""
+        }
+    }
+
+    private func capabilityTag(_ label: String, active: Bool) -> some View {
+        Text(label)
+            .font(.caption2)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(active ? Color.blue.opacity(0.15) : Color.secondary.opacity(0.1))
+            .foregroundStyle(active ? .blue : .secondary)
+            .cornerRadius(4)
     }
 
     // MARK: - General
@@ -60,37 +169,13 @@ struct SettingsView: View {
                 .foregroundStyle(hasKey ? .green : .orange)
 
                 if hasKey {
-                    Text("Direct API mode active — tools execute locally with managed context.")
+                    Text("Direct API provider available. Switch to it in the Provider tab.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Set ANTHROPIC_API_KEY in your shell profile to enable direct API mode.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("Falling back to Claude CLI (no tool persistence between messages).")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
-                }
-            }
-
-            Section("Mode") {
-                let hasKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil
-
-                HStack {
-                    Image(systemName: hasKey ? "bolt.fill" : "terminal")
-                        .foregroundStyle(hasKey ? .blue : .secondary)
-                    VStack(alignment: .leading) {
-                        Text(hasKey ? "Direct API" : "CLI Fallback")
-                            .fontWeight(.medium)
-                        Text(hasKey
-                            ? "Persistent tools, prompt caching, managed context"
-                            : "Spawns claude CLI per message, no tool persistence"
-                        )
+                    Text("Set ANTHROPIC_API_KEY in your shell profile to enable the Direct API provider.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    }
                 }
             }
         }

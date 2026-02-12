@@ -71,7 +71,7 @@ struct DiscoveredProject: Equatable {
 
 struct CachedProject: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "project_cache"
-    
+
     var id: Int?
     let path: String
     let name: String
@@ -81,6 +81,14 @@ struct CachedProject: Codable, FetchableRecord, PersistableRecord {
     let lastModified: Date
     let lastScanned: Date
     let readme: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, path, name, type, readme
+        case gitBranch = "git_branch"
+        case gitDirty = "git_dirty"
+        case lastModified = "last_modified"
+        case lastScanned = "last_scanned"
+    }
     
     init(
         id: Int? = nil,

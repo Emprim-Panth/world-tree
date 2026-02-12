@@ -39,7 +39,14 @@ final class AnthropicClient: Sendable {
 
                     if let bodyData = urlRequest.httpBody,
                        let bodyStr = String(data: bodyData, encoding: .utf8) {
-                        canvasLog("[AnthropicClient] request body (first 500): \(String(bodyStr.prefix(500)))")
+                        canvasLog("[AnthropicClient] request: model + tokens at byte 0..\(min(bodyStr.count, 200))")
+                        // Log key fields instead of raw body to see model clearly
+                        if let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
+                            let model = json["model"] as? String ?? "MISSING"
+                            let msgs = (json["messages"] as? [[String: Any]])?.count ?? 0
+                            let sys = (json["system"] as? [[String: Any]])?.count ?? 0
+                            canvasLog("[AnthropicClient] request fields: model=\(model), messages=\(msgs), system_blocks=\(sys), body_bytes=\(bodyData.count)")
+                        }
                     }
                     canvasLog("[AnthropicClient] sending request to \(self.baseURL)")
                     let (bytes, response) = try await self.session.bytes(for: urlRequest)
@@ -53,7 +60,7 @@ final class AnthropicClient: Sendable {
 
                     // Handle non-200 responses
                     if httpResponse.statusCode != 200 {
-                        try self.handleErrorResponse(
+                        try await self.handleErrorResponse(
                             status: httpResponse.statusCode,
                             headers: httpResponse,
                             bytes: bytes,
@@ -154,7 +161,25 @@ final class AnthropicClient: Sendable {
         headers: HTTPURLResponse,
         bytes: URLSession.AsyncBytes,
         continuation: AsyncThrowingStream<SSEEvent, Error>.Continuation
-    ) throws {
+    ) async throws {
+        // Read the actual error body — try raw bytes first (more reliable than .lines for JSON)
+        var bodyData = Data()
+        do {
+            for try await byte in bytes {
+                bodyData.append(byte)
+                if bodyData.count > 4000 { break }
+            }
+        } catch {
+            // Ignore read errors — we already have the status code
+        }
+        let body: String
+        if bodyData.isEmpty {
+            body = "HTTP \(status) (empty response body)"
+        } else {
+            body = String(data: bodyData, encoding: .utf8) ?? "HTTP \(status) (unreadable body: \(bodyData.count) bytes)"
+        }
+        canvasLog("[AnthropicClient] HTTP \(status) error body: \(String(body.prefix(2000)))")
+
         switch status {
         case 429:
             let retryAfter = headers.value(forHTTPHeaderField: "retry-after")
@@ -163,8 +188,7 @@ final class AnthropicClient: Sendable {
         case 529:
             throw AnthropicClientError.overloaded
         default:
-            // Try to read error body
-            throw AnthropicClientError.httpError(status: status, body: "HTTP \(status)")
+            throw AnthropicClientError.httpError(status: status, body: body)
         }
     }
 

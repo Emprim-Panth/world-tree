@@ -74,9 +74,10 @@ struct TreeNodeView: View {
     private var statusIndicator: some View {
         switch branch.status {
         case .active:
-            Circle()
-                .fill(.green)
-                .frame(width: 6, height: 6)
+            ActivityPulse(
+                eventCount: EventStore.shared.activityCount(branchId: branch.id),
+                isResponding: false
+            )
         case .completed:
             Image(systemName: "checkmark.circle.fill")
                 .font(.caption2)

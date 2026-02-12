@@ -94,6 +94,83 @@ enum MigrationManager {
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_token_usage_date ON canvas_token_usage(recorded_at)")
         }
 
+        // Migration 3: Background job queue
+        migrator.registerMigration("v3_job_queue") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_jobs (
+                    id TEXT PRIMARY KEY,
+                    type TEXT NOT NULL DEFAULT 'background_run',
+                    command TEXT NOT NULL,
+                    working_directory TEXT NOT NULL,
+                    branch_id TEXT,
+                    status TEXT NOT NULL DEFAULT 'queued'
+                        CHECK(status IN ('queued','running','completed','failed','cancelled')),
+                    output TEXT,
+                    error TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP
+                )
+                """)
+
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_jobs_status ON canvas_jobs(status)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_jobs_branch ON canvas_jobs(branch_id)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_jobs_created ON canvas_jobs(created_at)")
+        }
+
+        // Migration 4: Project cache for scanner results
+        migrator.registerMigration("v4_project_cache") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS project_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    path TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    type TEXT NOT NULL DEFAULT 'unknown',
+                    git_branch TEXT,
+                    git_dirty INTEGER NOT NULL DEFAULT 0,
+                    last_modified TIMESTAMP,
+                    last_scanned TIMESTAMP,
+                    readme TEXT
+                )
+                """)
+
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_project_cache_path ON project_cache(path)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_project_cache_scanned ON project_cache(last_scanned)")
+        }
+
+        // Migration 5: CLI session mapping for provider resume support
+        migrator.registerMigration("v5_cli_sessions") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_cli_sessions (
+                    canvas_session_id TEXT PRIMARY KEY,
+                    cli_session_id TEXT NOT NULL,
+                    provider TEXT NOT NULL DEFAULT 'claude-code',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+        }
+
+        // Migration 6: Event log for observability
+        migrator.registerMigration("v6_events") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    branch_id TEXT NOT NULL,
+                    session_id TEXT,
+                    event_type TEXT NOT NULL,
+                    event_data TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_events_branch ON canvas_events(branch_id)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_events_type ON canvas_events(event_type)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_events_timestamp ON canvas_events(timestamp)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_events_branch_time ON canvas_events(branch_id, timestamp)")
+
+            // Ensure messages table has session_id index (DB quick win)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)")
+        }
+
         try migrator.migrate(dbPool)
     }
 }

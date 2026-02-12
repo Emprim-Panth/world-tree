@@ -42,4 +42,11 @@ enum CortanaConstants {
     // MARK: - Defaults
     static let defaultContextDepth = 10
     static let defaultModel = "claude-sonnet-4-5-20250929"
+    static let defaultProvider = "claude-code"
+
+    // MARK: - CLI
+    static let claudeCliPath: String = {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return "\(home)/.local/bin/claude"
+    }()
 }

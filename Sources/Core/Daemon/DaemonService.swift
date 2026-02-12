@@ -19,9 +19,11 @@ final class DaemonService: ObservableObject {
 
     func startMonitoring() {
         checkHealth()
+        Task { await refreshSessions() }
         healthTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.checkHealth()
+                await self?.refreshSessions()
             }
         }
     }
@@ -82,10 +84,52 @@ final class DaemonService: ObservableObject {
         do {
             let response = try await socket.send(.sessions)
             lastError = response.error
-            // Parse sessions from response data if available
+
+            // Parse sessions from response.data (array of dictionaries)
+            guard let anyCodable = response.data,
+                  let rawArray = anyCodable.value as? [AnyCodable] else {
+                activeSessions = []
+                return
+            }
+
+            activeSessions = rawArray.compactMap { parseDaemonSession(from: $0) }
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    /// Parse a single DaemonSession from an AnyCodable dictionary.
+    /// Daemon sends snake_case keys: task_id, project, model, started_at, status.
+    private func parseDaemonSession(from anyCodable: AnyCodable) -> DaemonSession? {
+        guard let dict = anyCodable.value as? [String: AnyCodable] else { return nil }
+
+        guard let taskId = dict["task_id"]?.value as? String,
+              let project = dict["project"]?.value as? String,
+              let status = dict["status"]?.value as? String else {
+            return nil
+        }
+
+        let model = dict["model"]?.value as? String
+
+        var startedAt: Date?
+        if let timestamp = dict["started_at"]?.value as? Double {
+            startedAt = Date(timeIntervalSince1970: timestamp)
+        } else if let timestamp = dict["started_at"]?.value as? Int {
+            startedAt = Date(timeIntervalSince1970: TimeInterval(timestamp))
+        } else if let isoString = dict["started_at"]?.value as? String {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            startedAt = formatter.date(from: isoString)
+                ?? ISO8601DateFormatter().date(from: isoString)
+        }
+
+        return DaemonSession(
+            taskId: taskId,
+            project: project,
+            model: model,
+            startedAt: startedAt,
+            status: status
+        )
     }
 
     // MARK: - Status

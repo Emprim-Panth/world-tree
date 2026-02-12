@@ -24,6 +24,7 @@ final class DatabaseManager {
             try db.execute(sql: "PRAGMA journal_mode = WAL")
             try db.execute(sql: "PRAGMA foreign_keys = ON")
             try db.execute(sql: "PRAGMA busy_timeout = 5000")
+            try db.execute(sql: "PRAGMA wal_autocheckpoint = 1000")
         }
 
         dbPool = try DatabasePool(path: path, configuration: config)

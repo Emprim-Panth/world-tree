@@ -12,6 +12,7 @@ struct CortanaCanvasApp: App {
                 .onAppear {
                     setupDatabase()
                     startProjectRefresh()
+                    requestNotificationPermission()
                 }
         }
         .windowStyle(.titleBar)
@@ -47,6 +48,7 @@ struct CortanaCanvasApp: App {
     private func setupDatabase() {
         do {
             try DatabaseManager.shared.setup()
+            JobQueue.configure() // Share dbPool with background job queue
         } catch {
             print("[Canvas] Database setup failed: \(error)")
         }
@@ -54,6 +56,12 @@ struct CortanaCanvasApp: App {
     
     private func startProjectRefresh() {
         ProjectRefreshService.shared.startAutoRefresh()
+    }
+
+    private func requestNotificationPermission() {
+        Task {
+            await NotificationManager.shared.requestAuthorization()
+        }
     }
 }
 

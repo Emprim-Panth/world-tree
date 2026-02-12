@@ -1,0 +1,104 @@
+import SwiftUI
+
+// MARK: - Context Window Gauge
+
+/// Visual indicator showing context window usage as a percentage.
+/// Yellow at 60%, red at 85% — tells you when a branch is running hot.
+struct ContextGauge: View {
+    let usage: Double  // 0.0 to 1.0
+    let label: String
+
+    init(usage: Double, label: String = "Context") {
+        self.usage = min(max(usage, 0), 1)
+        self.label = label
+    }
+
+    private var color: Color {
+        if usage >= 0.85 { return .red }
+        if usage >= 0.60 { return .yellow }
+        return .green
+    }
+
+    private var percentText: String {
+        "\(Int(usage * 100))%"
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            // Mini bar gauge
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.gray.opacity(0.2))
+
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(color.opacity(0.8))
+                        .frame(width: geo.size.width * usage)
+                }
+            }
+            .frame(width: 40, height: 6)
+
+            Text(percentText)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundColor(color)
+        }
+        .help("\(label): \(percentText) used")
+    }
+}
+
+/// Compact inline context gauge for header bars — just the bar + percentage.
+struct InlineContextGauge: View {
+    let inputTokens: Int
+    let maxTokens: Int
+
+    private var usage: Double {
+        guard maxTokens > 0 else { return 0 }
+        return Double(inputTokens) / Double(maxTokens)
+    }
+
+    var body: some View {
+        ContextGauge(usage: usage, label: "Context window")
+    }
+}
+
+// MARK: - Activity Pulse
+
+/// Colored dot that pulses based on recent activity density.
+/// Green = active, yellow = moderate, gray = idle.
+struct ActivityPulse: View {
+    let eventCount: Int
+    let isResponding: Bool
+
+    private var color: Color {
+        if isResponding { return .green }
+        if eventCount > 10 { return .green }
+        if eventCount > 3 { return .yellow }
+        if eventCount > 0 { return .blue }
+        return .gray
+    }
+
+    private var shouldPulse: Bool {
+        isResponding || eventCount > 5
+    }
+
+    @State private var isPulsing = false
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 8, height: 8)
+            .opacity(shouldPulse && isPulsing ? 0.4 : 1.0)
+            .animation(
+                shouldPulse
+                    ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+                    : .default,
+                value: isPulsing
+            )
+            .onAppear {
+                isPulsing = shouldPulse
+            }
+            .onChange(of: shouldPulse) { _, newValue in
+                isPulsing = newValue
+            }
+    }
+}
