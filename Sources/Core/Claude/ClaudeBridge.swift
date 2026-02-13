@@ -38,13 +38,14 @@ final class ClaudeBridge {
         branchId: String,
         model: String?,
         workingDirectory: String?,
-        project: String?
+        project: String?,
+        checkpointContext: String? = nil
     ) -> AsyncStream<BridgeEvent> {
         // Resolve parent session for fork/resume inheritance
         let parentSessionId = resolveParentSessionId(branchId: branchId)
         let isNewSession = !hasExistingSession(sessionId: sessionId)
 
-        let context = ProviderSendContext(
+        var context = ProviderSendContext(
             message: message,
             sessionId: sessionId,
             branchId: branchId,
@@ -54,6 +55,7 @@ final class ClaudeBridge {
             parentSessionId: parentSessionId,
             isNewSession: isNewSession
         )
+        context.checkpointContext = checkpointContext
 
         canvasLog("[ClaudeBridge] routing to \(ProviderManager.shared.activeProviderName), session=\(sessionId), parent=\(parentSessionId ?? "none")")
         return ProviderManager.shared.send(context: context)

@@ -7,6 +7,9 @@ struct BranchHeaderView: View {
     let activityCount: Int
     let contextUsage: Double
     let isResponding: Bool
+    var estimatedTokens: Int = 0
+    var pressureLevel: PressureLevel = .low
+    var rotationCount: Int = 0
     let onNavigateToBranch: (String) -> Void
     let onComplete: () -> Void
 
@@ -61,7 +64,11 @@ struct BranchHeaderView: View {
                     ProviderBadge()
 
                     if contextUsage > 0 {
-                        ContextGauge(usage: contextUsage)
+                        ContextGauge(
+                            usage: contextUsage,
+                            estimatedTokens: estimatedTokens,
+                            rotationCount: rotationCount
+                        )
                     }
 
                     Text(branch.createdAt, style: .relative)

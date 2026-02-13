@@ -3,24 +3,47 @@ import SwiftUI
 // MARK: - Context Window Gauge
 
 /// Visual indicator showing context window usage as a percentage.
-/// Yellow at 60%, red at 85% — tells you when a branch is running hot.
+/// Color-coded by pressure level: green → yellow → orange → red.
 struct ContextGauge: View {
     let usage: Double  // 0.0 to 1.0
     let label: String
+    var estimatedTokens: Int?
+    var rotationCount: Int?
 
-    init(usage: Double, label: String = "Context") {
+    init(usage: Double, label: String = "Context", estimatedTokens: Int? = nil, rotationCount: Int? = nil) {
         self.usage = min(max(usage, 0), 1)
         self.label = label
+        self.estimatedTokens = estimatedTokens
+        self.rotationCount = rotationCount
     }
 
     private var color: Color {
-        if usage >= 0.85 { return .red }
-        if usage >= 0.60 { return .yellow }
+        if usage >= 0.90 { return .red }
+        if usage >= 0.75 { return .orange }
+        if usage >= 0.50 { return .yellow }
         return .green
     }
 
     private var percentText: String {
         "\(Int(usage * 100))%"
+    }
+
+    private var helpText: String {
+        var text = "\(label): \(percentText) used"
+        if let tokens = estimatedTokens {
+            text += " (~\(formatTokenCount(tokens)) tokens)"
+        }
+        if let rotations = rotationCount, rotations > 0 {
+            text += " | \(rotations) rotation\(rotations == 1 ? "" : "s")"
+        }
+        return text
+    }
+
+    private func formatTokenCount(_ count: Int) -> String {
+        if count >= 1000 {
+            return "\(count / 1000)K"
+        }
+        return "\(count)"
     }
 
     var body: some View {
@@ -41,8 +64,15 @@ struct ContextGauge: View {
             Text(percentText)
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundColor(color)
+
+            // Rotation indicator
+            if let rotations = rotationCount, rotations > 0 {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 8))
+                    .foregroundColor(.secondary)
+            }
         }
-        .help("\(label): \(percentText) used")
+        .help(helpText)
     }
 }
 

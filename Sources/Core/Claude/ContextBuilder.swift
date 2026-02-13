@@ -88,6 +88,23 @@ enum ContextBuilder {
         return result
     }
 
+    // MARK: - Child Digest
+
+    /// Build a compact digest from a completed child branch for injection into parent.
+    /// Used when a child branch completes and the parent needs a summary of what was accomplished.
+    static func buildChildDigest(childBranch: Branch) -> String? {
+        guard let summary = childBranch.summary, !summary.isEmpty else { return nil }
+
+        return """
+            [Result from \(childBranch.branchType.rawValue) branch '\(childBranch.displayTitle)']
+            Status: \(childBranch.status.rawValue)
+            \(summary)
+            [End branch result]
+            """
+    }
+
+    // MARK: - Helpers
+
     private static func truncate(_ text: String, max: Int) -> String {
         if text.count <= max { return text }
         return String(text.prefix(max)) + "..."
