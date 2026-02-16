@@ -47,7 +47,12 @@ enum ContextBuilder {
 
         if !messages.isEmpty {
             let formatted = messages.map { msg in
-                let role = msg.role == .user ? "User" : msg.role == .assistant ? "Cortana" : "System"
+                let role: String
+                switch msg.role {
+                case .user: role = "User"
+                case .assistant: role = "Cortana"
+                case .system: role = "System"
+                }
                 let content = truncate(msg.content, max: 500)
                 return "[\(role)]: \(content)"
             }.joined(separator: "\n\n")

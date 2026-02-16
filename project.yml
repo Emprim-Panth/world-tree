@@ -24,7 +24,9 @@ targets:
     type: application
     platform: macOS
     sources:
-      - Sources
+      - path: Sources
+        excludes:
+          - "_Archive/**"
     resources:
       - path: Resources
         buildPhase: resources

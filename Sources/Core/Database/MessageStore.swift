@@ -22,7 +22,7 @@ final class MessageStore {
                      WHERE cb.fork_from_message_id = m.id) as has_branches
                 FROM messages m
                 WHERE m.session_id = ?
-                ORDER BY m.timestamp ASC
+                ORDER BY m.created_at ASC
                 LIMIT ?
                 """
             return try Message.fetchAll(db, sql: sql, arguments: [sessionId, limit])
@@ -31,13 +31,13 @@ final class MessageStore {
 
     /// Get messages up to (and including) a specific message ID.
     /// Used for building fork context.
-    func getMessagesUpTo(sessionId: String, messageId: Int, limit: Int? = nil) throws -> [Message] {
+    func getMessagesUpTo(sessionId: String, messageId: String, limit: Int? = nil) throws -> [Message] {
         try db.read { db in
             var sql = """
                 SELECT m.*, 0 as has_branches
                 FROM messages m
                 WHERE m.session_id = ? AND m.id <= ?
-                ORDER BY m.timestamp ASC
+                ORDER BY m.created_at ASC
                 """
             if let limit {
                 // Take only the last N messages up to the fork point
@@ -46,7 +46,7 @@ final class MessageStore {
                         SELECT m.*, 0 as has_branches
                         FROM messages m
                         WHERE m.session_id = ? AND m.id <= ?
-                        ORDER BY m.timestamp DESC
+                        ORDER BY m.created_at DESC
                         LIMIT ?
                     ) sub ORDER BY sub.timestamp ASC
                     """
@@ -70,7 +70,7 @@ final class MessageStore {
 
     /// Copy messages from source session up to (not including) a given message ID.
     /// Returns the number of messages copied.
-    func copyMessages(from sourceSessionId: String, upTo messageId: Int, to targetSessionId: String) throws -> Int {
+    func copyMessages(from sourceSessionId: String, upTo messageId: String, to targetSessionId: String) throws -> Int {
         try db.write { db in
             let rows = try Row.fetchAll(
                 db,
@@ -119,7 +119,7 @@ final class MessageStore {
                     SELECT m.*, 0 as has_branches
                     FROM messages m
                     WHERE m.content LIKE ?
-                    ORDER BY m.timestamp DESC
+                    ORDER BY m.created_at DESC
                     LIMIT ?
                     """
                 return try Message.fetchAll(db, sql: sql, arguments: ["%\(query)%", limit])
