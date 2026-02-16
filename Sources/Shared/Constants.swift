@@ -1,15 +1,16 @@
 import Foundation
 
 enum CortanaConstants {
-    // MARK: - Database
+    // MARK: - Database (Phase 2: Unified with Gateway)
     static let dropboxDatabasePath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/Library/CloudStorage/Dropbox/claude-memory/conversations.db"
+        // Phase 2: Now using unified gateway database
+        return "\(home)/.cortana/cortana.db"
     }()
 
     static let fallbackDatabasePath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.cortana/conversations.db"
+        return "\(home)/.cortana/cortana.db"
     }()
 
     // MARK: - Daemon
