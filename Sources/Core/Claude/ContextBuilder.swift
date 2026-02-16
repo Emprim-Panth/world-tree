@@ -14,7 +14,7 @@ enum ContextBuilder {
     /// - Returns: Formatted context string for system message injection
     static func buildForkContext(
         parentBranch: Branch,
-        forkMessageId: Int,
+        forkMessageId: String,
         depth: Int = CortanaConstants.defaultContextDepth
     ) throws -> String {
         guard let sessionId = parentBranch.sessionId else {
@@ -68,7 +68,7 @@ enum ContextBuilder {
     /// Includes more detail about what needs to be done.
     static func buildImplementationContext(
         parentBranch: Branch,
-        forkMessageId: Int,
+        forkMessageId: String,
         instruction: String? = nil
     ) throws -> String {
         let baseContext = try buildForkContext(

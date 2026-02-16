@@ -9,15 +9,14 @@ struct ContentView: View {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 350)
         } detail: {
-            if let branchId = appState.selectedBranchId {
-                BranchView(branchId: branchId)
-            } else if appState.selectedTreeId != nil {
-                Text("Select a branch to start")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if let treeId = appState.selectedTreeId {
+                // Phase 5: Visual branching - side-by-side columns
+                BranchLayoutView(treeId: treeId)
             } else {
                 DashboardView()
             }
         }
+        // Phase 6: Voice control - floating overlay
+        .voiceEnabled()
     }
 }

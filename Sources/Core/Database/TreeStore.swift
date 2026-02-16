@@ -96,7 +96,7 @@ final class TreeStore {
     func createBranch(
         treeId: String,
         parentBranch: String? = nil,
-        forkFromMessage: Int? = nil,
+        forkFromMessage: String? = nil,
         type: BranchType = .conversation,
         title: String? = nil,
         model: String? = nil,

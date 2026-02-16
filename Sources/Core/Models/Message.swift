@@ -10,14 +10,17 @@ enum MessageRole: String, Codable, DatabaseValueConvertible {
 /// Wraps the existing `messages` table from cortana-core.
 /// Canvas reads and writes these using the exact same schema.
 struct Message: Identifiable, Equatable, Hashable {
-    let id: Int
+    let id: String  // Gateway uses TEXT PRIMARY KEY
     let sessionId: String
     let role: MessageRole
     let content: String
-    let timestamp: Date
+    let createdAt: Date  // Table column is created_at, not timestamp
 
     /// Computed at query time: whether any branch forks from this message
     var hasBranches: Bool = false
+
+    /// Compatibility alias for timestamp
+    var timestamp: Date { createdAt }
 }
 
 // MARK: - GRDB Conformance
@@ -28,7 +31,14 @@ extension Message: FetchableRecord {
         sessionId = row["session_id"]
         role = MessageRole(rawValue: row["role"] as String) ?? .system
         content = row["content"]
-        timestamp = row["timestamp"] as? Date ?? Date()
+
+        // Read created_at as INTEGER (Unix timestamp in ms) and convert to Date
+        if let timestampMs = row["created_at"] as? Int64 {
+            createdAt = Date(timeIntervalSince1970: TimeInterval(timestampMs) / 1000.0)
+        } else {
+            createdAt = Date()
+        }
+
         hasBranches = (row["has_branches"] as? Int ?? 0) > 0
     }
 }
@@ -55,13 +65,13 @@ extension Message {
                 """,
             arguments: [sessionId, role.rawValue, content]
         )
-        let id = Int(db.lastInsertedRowID)
+        let id = String(db.lastInsertedRowID)
         return Message(
             id: id,
             sessionId: sessionId,
             role: role,
             content: content,
-            timestamp: Date()
+            createdAt: Date()
         )
     }
 }
