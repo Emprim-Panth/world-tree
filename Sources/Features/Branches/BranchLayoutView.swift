@@ -141,6 +141,61 @@ class BranchLayoutViewModel: ObservableObject {
     func scrollToBranch(_ branchId: String) {
         // TODO: Implement smooth scrolling to branch
     }
+
+    // MARK: - Organic Branching (Phase 8)
+
+    func createBranchFromSuggestion(_ suggestion: BranchSuggestion, userInput: String) {
+        // Create a new branch based on the suggestion
+        let newBranch = Branch(
+            id: UUID().uuidString,
+            treeId: treeId,
+            sessionId: UUID().uuidString,
+            parentBranchId: visibleBranches.first?.id,
+            forkFromMessageId: nil,
+            branchType: suggestion.branchType,
+            title: suggestion.title,
+            status: .active,
+            summary: suggestion.preview,
+            model: nil,
+            daemonTaskId: nil,
+            contextSnapshot: userInput,
+            collapsed: false,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+
+        // Add to visible branches (side-by-side)
+        visibleBranches.append(newBranch)
+
+        print("✨ Created branch: \(suggestion.title)")
+    }
+
+    func spawnParallelBranches(_ suggestions: [BranchSuggestion], userInput: String) {
+        // Create multiple branches at once for parallel exploration
+        for suggestion in suggestions {
+            let newBranch = Branch(
+                id: UUID().uuidString,
+                treeId: treeId,
+                sessionId: UUID().uuidString,
+                parentBranchId: visibleBranches.first?.id,
+                forkFromMessageId: nil,
+                branchType: suggestion.branchType,
+                title: suggestion.title,
+                status: .active,
+                summary: suggestion.preview,
+                model: nil,
+                daemonTaskId: nil,
+                contextSnapshot: userInput,
+                collapsed: false,
+                createdAt: Date(),
+                updatedAt: Date()
+            )
+
+            visibleBranches.append(newBranch)
+        }
+
+        print("✨ Spawned \(suggestions.count) parallel branches for exploration!")
+    }
 }
 
 // MARK: - Branch Extensions

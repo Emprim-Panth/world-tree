@@ -20,8 +20,11 @@ struct BranchColumn: View {
 
             // Document view for this branch
             if let sessionId = branch.sessionId {
-                DocumentEditorView(sessionId: sessionId)
-                    .frame(maxHeight: .infinity)
+                DocumentEditorView(
+                    sessionId: sessionId,
+                    parentBranchLayout: onCreateBranch as? BranchLayoutViewModel
+                )
+                .frame(maxHeight: .infinity)
             } else {
                 Text("No active session")
                     .foregroundColor(.secondary)

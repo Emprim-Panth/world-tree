@@ -5,8 +5,12 @@ struct DocumentEditorView: View {
     @StateObject private var viewModel: DocumentEditorViewModel
     @FocusState private var isFocused: Bool
     @State private var hoveredSectionId: UUID?
+    @State private var selectedSuggestionIndex = 0
 
-    init(sessionId: String) {
+    var parentBranchLayout: BranchLayoutViewModel?
+
+    init(sessionId: String, parentBranchLayout: BranchLayoutViewModel? = nil) {
+        self.parentBranchLayout = parentBranchLayout
         _viewModel = StateObject(wrappedValue: DocumentEditorViewModel(sessionId: sessionId))
     }
 
@@ -37,12 +41,54 @@ struct DocumentEditorView: View {
                         Divider()
                             .padding(.vertical, 16)
 
-                        UserInputArea(
-                            text: $viewModel.currentInput,
-                            isProcessing: viewModel.isProcessing,
-                            onSubmit: { viewModel.submitInput() }
-                        )
-                        .focused($isFocused)
+                        VStack(alignment: .leading, spacing: 16) {
+                            // Ghost suggestions (if any)
+                            if let opportunity = viewModel.branchOpportunity {
+                                GhostSuggestionView(
+                                    suggestions: opportunity.suggestions,
+                                    selectedIndex: selectedSuggestionIndex,
+                                    onAccept: { suggestion in
+                                        viewModel.acceptSuggestion(suggestion)
+                                    },
+                                    onAcceptAll: {
+                                        viewModel.spawnParallelBranches()
+                                    }
+                                )
+                                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                            }
+
+                            UserInputArea(
+                                text: $viewModel.currentInput,
+                                isProcessing: viewModel.isProcessing,
+                                onSubmit: { viewModel.submitInput() },
+                                onTabKey: {
+                                    if viewModel.branchOpportunity != nil {
+                                        // Tab cycles through suggestions
+                                        selectedSuggestionIndex = (selectedSuggestionIndex + 1) % (viewModel.branchOpportunity?.suggestions.count ?? 1)
+                                        return true // handled
+                                    }
+                                    return false
+                                },
+                                onShiftTabKey: {
+                                    if let opportunity = viewModel.branchOpportunity {
+                                        // Accept selected suggestion
+                                        viewModel.acceptSuggestion(opportunity.suggestions[selectedSuggestionIndex])
+                                        selectedSuggestionIndex = 0
+                                        return true
+                                    }
+                                    return false
+                                },
+                                onCmdReturnKey: {
+                                    if viewModel.branchOpportunity != nil {
+                                        // Spawn all branches in parallel
+                                        viewModel.spawnParallelBranches()
+                                        return true
+                                    }
+                                    return false
+                                }
+                            )
+                            .focused($isFocused)
+                        }
                         .padding(.bottom, 24)
                     }
                     .padding(.horizontal, max(24, (geometry.size.width - 800) / 2))
@@ -52,6 +98,7 @@ struct DocumentEditorView: View {
                 .onAppear {
                     isFocused = true
                     viewModel.loadDocument()
+                    viewModel.parentBranchLayout = parentBranchLayout
                 }
                 .onChange(of: viewModel.document.sections.count) { _ in
                     if let lastSection = viewModel.document.sections.last {
@@ -66,10 +113,19 @@ struct DocumentEditorView: View {
 @MainActor
 class DocumentEditorViewModel: ObservableObject {
     @Published var document: ConversationDocument
-    @Published var currentInput = ""
+    @Published var currentInput = "" {
+        didSet {
+            // Analyze input for branch opportunities as user types
+            Task {
+                await analyzeForBranchOpportunities()
+            }
+        }
+    }
     @Published var isProcessing = false
+    @Published var branchOpportunity: BranchOpportunity?
 
     private let sessionId: String
+    weak var parentBranchLayout: BranchLayoutViewModel?
 
     init(sessionId: String) {
         self.sessionId = sessionId
@@ -195,6 +251,55 @@ class DocumentEditorViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Organic Branching (Phase 8)
+
+    func analyzeForBranchOpportunities() async {
+        guard !currentInput.isEmpty else {
+            branchOpportunity = nil
+            return
+        }
+
+        // Analyze after user pauses (debounce)
+        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+
+        // Check if input still matches (user might have kept typing)
+        let analyzedText = currentInput
+        guard analyzedText == currentInput else { return }
+
+        // Detect branch opportunities
+        let opportunity = await SuggestionEngine.shared.analyzeBranchOpportunity(analyzedText)
+        branchOpportunity = opportunity
+    }
+
+    func acceptSuggestion(_ suggestion: BranchSuggestion) {
+        // Create a new branch with this suggestion
+        print("Accepting suggestion: \(suggestion.title)")
+
+        // Clear the opportunity
+        branchOpportunity = nil
+
+        // Notify parent to create branch
+        parentBranchLayout?.createBranchFromSuggestion(suggestion, userInput: currentInput)
+
+        // Clear input
+        currentInput = ""
+    }
+
+    func spawnParallelBranches() {
+        guard let opportunity = branchOpportunity else { return }
+
+        print("Spawning \(opportunity.suggestions.count) parallel branches")
+
+        // Clear the opportunity
+        branchOpportunity = nil
+
+        // Notify parent to create multiple branches
+        parentBranchLayout?.spawnParallelBranches(opportunity.suggestions, userInput: currentInput)
+
+        // Clear input
+        currentInput = ""
+    }
+
     func showBranchView() {
         // TODO: Show branch navigation UI
     }
@@ -222,6 +327,9 @@ struct UserInputArea: View {
     @Binding var text: String
     let isProcessing: Bool
     let onSubmit: () -> Void
+    var onTabKey: (() -> Bool)?  // Return true if handled
+    var onShiftTabKey: (() -> Bool)?
+    var onCmdReturnKey: (() -> Bool)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -238,21 +346,24 @@ struct UserInputArea: View {
 
                 // Input field
                 VStack(alignment: .leading, spacing: 4) {
-                    TextEditor(text: $text)
-                        .font(.system(.body))
-                        .frame(minHeight: 60)
-                        .scrollContentBackground(.hidden)
-                        .background(Color(nsColor: .controlBackgroundColor))
-                        .cornerRadius(8)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.blue.opacity(0.3), lineWidth: 1)
-                        )
-                        .onSubmit {
+                    KeyboardHandlingTextEditor(
+                        text: $text,
+                        onTabKey: onTabKey,
+                        onShiftTabKey: onShiftTabKey,
+                        onCmdReturnKey: onCmdReturnKey,
+                        onSubmit: {
                             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                 onSubmit()
                             }
                         }
+                    )
+                    .frame(minHeight: 60)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                    )
 
                     HStack {
                         if isProcessing {
