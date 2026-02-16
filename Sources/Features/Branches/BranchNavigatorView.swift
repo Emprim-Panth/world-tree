@@ -74,7 +74,7 @@ struct BranchMiniCard: View {
                     .frame(width: 6, height: 6)
             }
 
-            Text(branch.title)
+            Text(branch.displayTitle)
                 .font(.caption.bold())
                 .lineLimit(1)
                 .foregroundColor(isSelected ? .blue : .primary)
@@ -169,7 +169,7 @@ struct BranchTreeView: View {
         }
     }
 
-    private func statusColor(_ status: Branch.BranchStatus) -> Color {
+    private func statusColor(_ status: BranchStatus) -> Color {
         switch status {
         case .active: return .green
         case .completed: return .blue

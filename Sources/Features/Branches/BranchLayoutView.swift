@@ -69,23 +69,37 @@ class BranchLayoutViewModel: ObservableObject {
         let mainBranch = Branch(
             id: UUID().uuidString,
             treeId: treeId,
-            title: "Main Conversation",
-            depth: 0,
-            parentBranchId: nil,
             sessionId: UUID().uuidString,
+            parentBranchId: nil,
+            forkFromMessageId: nil,
+            branchType: .conversation,
+            title: "Main Conversation",
             status: .active,
-            createdAt: Date()
+            summary: nil,
+            model: nil,
+            daemonTaskId: nil,
+            contextSnapshot: nil,
+            collapsed: false,
+            createdAt: Date(),
+            updatedAt: Date()
         )
 
         let exploreBranch = Branch(
             id: UUID().uuidString,
             treeId: treeId,
-            title: "Exploration: Alternative approach",
-            depth: 1,
-            parentBranchId: mainBranch.id,
             sessionId: UUID().uuidString,
+            parentBranchId: mainBranch.id,
+            forkFromMessageId: nil,
+            branchType: .exploration,
+            title: "Exploration: Alternative approach",
             status: .active,
-            createdAt: Date()
+            summary: nil,
+            model: nil,
+            daemonTaskId: nil,
+            contextSnapshot: nil,
+            collapsed: false,
+            createdAt: Date(),
+            updatedAt: Date()
         )
 
         visibleBranches = [mainBranch, exploreBranch]
@@ -101,12 +115,19 @@ class BranchLayoutViewModel: ObservableObject {
         let newBranch = Branch(
             id: UUID().uuidString,
             treeId: treeId,
-            title: "New Branch",
-            depth: (visibleBranches.first(where: { $0.id == parentBranchId })?.depth ?? 0) + 1,
-            parentBranchId: parentBranchId,
             sessionId: UUID().uuidString,
+            parentBranchId: parentBranchId,
+            forkFromMessageId: nil,
+            branchType: .exploration,
+            title: "New Branch",
             status: .active,
-            createdAt: Date()
+            summary: nil,
+            model: nil,
+            daemonTaskId: nil,
+            contextSnapshot: nil,
+            collapsed: false,
+            createdAt: Date(),
+            updatedAt: Date()
         )
 
         // Insert after parent
@@ -122,25 +143,17 @@ class BranchLayoutViewModel: ObservableObject {
     }
 }
 
-// MARK: - Branch Model
+// MARK: - Branch Extensions
 
-struct Branch: Identifiable {
-    let id: String
-    let treeId: String
-    var title: String
-    var depth: Int  // Nesting level (0 = root, 1 = first fork, etc.)
-    var parentBranchId: String?
-    var sessionId: String
-    var status: BranchStatus
-    var summary: String?
-    var messageCount: Int = 0
-    var createdAt: Date
-    var updatedAt: Date = Date()
+extension Branch {
+    var depth: Int {
+        // Calculate depth by traversing parent chain
+        // For now, return 0 (will be populated by TreeStore)
+        0
+    }
 
-    enum BranchStatus: String {
-        case active
-        case completed
-        case archived
-        case failed
+    var messageCount: Int {
+        // TODO: Load from database
+        0
     }
 }

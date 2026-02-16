@@ -129,61 +129,38 @@ extension DocumentSection {
     /// Create a document section from a message
     static func from(message: Message) -> DocumentSection {
         let author: Author
-        switch message.role.lowercased() {
-        case "user":
+        switch message.role {
+        case .user:
             author = .user(name: "Evan")
-        case "assistant":
+        case .assistant:
             author = .assistant
-        case "system":
-            author = .system
-        default:
+        case .system:
             author = .system
         }
 
         var attributedContent = AttributedString(message.content)
 
         // Apply basic styling
-        if author == .assistant {
+        switch author {
+        case .assistant:
             attributedContent.font = .system(.body)
-        } else if author == .user {
+        case .user:
             attributedContent.font = .system(.body)
             attributedContent.foregroundColor = .primary
+        case .system:
+            break
         }
+
+        let isUser = if case .user = author { true } else { false }
 
         return DocumentSection(
             content: attributedContent,
             author: author,
-            timestamp: Date(timeIntervalSince1970: TimeInterval(message.timestamp ?? 0) / 1000),
+            timestamp: message.timestamp,
             branchPoint: true,  // All sections can be branch points
-            isEditable: author == .user
+            isEditable: isUser
         )
     }
 
-    /// Convert back to message for storage
-    func toMessage(sessionId: String) -> Message {
-        let role: String
-        switch author {
-        case .user: role = "user"
-        case .assistant: role = "assistant"
-        case .system: role = "system"
-        }
-
-        return Message(
-            id: id.uuidString,
-            sessionId: sessionId,
-            role: role,
-            content: String(content.characters),
-            timestamp: Int64(timestamp.timeIntervalSince1970 * 1000)
-        )
-    }
 }
 
-// MARK: - Message Model (for compatibility)
-
-struct Message: Identifiable, Codable {
-    let id: String
-    let sessionId: String
-    let role: String
-    let content: String
-    let timestamp: Int64?
-}

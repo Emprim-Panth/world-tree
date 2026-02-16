@@ -331,7 +331,7 @@ protocol VoiceProvider {
     func synthesize(text: String, options: SpeechOptions) async throws -> Data
 }
 
-enum VoiceProviderType {
+enum VoiceProviderType: Equatable {
     case whisper
     case elevenlabs
     case system

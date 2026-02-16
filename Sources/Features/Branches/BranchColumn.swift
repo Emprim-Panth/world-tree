@@ -19,8 +19,14 @@ struct BranchColumn: View {
             Divider()
 
             // Document view for this branch
-            DocumentEditorView(sessionId: branch.sessionId)
-                .frame(maxHeight: .infinity)
+            if let sessionId = branch.sessionId {
+                DocumentEditorView(sessionId: sessionId)
+                    .frame(maxHeight: .infinity)
+            } else {
+                Text("No active session")
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .background(Color(nsColor: .controlBackgroundColor))
         .cornerRadius(12)
@@ -45,7 +51,7 @@ struct BranchHeader: View {
     init(branch: Branch, isSelected: Bool) {
         self.branch = branch
         self.isSelected = isSelected
-        _editedTitle = State(initialValue: branch.title)
+        _editedTitle = State(initialValue: branch.displayTitle)
     }
 
     var body: some View {
@@ -74,7 +80,7 @@ struct BranchHeader: View {
                         }
                 } else {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(branch.title)
+                        Text(branch.displayTitle)
                             .font(.headline)
                             .foregroundColor(.primary)
                             .lineLimit(1)

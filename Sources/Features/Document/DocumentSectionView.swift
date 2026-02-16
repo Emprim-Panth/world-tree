@@ -59,7 +59,7 @@ struct DocumentSectionView: View {
 
                 if let codeBlocks = section.metadata.codeBlocks {
                     ForEach(codeBlocks) { block in
-                        CodeBlockView(block: block)
+                        CodeBlockView(code: block.code, language: block.language.isEmpty ? nil : block.language)
                     }
                 }
 
@@ -182,69 +182,6 @@ struct ToolCallView: View {
     }
 }
 
-// MARK: - Code Block View
-
-struct CodeBlockView: View {
-    let block: CodeBlock
-
-    @State private var isCopied = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header
-            HStack {
-                if !block.language.isEmpty {
-                    Text(block.language.uppercased())
-                        .font(.caption2.monospaced())
-                        .foregroundColor(.secondary)
-                }
-
-                if let path = block.filePath {
-                    Text(path)
-                        .font(.caption2.monospaced())
-                        .foregroundColor(.blue)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                Button(action: copyCode) {
-                    Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .help("Copy code")
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-
-            // Code content
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(block.code)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                    .padding(12)
-            }
-            .background(Color(nsColor: .controlBackgroundColor))
-        }
-        .cornerRadius(6)
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-        )
-    }
-
-    private func copyCode() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(block.code, forType: .string)
-        isCopied = true
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            isCopied = false
-        }
-    }
-}
 
 // MARK: - Editable Text View
 

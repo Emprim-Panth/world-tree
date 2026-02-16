@@ -136,7 +136,7 @@ class DocumentEditorViewModel: ObservableObject {
         document.metadata.updatedAt = Date()
 
         // If editing user message, potentially create a branch
-        if document.sections[index].author == .user {
+        if case .user = document.sections[index].author {
             // TODO: Implement automatic branching on edit
         }
     }
