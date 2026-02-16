@@ -162,6 +162,71 @@ actor GatewayClient {
 
     // MARK: - Terminal Operations
 
+    func createTerminal(
+        command: String = "bash",
+        args: [String]? = nil,
+        cwd: String? = nil,
+        project: String? = nil,
+        name: String? = nil
+    ) async throws -> TerminalSession {
+        let endpoint = baseURL.appendingPathComponent("/v1/cortana/terminal/start")
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(authToken, forHTTPHeaderField: "x-cortana-token")
+
+        let payload: [String: Any] = [
+            "cmd": command,
+            "args": args ?? [],
+            "cwd": cwd as Any,
+            "project": project as Any,
+            "name": name as Any
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw GatewayError.requestFailed
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(TerminalSession.self, from: data)
+    }
+
+    func listTerminals() async throws -> [TerminalSession] {
+        let endpoint = baseURL.appendingPathComponent("/v1/cortana/terminal/list")
+        var request = URLRequest(url: endpoint)
+        request.setValue(authToken, forHTTPHeaderField: "x-cortana-token")
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw GatewayError.requestFailed
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode([TerminalSession].self, from: data)
+    }
+
+    func killTerminal(sessionId: String) async throws {
+        let endpoint = baseURL.appendingPathComponent("/v1/cortana/terminal/\(sessionId)/kill")
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue(authToken, forHTTPHeaderField: "x-cortana-token")
+
+        let (_, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw GatewayError.requestFailed
+        }
+    }
+
     func subscribeToTerminal(sessionId: String) -> AsyncStream<String> {
         AsyncStream { continuation in
             Task {
@@ -198,6 +263,24 @@ actor GatewayClient {
               (200...299).contains(httpResponse.statusCode) else {
             throw GatewayError.requestFailed
         }
+    }
+}
+
+// MARK: - Terminal Models
+
+struct TerminalSession: Codable, Identifiable {
+    let id: String
+    let cmd: String
+    let args: [String]?
+    let cwd: String?
+    let project: String?
+    let name: String?
+    let pid: Int?
+    let createdAt: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case id, cmd, args, cwd, project, name, pid
+        case createdAt = "created_at"
     }
 }
 
