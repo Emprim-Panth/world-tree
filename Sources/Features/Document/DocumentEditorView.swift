@@ -60,26 +60,6 @@ struct DocumentEditorView: View {
                 }
             }
         }
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button(action: { viewModel.showBranchView() }) {
-                    Label("Branches", systemImage: "arrow.triangle.branch")
-                }
-
-                Button(action: { viewModel.showContextControl() }) {
-                    Label("Context", systemImage: "gauge")
-                }
-
-                Menu {
-                    Button("Export as Markdown", action: { viewModel.exportMarkdown() })
-                    Button("Export as PDF", action: { viewModel.exportPDF() })
-                    Divider()
-                    Button("Share", action: { viewModel.share() })
-                } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                }
-            }
-        }
     }
 }
 
@@ -177,19 +157,41 @@ class DocumentEditorViewModel: ObservableObject {
     private func processUserInput(_ section: DocumentSection) {
         isProcessing = true
 
-        // TODO: Integrate with Claude API via gateway
-        // For now, simulate response
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            let assistantSection = DocumentSection(
-                content: AttributedString("This is a simulated response. Real Claude integration coming soon."),
-                author: .assistant,
-                timestamp: Date(),
-                branchPoint: true,
-                isEditable: false
-            )
+        Task {
+            do {
+                // Send to Claude via gateway
+                let client = GatewayClient(authToken: "dev-token")
 
-            self.document.sections.append(assistantSection)
-            self.isProcessing = false
+                // Build conversation context from all sections
+                let messages = document.sections.map { section -> String in
+                    let role = switch section.author {
+                    case .user: "user"
+                    case .assistant: "assistant"
+                    case .system: "system"
+                    }
+                    return "\(role): \(section.content)"
+                }.joined(separator: "\n\n")
+
+                // For now, just acknowledge - real gateway streaming coming next
+                let response = "I received your message! (Full Claude integration via gateway streaming coming next)"
+
+                await MainActor.run {
+                    let assistantSection = DocumentSection(
+                        content: AttributedString(response),
+                        author: .assistant,
+                        timestamp: Date(),
+                        branchPoint: true,
+                        isEditable: false
+                    )
+                    self.document.sections.append(assistantSection)
+                    self.isProcessing = false
+                }
+            } catch {
+                await MainActor.run {
+                    print("Error calling Claude: \(error)")
+                    self.isProcessing = false
+                }
+            }
         }
     }
 
