@@ -203,6 +203,14 @@ final class TreeStore {
         }
     }
 
+    /// Find the branch whose associated session_id matches the given ID.
+    /// Used by CanvasServer to resume a conversation from an external client.
+    func getBranchBySessionId(_ sessionId: String) throws -> Branch? {
+        try db.read { db in
+            try Branch.filter(Column("session_id") == sessionId).fetchOne(db)
+        }
+    }
+
     // MARK: - Branch Navigation
 
     /// Returns the path from the root branch to the given branch (inclusive).

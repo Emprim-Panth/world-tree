@@ -6,6 +6,7 @@ struct SettingsView: View {
     @AppStorage("defaultModel") private var defaultModel = CortanaConstants.defaultModel
     @AppStorage("contextDepth") private var contextDepth = CortanaConstants.defaultContextDepth
     @ObservedObject private var providerManager = ProviderManager.shared
+    @ObservedObject private var server = CanvasServer.shared
 
     var body: some View {
         TabView {
@@ -22,6 +23,11 @@ struct SettingsView: View {
             apiTab
                 .tabItem {
                     Label("API", systemImage: "bolt.fill")
+                }
+
+            serverTab
+                .tabItem {
+                    Label("Server", systemImage: "server.rack")
                 }
 
             connectionTab
@@ -157,26 +163,149 @@ struct SettingsView: View {
 
     // MARK: - API
 
+    @State private var apiKeyInput = ""
+    @State private var showAPIKey = false
+
     private var apiTab: some View {
         Form {
-            Section("Anthropic API") {
-                let hasKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil
+            Section("Anthropic API Key") {
+                let envKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil
+                let keychainKey = ClaudeService.shared.isConfigured
 
-                Label(
-                    hasKey ? "API key found in environment" : "No ANTHROPIC_API_KEY in environment",
-                    systemImage: hasKey ? "checkmark.circle.fill" : "xmark.circle"
-                )
-                .foregroundStyle(hasKey ? .green : .orange)
+                if envKey {
+                    Label("API key loaded from environment", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else if keychainKey {
+                    Label("API key loaded from Keychain", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
 
-                if hasKey {
-                    Text("Direct API provider available. Switch to it in the Provider tab.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Button("Clear Keychain Key") {
+                        // Clear by saving empty string
+                        ClaudeService.shared.setAPIKey("")
+                    }
+                    .foregroundStyle(.red)
                 } else {
-                    Text("Set ANTHROPIC_API_KEY in your shell profile to enable the Direct API provider.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Label("No API key configured", systemImage: "xmark.circle")
+                        .foregroundStyle(.orange)
                 }
+
+                Divider()
+
+                HStack {
+                    if showAPIKey {
+                        TextField("sk-ant-...", text: $apiKeyInput)
+                            .textFieldStyle(.roundedBorder)
+                            .monospaced()
+                            .font(.caption)
+                    } else {
+                        SecureField("sk-ant-...", text: $apiKeyInput)
+                            .textFieldStyle(.roundedBorder)
+                            .monospaced()
+                            .font(.caption)
+                    }
+
+                    Button(action: { showAPIKey.toggle() }) {
+                        Image(systemName: showAPIKey ? "eye.slash" : "eye")
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button("Save to Keychain") {
+                    ClaudeService.shared.setAPIKey(apiKeyInput)
+                    apiKeyInput = ""
+                }
+                .disabled(apiKeyInput.isEmpty)
+
+                Text("Get your API key from: https://console.anthropic.com")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    // MARK: - Server
+
+    @AppStorage(CanvasServer.enabledKey) private var serverEnabled = false
+    @AppStorage(CanvasServer.tokenKey) private var serverToken = ""
+    @State private var tokenInput = ""
+    @State private var showToken = false
+
+    private var serverTab: some View {
+        Form {
+            Section("Canvas Hub Server") {
+                Toggle("Enable server (port \(CanvasServer.port))", isOn: $serverEnabled)
+                    .onChange(of: serverEnabled) { _, enabled in
+                        if enabled { server.start() } else { server.stop() }
+                    }
+
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(server.isRunning ? Color.green : Color.red)
+                        .frame(width: 8, height: 8)
+                    Text(server.isRunning
+                         ? "Running — \(server.requestCount) requests"
+                         : (server.lastError ?? "Stopped"))
+                        .font(.caption)
+                        .foregroundStyle(server.isRunning ? .primary : .secondary)
+                }
+            }
+
+            Section("Auth Token") {
+                Text("Clients must send this token in the x-canvas-token header.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    if showToken {
+                        TextField("Enter token", text: $tokenInput)
+                            .textFieldStyle(.roundedBorder)
+                            .monospaced()
+                            .font(.caption)
+                    } else {
+                        SecureField("Enter token", text: $tokenInput)
+                            .textFieldStyle(.roundedBorder)
+                            .monospaced()
+                            .font(.caption)
+                    }
+                    Button(action: { showToken.toggle() }) {
+                        Image(systemName: showToken ? "eye.slash" : "eye")
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                HStack {
+                    Button("Save Token") {
+                        let trimmed = tokenInput.trimmingCharacters(in: .whitespaces)
+                        guard !trimmed.isEmpty else { return }
+                        UserDefaults.standard.set(trimmed, forKey: CanvasServer.tokenKey)
+                        tokenInput = ""
+                    }
+                    .disabled(tokenInput.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                    Spacer()
+
+                    if !serverToken.isEmpty {
+                        Label("Token configured", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    } else {
+                        Label("No token set", systemImage: "xmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+
+            Section("Quick test") {
+                Text("""
+                    curl -H "x-canvas-token: TOKEN" http://localhost:\(CanvasServer.port)/health
+                    """)
+                    .font(.caption)
+                    .monospaced()
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
         }
         .formStyle(.grouped)

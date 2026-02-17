@@ -13,6 +13,7 @@ struct CortanaCanvasApp: App {
                     setupDatabase()
                     startProjectRefresh()
                     requestNotificationPermission()
+                    startCanvasServerIfEnabled()
                 }
         }
         .windowStyle(.titleBar)
@@ -62,6 +63,11 @@ struct CortanaCanvasApp: App {
         Task {
             await NotificationManager.shared.requestAuthorization()
         }
+    }
+
+    private func startCanvasServerIfEnabled() {
+        guard UserDefaults.standard.bool(forKey: CanvasServer.enabledKey) else { return }
+        CanvasServer.shared.start()
     }
 }
 
