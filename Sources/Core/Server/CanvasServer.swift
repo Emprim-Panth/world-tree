@@ -22,6 +22,7 @@ final class CanvasServer: ObservableObject {
     @Published private(set) var requestCount = 0
     @Published private(set) var startedAt: Date?
     @Published private(set) var lastError: String?
+    @Published private(set) var ngrokPublicURL: String?
 
     private var listener: NWListener?
     private let networkQueue = DispatchQueue(label: "cortana.canvas-server", qos: .userInitiated)
@@ -60,8 +61,13 @@ final class CanvasServer: ObservableObject {
                         self.isRunning = true
                         self.startedAt = Date()
                         self.lastError = nil
-                        self.writeStateFile()
+                        self.writeStateFile(ngrokURL: nil)
                         canvasLog("[CanvasServer] Ready on port \(Self.port)")
+                        // Discover ngrok tunnel URL (if running) after a short delay
+                        Task { @MainActor [weak self] in
+                            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s
+                            await self?.discoverAndWriteNgrokURL()
+                        }
                     case .failed(let error):
                         self.isRunning = false
                         self.lastError = error.localizedDescription
@@ -86,24 +92,30 @@ final class CanvasServer: ObservableObject {
         listener?.cancel()
         listener = nil
         isRunning = false
+        ngrokPublicURL = nil
         removeStateFile()
     }
 
     // MARK: - State File (for external clients like Telegram bot)
 
-    /// Writes ~/.cortana/state/canvas-server.json so Python scripts can discover the token and URL.
-    private func writeStateFile() {
+    /// Writes ~/.cortana/state/canvas-server.json so Python scripts can discover the token and URLs.
+    /// ngrokURL is the public tunnel URL — nil until discovered after startup.
+    private func writeStateFile(ngrokURL: String?) {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let stateDir = URL(fileURLWithPath: "\(home)/.cortana/state")
         let stateFile = stateDir.appendingPathComponent("canvas-server.json")
         try? FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
 
-        let state: [String: Any] = [
+        var state: [String: Any] = [
             "url": "http://localhost:\(Self.port)",
             "port": Self.port,
             "token": configuredToken,
             "started_at": ISO8601DateFormatter().string(from: Date())
         ]
+        if let ngrok = ngrokURL {
+            state["ngrok_url"] = ngrok
+            canvasLog("[CanvasServer] ngrok URL: \(ngrok)")
+        }
         if let data = try? JSONSerialization.data(withJSONObject: state, options: .prettyPrinted) {
             try? data.write(to: stateFile)
         }
@@ -113,6 +125,56 @@ final class CanvasServer: ObservableObject {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let stateFile = URL(fileURLWithPath: "\(home)/.cortana/state/canvas-server.json")
         try? FileManager.default.removeItem(at: stateFile)
+    }
+
+    // MARK: - ngrok URL Discovery
+
+    /// Polls the ngrok local API to find the active tunnel for our port.
+    /// Writes the public URL to canvas-server.json when found.
+    private func discoverAndWriteNgrokURL() async {
+        guard let url = URL(string: "http://localhost:4040/api/tunnels") else { return }
+
+        // Retry a few times — ngrok may take a moment to establish the tunnel
+        for attempt in 1...5 {
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                if let ngrokURL = parseNgrokURL(from: data) {
+                    writeStateFile(ngrokURL: ngrokURL)
+                    self.ngrokPublicURL = ngrokURL
+                    return
+                }
+            } catch {
+                // ngrok not running yet
+            }
+            if attempt < 5 {
+                try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s between retries
+            }
+        }
+        canvasLog("[CanvasServer] No ngrok tunnel detected — remote access unavailable")
+    }
+
+    private func parseNgrokURL(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tunnels = json["tunnels"] as? [[String: Any]] else { return nil }
+
+        // Find the https tunnel forwarding to our port
+        for tunnel in tunnels {
+            let proto = tunnel["proto"] as? String ?? ""
+            let publicURL = tunnel["public_url"] as? String ?? ""
+            let config = tunnel["config"] as? [String: Any] ?? [:]
+            let addr = config["addr"] as? String ?? ""
+
+            if proto == "https" && addr.contains("\(Self.port)") {
+                return publicURL
+            }
+            // Also accept http tunnel if no https
+            if proto == "http" && addr.contains("\(Self.port)") {
+                return publicURL
+            }
+        }
+
+        // Fallback: return first https tunnel
+        return tunnels.first { $0["proto"] as? String == "https" }?["public_url"] as? String
     }
 
     // MARK: - Connection Entry (MainActor)

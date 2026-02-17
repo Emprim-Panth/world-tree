@@ -298,10 +298,31 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Remote Access") {
+                if let ngrok = server.ngrokPublicURL {
+                    Label("Tunnel active", systemImage: "network")
+                        .foregroundStyle(.green)
+                        .font(.caption)
+                    Text(ngrok)
+                        .font(.caption)
+                        .monospaced()
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                    Text("Copy this URL into MacBook Canvas → Settings → Server.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Label("No ngrok tunnel detected", systemImage: "network.slash")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Start com.cortana.canvas-tunnel to enable remote access.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Quick test") {
-                Text("""
-                    curl -H "x-canvas-token: TOKEN" http://localhost:\(CanvasServer.port)/health
-                    """)
+                Text(#"curl -H "x-canvas-token: TOKEN" http://localhost:\#(CanvasServer.port)/health"#)
                     .font(.caption)
                     .monospaced()
                     .foregroundStyle(.secondary)
