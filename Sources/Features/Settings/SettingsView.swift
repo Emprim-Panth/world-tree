@@ -30,6 +30,11 @@ struct SettingsView: View {
                     Label("Server", systemImage: "server.rack")
                 }
 
+            remoteTab
+                .tabItem {
+                    Label("Remote", systemImage: "link.icloud")
+                }
+
             connectionTab
                 .tabItem {
                     Label("Connection", systemImage: "network")
@@ -331,6 +336,156 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    // MARK: - Remote Studio (MacBook client mode)
+
+    @AppStorage(CortanaConstants.remoteCanvasEnabledKey) private var remoteEnabled = false
+    @AppStorage(CortanaConstants.remoteCanvasURLKey) private var remoteURL = ""
+    @AppStorage(CortanaConstants.remoteCanvasTokenKey) private var remoteToken = ""
+    @State private var remoteURLInput = ""
+    @State private var remoteTokenInput = ""
+    @State private var showRemoteToken = false
+    @State private var remoteHealthStatus = ""
+
+    private var remoteTab: some View {
+        Form {
+            Section("Connect to Studio") {
+                Text("When enabled, all messages are sent to your Mac Studio's Canvas server. The UI is identical — tokens stream in real time.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Connect to Remote Studio", isOn: $remoteEnabled)
+                    .onChange(of: remoteEnabled) { _, enabled in
+                        applyRemoteToggle(enabled)
+                    }
+
+                // Status dot
+                HStack(spacing: 6) {
+                    let isActive = providerManager.selectedProviderId == "remote-canvas"
+                    Circle()
+                        .fill(isActive ? Color.green : Color.secondary.opacity(0.4))
+                        .frame(width: 8, height: 8)
+                    Text(isActive ? "Active — routing to Studio" : "Inactive — local providers in use")
+                        .font(.caption)
+                        .foregroundStyle(isActive ? .primary : .secondary)
+                }
+            }
+
+            Section("Studio URL") {
+                if !remoteURL.isEmpty {
+                    Text(remoteURL)
+                        .font(.caption).monospaced()
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                }
+
+                HStack {
+                    TextField("https://…ngrok-free.app  or  http://192.168.x.x:5865",
+                              text: $remoteURLInput)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption).monospaced()
+                    Button("Save") {
+                        let trimmed = remoteURLInput.trimmingCharacters(in: .whitespaces)
+                        guard !trimmed.isEmpty else { return }
+                        remoteURL = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
+                        remoteURLInput = ""
+                        if remoteEnabled { applyRemoteToggle(true) }
+                    }
+                    .disabled(remoteURLInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+
+                Text("Paste the ngrok URL from Studio Canvas → Settings → Server.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Studio Token") {
+                HStack {
+                    if showRemoteToken {
+                        TextField("x-canvas-token", text: $remoteTokenInput)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption).monospaced()
+                    } else {
+                        SecureField("x-canvas-token", text: $remoteTokenInput)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption).monospaced()
+                    }
+                    Button(action: { showRemoteToken.toggle() }) {
+                        Image(systemName: showRemoteToken ? "eye.slash" : "eye")
+                    }
+                    .buttonStyle(.plain)
+                    Button("Save") {
+                        let trimmed = remoteTokenInput.trimmingCharacters(in: .whitespaces)
+                        guard !trimmed.isEmpty else { return }
+                        remoteToken = trimmed
+                        remoteTokenInput = ""
+                        if remoteEnabled { applyRemoteToggle(true) }
+                    }
+                    .disabled(remoteTokenInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+
+                HStack {
+                    if !remoteToken.isEmpty {
+                        Label("Token configured", systemImage: "checkmark.circle.fill")
+                            .font(.caption).foregroundStyle(.green)
+                    } else {
+                        Label("No token set", systemImage: "xmark.circle")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+
+                    Spacer()
+
+                    Button("Test Connection") {
+                        Task { await testRemoteConnection() }
+                    }
+                    .disabled(remoteURL.isEmpty || remoteToken.isEmpty)
+                    .font(.caption)
+                }
+
+                if !remoteHealthStatus.isEmpty {
+                    Text(remoteHealthStatus)
+                        .font(.caption)
+                        .foregroundStyle(remoteHealthStatus.hasPrefix("✓") ? .green : .red)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    private func applyRemoteToggle(_ enabled: Bool) {
+        if enabled {
+            guard !remoteURL.isEmpty, !remoteToken.isEmpty,
+                  let url = URL(string: remoteURL) else {
+                // Can't enable without URL + token — silently revert
+                remoteEnabled = false
+                return
+            }
+            UserDefaults.standard.set(true, forKey: CortanaConstants.remoteCanvasEnabledKey)
+            providerManager.enableRemoteProvider(url: url, token: remoteToken)
+        } else {
+            UserDefaults.standard.set(false, forKey: CortanaConstants.remoteCanvasEnabledKey)
+            providerManager.disableRemoteProvider()
+        }
+    }
+
+    private func testRemoteConnection() async {
+        guard let url = URL(string: remoteURL) else {
+            remoteHealthStatus = "✗ Invalid URL"
+            return
+        }
+        remoteHealthStatus = "Testing…"
+        let provider = RemoteCanvasProvider(serverURL: url, token: remoteToken)
+        let health = await provider.checkHealth()
+        switch health {
+        case .available:
+            remoteHealthStatus = "✓ Connected — Studio is online"
+        case .degraded(let reason):
+            remoteHealthStatus = "⚠ Degraded: \(reason)"
+        case .unavailable(let reason):
+            remoteHealthStatus = "✗ Unreachable: \(reason)"
+        }
     }
 
     // MARK: - Connection

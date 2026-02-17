@@ -4,8 +4,8 @@ enum CortanaConstants {
     // MARK: - Database (Phase 2: Unified with Gateway)
     static let dropboxDatabasePath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        // Phase 2: Now using unified gateway database
-        return "\(home)/.cortana/cortana.db"
+        // Use the ACTUAL Dropbox-synced database that CLI uses
+        return "\(home)/Library/CloudStorage/Dropbox/claude-memory/conversations.db"
     }()
 
     static let fallbackDatabasePath: String = {
@@ -44,6 +44,11 @@ enum CortanaConstants {
     static let defaultContextDepth = 10
     static let defaultModel = "claude-sonnet-4-5-20250929"
     static let defaultProvider = "claude-code"
+
+    // MARK: - Remote Canvas (MacBook client mode)
+    static let remoteCanvasEnabledKey = "cortana.remoteCanvasEnabled"
+    static let remoteCanvasURLKey = "cortana.remoteCanvasURL"
+    static let remoteCanvasTokenKey = "cortana.remoteCanvasToken"
 
     // MARK: - CLI
     static let claudeCliPath: String = {

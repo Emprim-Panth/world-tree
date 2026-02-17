@@ -42,12 +42,13 @@ final class ProviderManager: ObservableObject {
         activeProvider?.displayName ?? "None"
     }
 
-    /// Short badge label for the header ("Max" / "API" / "Local")
+    /// Short badge label for the header ("Max" / "API" / "Local" / "Remote")
     var activeProviderBadge: String {
         switch activeProvider?.identifier {
         case "claude-code": return "Max"
         case "anthropic-api": return "API"
         case "ollama": return "Local"
+        case "remote-canvas": return "Remote"
         default: return "?"
         }
     }
@@ -102,7 +103,50 @@ final class ProviderManager: ObservableObject {
         let ollamaProvider = OllamaProvider()
         providers.append(ollamaProvider)
 
+        // 4. Remote Canvas — if remote mode was enabled in a previous session
+        if UserDefaults.standard.bool(forKey: CortanaConstants.remoteCanvasEnabledKey) {
+            if let remote = Self.buildRemoteProvider() {
+                canvasLog("[ProviderManager] Remote mode was enabled, registering Remote Canvas provider")
+                providers.append(remote)
+                // Restore remote as active if it was previously selected
+                if selectedProviderId == "remote-canvas" {
+                    canvasLog("[ProviderManager] Restoring remote-canvas as active provider")
+                }
+            }
+        }
+
         canvasLog("[ProviderManager] Registered \(providers.count) providers, active: \(selectedProviderId)")
+    }
+
+    // MARK: - Remote Provider Management
+
+    /// Enable remote mode: registers RemoteCanvasProvider and switches to it.
+    func enableRemoteProvider(url: URL, token: String) {
+        // Remove any existing remote provider first
+        providers.removeAll { $0.identifier == "remote-canvas" }
+
+        let remote = RemoteCanvasProvider(serverURL: url, token: token)
+        providers.append(remote)
+        selectedProviderId = "remote-canvas"
+        canvasLog("[ProviderManager] Remote Canvas enabled → \(url)")
+    }
+
+    /// Disable remote mode: removes RemoteCanvasProvider and falls back to Claude Code.
+    func disableRemoteProvider() {
+        providers.removeAll { $0.identifier == "remote-canvas" }
+        if selectedProviderId == "remote-canvas" {
+            selectedProviderId = CortanaConstants.defaultProvider
+        }
+        canvasLog("[ProviderManager] Remote Canvas disabled")
+    }
+
+    private static func buildRemoteProvider() -> RemoteCanvasProvider? {
+        let urlString = UserDefaults.standard.string(forKey: CortanaConstants.remoteCanvasURLKey) ?? ""
+        let token = UserDefaults.standard.string(forKey: CortanaConstants.remoteCanvasTokenKey) ?? ""
+        guard !urlString.isEmpty, !token.isEmpty, let url = URL(string: urlString) else {
+            return nil
+        }
+        return RemoteCanvasProvider(serverURL: url, token: token)
     }
 
     /// Resolve API key from environment or file (non-blocking).
