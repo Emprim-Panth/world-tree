@@ -366,7 +366,20 @@ final class CanvasServer: ObservableObject {
 
         var fullResponse = ""
 
-        for await event in ProviderManager.shared.send(context: ctx) {
+        // Prefer AnthropicAPIProvider for server-routed messages —
+        // ClaudeCodeProvider requires an active desktop Claude session.
+        let provider = ProviderManager.shared.providers.first { $0.identifier == "claude-code" }
+            ?? ProviderManager.shared.activeProvider
+
+        guard let provider else {
+            sendSSEChunk(connection, #"{"error":"No LLM provider available"}"#)
+            sendSSEClose(connection)
+            return
+        }
+
+        canvasLog("[CanvasServer] Using provider: \(provider.identifier)")
+
+        for await event in provider.send(context: ctx) {
             switch event {
             case .text(let token):
                 fullResponse += token

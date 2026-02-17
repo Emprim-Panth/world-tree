@@ -57,6 +57,7 @@ final class ClaudeCodeProvider: LLMProvider {
 
             var env = ProcessInfo.processInfo.environment
             env.removeValue(forKey: "ANTHROPIC_API_KEY")
+            env.removeValue(forKey: "CLAUDECODE")
             proc.environment = env
 
             proc.terminationHandler = { process in
@@ -146,6 +147,7 @@ final class ClaudeCodeProvider: LLMProvider {
 
             var env = ProcessInfo.processInfo.environment
             env.removeValue(forKey: "ANTHROPIC_API_KEY")
+            env.removeValue(forKey: "CLAUDECODE")  // prevent nested-session guard from tripping
             let existingPath = env["PATH"] ?? "/usr/bin:/bin"
             env["PATH"] = "\(home)/.local/bin:\(home)/.cortana/bin:/opt/homebrew/bin:/usr/local/bin:\(existingPath)"
             env["HOME"] = home

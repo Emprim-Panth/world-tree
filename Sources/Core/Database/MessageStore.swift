@@ -22,7 +22,7 @@ final class MessageStore {
                      WHERE cb.fork_from_message_id = m.id) as has_branches
                 FROM messages m
                 WHERE m.session_id = ?
-                ORDER BY m.created_at ASC
+                ORDER BY m.timestamp ASC
                 LIMIT ?
                 """
             return try Message.fetchAll(db, sql: sql, arguments: [sessionId, limit])
@@ -37,7 +37,7 @@ final class MessageStore {
                 SELECT m.*, 0 as has_branches
                 FROM messages m
                 WHERE m.session_id = ? AND m.id <= ?
-                ORDER BY m.created_at ASC
+                ORDER BY m.timestamp ASC
                 """
             if let limit {
                 // Take only the last N messages up to the fork point
@@ -46,7 +46,7 @@ final class MessageStore {
                         SELECT m.*, 0 as has_branches
                         FROM messages m
                         WHERE m.session_id = ? AND m.id <= ?
-                        ORDER BY m.created_at DESC
+                        ORDER BY m.timestamp DESC
                         LIMIT ?
                     ) sub ORDER BY sub.timestamp ASC
                     """
@@ -119,7 +119,7 @@ final class MessageStore {
                     SELECT m.*, 0 as has_branches
                     FROM messages m
                     WHERE m.content LIKE ?
-                    ORDER BY m.created_at DESC
+                    ORDER BY m.timestamp DESC
                     LIMIT ?
                     """
                 return try Message.fetchAll(db, sql: sql, arguments: ["%\(query)%", limit])
