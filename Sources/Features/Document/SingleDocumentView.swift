@@ -130,6 +130,9 @@ class SingleDocumentViewModel: ObservableObject {
     let treeId: String
     let mainBranchId: String         // branch.id (used for terminal routing)
     let mainBranchSessionId: String  // branch.sessionId (used for DB queries)
+    /// Cached at init — workingDirectory is immutable after tree creation.
+    /// Prevents repeated DB reads on every body re-evaluation.
+    let workingDirectory: String
     var branchLayout: BranchLayoutViewModel
 
     init(treeId: String) {
@@ -137,7 +140,8 @@ class SingleDocumentViewModel: ObservableObject {
 
         // Use existing root branch if one exists — never create duplicates on reopen
         let cwd = FileManager.default.currentDirectoryPath
-        let workDir = (try? TreeStore.shared.getTree(treeId))?.workingDirectory ?? cwd
+        let workDir = (try? TreeStore.shared.getTree(treeId))?.workingDirectory
+            .flatMap { $0.isEmpty ? nil : $0 } ?? cwd
 
         if let tree = try? TreeStore.shared.getTree(treeId),
            let root = tree.rootBranch,
@@ -173,15 +177,8 @@ class SingleDocumentViewModel: ObservableObject {
             self.mainBranchSessionId = sessionId
         }
 
+        self.workingDirectory = workDir
         self.branchLayout = BranchLayoutViewModel(treeId: treeId)
-    }
-
-    var workingDirectory: String {
-        if let tree = try? TreeStore.shared.getTree(treeId),
-           let cwd = tree.workingDirectory, !cwd.isEmpty {
-            return cwd
-        }
-        return FileManager.default.homeDirectoryForCurrentUser.path + "/Development"
     }
 
     func closeBranch(_ branchId: String) {

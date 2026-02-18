@@ -26,20 +26,22 @@ struct TemplatePicker: View {
             }
 
             Text("Templates pre-configure your branch for common tasks")
-                .font(.caption)
+                .font(.callout)
                 .foregroundStyle(.secondary)
 
-            // Template grid
-            LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(WorkflowTemplate.all) { template in
-                    TemplateCard(template: template)
-                        .onTapGesture { onSelect(template) }
+            // Template grid — scrollable so it's safe if template list grows
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(WorkflowTemplate.all) { template in
+                        TemplateCard(template: template)
+                            .onTapGesture { onSelect(template) }
+                    }
                 }
             }
 
             Divider()
 
-            // Skip option
+            // Skip option — styled as a clear button, not invisible text
             Button {
                 onSkip()
             } label: {
@@ -47,13 +49,13 @@ struct TemplatePicker: View {
                     Image(systemName: "plus.circle")
                     Text("Start blank conversation")
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
         .padding()
         .frame(width: 480)
+        .frame(minHeight: 300, maxHeight: 600)
     }
 }
 
@@ -107,7 +109,7 @@ struct TemplateCard: View {
         .cornerRadius(10)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(isHovering ? Color.cyan.opacity(0.5) : .clear, lineWidth: 1)
+                .stroke(isHovering ? Color.cyan.opacity(0.5) : Color.primary.opacity(0.08), lineWidth: 1)
         )
         .onHover { isHovering = $0 }
     }
