@@ -84,11 +84,13 @@ struct SidebarView: View {
                         ForEach(group.trees) { tree in
                             treeRow(tree)
                                 .tag(tree.id)
+                                .contextMenu { treeContextMenu(tree) }
                         }
                     }
                 }
             }
             .listStyle(.sidebar)
+            .background(FirstMouseEnabler())
 
             // New tree button
             Button {
@@ -158,47 +160,49 @@ struct SidebarView: View {
                 }
             }
         }
-        .contextMenu {
-            Button("Rename…") {
-                renameTarget = tree
-                renameText = tree.name
-                showRenameSheet = true
-            }
-
-            Menu("Move to…") {
-                ForEach(viewModel.projectNames.filter { $0 != (tree.project ?? "") }, id: \.self) { project in
-                    Button(project) {
-                        viewModel.moveTree(tree.id, toProject: project)
-                    }
-                }
-                if tree.project != nil {
-                    Button("General (no project)") {
-                        viewModel.moveTree(tree.id, toProject: nil)
-                    }
-                }
-                Divider()
-                Button("New Category…") {
-                    movingTreeId = tree.id
-                    newCategoryName = ""
-                    showNewCategorySheet = true
-                }
-            }
-
-            Divider()
-
-            Button("Archive") {
-                viewModel.archiveTree(tree.id)
-            }
-
-            Button("Delete…", role: .destructive) {
-                deleteTarget = tree
-                showDeleteConfirm = true
-            }
-        }
         .onChange(of: appState.selectedTreeId) { _, newId in
             if newId == tree.id {
                 loadTreeBranches(tree.id)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func treeContextMenu(_ tree: ConversationTree) -> some View {
+        Button("Rename…") {
+            renameTarget = tree
+            renameText = tree.name
+            showRenameSheet = true
+        }
+
+        Menu("Move to…") {
+            ForEach(viewModel.projectNames.filter { $0 != (tree.project ?? "") }, id: \.self) { project in
+                Button(project) {
+                    viewModel.moveTree(tree.id, toProject: project)
+                }
+            }
+            if tree.project != nil {
+                Button("General (no project)") {
+                    viewModel.moveTree(tree.id, toProject: nil)
+                }
+            }
+            Divider()
+            Button("New Category…") {
+                movingTreeId = tree.id
+                newCategoryName = ""
+                showNewCategorySheet = true
+            }
+        }
+
+        Divider()
+
+        Button("Archive") {
+            viewModel.archiveTree(tree.id)
+        }
+
+        Button("Delete…", role: .destructive) {
+            deleteTarget = tree
+            showDeleteConfirm = true
         }
     }
 
@@ -396,5 +400,19 @@ struct SidebarView: View {
         showNewCategorySheet = false
         movingTreeId = nil
         newCategoryName = ""
+    }
+}
+
+// MARK: - First Mouse Enabler
+
+/// Makes the sidebar List respond to the first click even when the window isn't focused.
+/// Without this, clicking a row in an unfocused window requires two clicks: one to focus,
+/// one to select.
+private struct FirstMouseEnabler: NSViewRepresentable {
+    func makeNSView(context: Context) -> FirstMouseView { FirstMouseView() }
+    func updateNSView(_ nsView: FirstMouseView, context: Context) {}
+
+    class FirstMouseView: NSView {
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     }
 }
