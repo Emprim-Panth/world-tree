@@ -88,16 +88,29 @@ struct SingleDocumentView: View {
             }
         }
         .toolbar {
+            // Model picker — quick access without opening Settings
+            ToolbarItem(placement: .secondaryAction) {
+                ModelPickerButton()
+            }
+
+            // Terminal toggle
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         showTerminal.toggle()
+                        if showTerminal {
+                            // Pre-type "claude" into the terminal so user just hits Enter
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                                BranchTerminalManager.shared.send(
+                                    to: activeTerminalBranchId, text: "claude\n")
+                            }
+                        }
                     }
                 } label: {
-                    Label("Terminal", systemImage: showTerminal ? "terminal.fill" : "terminal")
+                    Label("Claude", systemImage: showTerminal ? "terminal.fill" : "terminal")
                 }
                 .keyboardShortcut("`", modifiers: .command)
-                .help("Toggle Terminal (⌘`)")
+                .help("Open Claude terminal (⌘`)")
             }
         }
         .onAppear {
