@@ -88,7 +88,7 @@ struct SidebarView: View {
             // Tree list — ScrollView instead of List so contextMenu and
             // single-click work correctly (NSTableView eats all mouse events)
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
                     ForEach(viewModel.groupedTrees, id: \.project) { group in
                         // Section header — right-click to rename/delete category
                         HStack {

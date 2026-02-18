@@ -135,20 +135,29 @@ class SingleDocumentViewModel: ObservableObject {
     init(treeId: String) {
         self.treeId = treeId
 
-        // Create main branch with real database session
+        // Use existing root branch if one exists — never create duplicates on reopen
         let cwd = FileManager.default.currentDirectoryPath
-        if let branch = try? TreeStore.shared.createBranch(
+        let workDir = (try? TreeStore.shared.getTree(treeId))?.workingDirectory ?? cwd
+
+        if let tree = try? TreeStore.shared.getTree(treeId),
+           let root = tree.rootBranch,
+           let sessionId = root.sessionId {
+            // Reuse the existing root branch and its session
+            self.mainBranchId = root.id
+            self.mainBranchSessionId = sessionId
+        } else if let branch = try? TreeStore.shared.createBranch(
             treeId: treeId,
             parentBranch: nil,
             forkFromMessage: nil,
             type: .conversation,
-            title: "Main Conversation",
-            workingDirectory: cwd
+            title: "Main",
+            workingDirectory: workDir
         ), let sessionId = branch.sessionId {
+            // First open — create the root branch
             self.mainBranchId = branch.id
             self.mainBranchSessionId = sessionId
         } else {
-            // Fallback - create session manually if branch creation fails
+            // Last resort fallback
             let branchId = UUID().uuidString
             let sessionId = UUID().uuidString
             try? DatabaseManager.shared.write { db in
@@ -157,7 +166,7 @@ class SingleDocumentViewModel: ObservableObject {
                         INSERT INTO sessions (id, terminal_id, working_directory, description, started_at)
                         VALUES (?, ?, ?, ?, datetime('now'))
                         """,
-                    arguments: [sessionId, "canvas", cwd, "Canvas Session"]
+                    arguments: [sessionId, "canvas", workDir, "Canvas Session"]
                 )
             }
             self.mainBranchId = branchId

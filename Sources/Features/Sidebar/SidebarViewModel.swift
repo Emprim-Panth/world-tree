@@ -21,9 +21,17 @@ final class SidebarViewModel: ObservableObject {
 
     /// Group trees by project for sidebar sections
     var groupedTrees: [(project: String, trees: [ConversationTree])] {
-        let grouped = Dictionary(grouping: filteredTrees) { $0.project ?? "General" }
-        return grouped.sorted { $0.key < $1.key }
-            .map { (project: $0.key, trees: $0.value) }
+        let grouped = Dictionary(grouping: filteredTrees) {
+            let p = $0.project ?? ""
+            return p.isEmpty ? "General" : p
+        }
+        return grouped.sorted { lhs, rhs in
+            // "General" always sorts last
+            if lhs.key == "General" { return false }
+            if rhs.key == "General" { return true }
+            return lhs.key < rhs.key
+        }
+        .map { (project: $0.key, trees: $0.value) }
     }
 
     func loadTrees() {

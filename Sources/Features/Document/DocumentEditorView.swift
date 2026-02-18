@@ -333,11 +333,12 @@ class DocumentEditorViewModel: ObservableObject {
 
             // 3. Route through ClaudeCodeProvider
             let isNew = document.sections.count <= 1
+            let model = UserDefaults.standard.string(forKey: "defaultModel") ?? CortanaConstants.defaultModel
             let ctx = ProviderSendContext(
                 message: content,
                 sessionId: sessionId,
                 branchId: branchId,
-                model: CortanaConstants.defaultModel,
+                model: model,
                 workingDirectory: workingDirectory,
                 project: nil,
                 parentSessionId: nil,
