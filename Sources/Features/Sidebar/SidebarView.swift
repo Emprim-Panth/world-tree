@@ -77,20 +77,28 @@ struct SidebarView: View {
             .padding(.horizontal, 12)
             .padding(.top, 8)
 
-            // Tree list
-            List(selection: $appState.selectedTreeId) {
-                ForEach(viewModel.groupedTrees, id: \.project) { group in
-                    Section(group.project) {
+            // Tree list — ScrollView instead of List so contextMenu and
+            // single-click work correctly (NSTableView eats all mouse events)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(viewModel.groupedTrees, id: \.project) { group in
+                        // Section header
+                        Text(group.project.uppercased())
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 12)
+                            .padding(.top, 12)
+                            .padding(.bottom, 2)
+
                         ForEach(group.trees) { tree in
                             treeRow(tree)
-                                .tag(tree.id)
                                 .contextMenu { treeContextMenu(tree) }
                         }
                     }
                 }
+                .padding(.bottom, 4)
             }
-            .listStyle(.sidebar)
-            .background(FirstMouseEnabler())
 
             // New tree button
             Button {
@@ -138,10 +146,12 @@ struct SidebarView: View {
     // MARK: - Tree Row
 
     private func treeRow(_ tree: ConversationTree) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let isSelected = appState.selectedTreeId == tree.id
+        return VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(tree.name)
-                    .fontWeight(appState.selectedTreeId == tree.id ? .semibold : .regular)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .foregroundStyle(isSelected ? Color.primary : Color.primary)
                 Spacer()
                 Text("\(tree.messageCount)")
                     .font(.caption2)
@@ -153,16 +163,26 @@ struct SidebarView: View {
             }
 
             // Show branch tree when selected
-            if appState.selectedTreeId == tree.id, !tree.branches.isEmpty {
+            if isSelected, !tree.branches.isEmpty {
                 ForEach(tree.branches.filter { $0.parentBranchId == nil }) { rootBranch in
                     TreeNodeView(branch: rootBranch, treeId: tree.id)
                         .padding(.leading, 8)
                 }
             }
         }
-        .onChange(of: appState.selectedTreeId) { _, newId in
-            if newId == tree.id {
-                loadTreeBranches(tree.id)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
+        .cornerRadius(6)
+        .padding(.horizontal, 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            appState.selectedTreeId = tree.id
+            loadTreeBranches(tree.id)
+            if appState.selectedBranchId == nil,
+               let root = tree.branches.first(where: { $0.parentBranchId == nil }) {
+                appState.selectBranch(root.id, in: tree.id)
             }
         }
     }
@@ -403,16 +423,3 @@ struct SidebarView: View {
     }
 }
 
-// MARK: - First Mouse Enabler
-
-/// Makes the sidebar List respond to the first click even when the window isn't focused.
-/// Without this, clicking a row in an unfocused window requires two clicks: one to focus,
-/// one to select.
-private struct FirstMouseEnabler: NSViewRepresentable {
-    func makeNSView(context: Context) -> FirstMouseView { FirstMouseView() }
-    func updateNSView(_ nsView: FirstMouseView, context: Context) {}
-
-    class FirstMouseView: NSView {
-        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    }
-}
