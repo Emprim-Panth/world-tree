@@ -27,6 +27,14 @@ struct SidebarView: View {
     @State private var deleteTarget: ConversationTree?
     @State private var showDeleteConfirm = false
 
+    // Rename category
+    @State private var renamingCategory: String?
+    @State private var renameCategoryText = ""
+    @State private var showRenameCategorySheet = false
+
+    // New tree pre-filled for a specific category
+    @State private var quickNewTreeProject = ""
+
     var body: some View {
         VStack(spacing: 0) {
             // Projects section (collapsible)
@@ -82,14 +90,40 @@ struct SidebarView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(viewModel.groupedTrees, id: \.project) { group in
-                        // Section header
-                        Text(group.project.uppercased())
-                            .font(.caption2)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 12)
-                            .padding(.top, 12)
-                            .padding(.bottom, 2)
+                        // Section header — right-click to rename/delete category
+                        HStack {
+                            Text(group.project.uppercased())
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button {
+                                quickNewTreeProject = group.project
+                                newTreeProject = group.project
+                                showNewTreeSheet = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.top, 12)
+                        .padding(.bottom, 2)
+                        .contentShape(Rectangle())
+                        .contextMenu {
+                            Button("Rename Category…") {
+                                renamingCategory = group.project
+                                renameCategoryText = group.project
+                                showRenameCategorySheet = true
+                            }
+                            Button("New Tree Here") {
+                                quickNewTreeProject = group.project
+                                newTreeProject = group.project
+                                showNewTreeSheet = true
+                            }
+                        }
 
                         ForEach(group.trees) { tree in
                             treeRow(tree)
@@ -122,9 +156,13 @@ struct SidebarView: View {
         .sheet(isPresented: $showNewTreeSheet) {
             newTreeSheet
         }
-        // Rename sheet
+        // Rename tree sheet
         .sheet(isPresented: $showRenameSheet) {
             renameSheet
+        }
+        // Rename category sheet
+        .sheet(isPresented: $showRenameCategorySheet) {
+            renameCategorySheet
         }
         // New category sheet (for Move to → New Category…)
         .sheet(isPresented: $showNewCategorySheet) {
@@ -386,6 +424,44 @@ struct SidebarView: View {
         }
         showRenameSheet = false
         renameTarget = nil
+    }
+
+    // MARK: - Rename Category Sheet
+
+    private var renameCategorySheet: some View {
+        VStack(spacing: 16) {
+            Text("Rename Category")
+                .font(.headline)
+
+            TextField("Category name", text: $renameCategoryText)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { commitRenameCategory() }
+
+            HStack {
+                Button("Cancel") { showRenameCategorySheet = false }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Rename") { commitRenameCategory() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(renameCategoryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+
+    private func commitRenameCategory() {
+        let newName = renameCategoryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty, let oldName = renamingCategory else {
+            showRenameCategorySheet = false
+            return
+        }
+        // Move every tree in the old category to the new name
+        for tree in viewModel.trees where (tree.project ?? "General") == oldName {
+            viewModel.moveTree(tree.id, toProject: newName == "General" ? nil : newName)
+        }
+        showRenameCategorySheet = false
+        renamingCategory = nil
     }
 
     // MARK: - New Category Sheet
