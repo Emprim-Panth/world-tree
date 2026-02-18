@@ -27,6 +27,8 @@ struct ConversationTree: Identifiable, Equatable, Hashable {
     var messageCount: Int = 0
     /// Count of active branches (set by query)
     var branchCount: Int = 0
+    /// Most recent assistant message snippet for context trail (set by query, transient)
+    var lastMessageSnippet: String?
 
     /// True if this tree is a Telegram phone-bridge channel.
     /// Detected by naming convention (name starts with "Telegram").

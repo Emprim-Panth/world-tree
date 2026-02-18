@@ -57,12 +57,15 @@ final class AnthropicAPIProvider: LLMProvider {
                     let state = try await self.getOrCreateStateManager(context: context)
                     canvasLog("[AnthropicAPIProvider] state manager ready, system blocks=\(state.systemBlocks.count)")
 
+                    // Refresh terminal context (captures latest PTY output before each message)
+                    state.refreshTerminalContext()
+
                     // Query KB
                     let kbContext = self.queryKnowledgeBase(message: context.message)
                     state.appendKBContext(kbContext)
 
-                    // Add user message
-                    state.addUserMessage(context.message)
+                    // Add user message (with any image/file attachments)
+                    state.addUserMessage(context.message, attachments: context.attachments)
 
                     let selectedModel = context.model ?? CortanaConstants.defaultModel
                     let cwd = self.resolveWorkingDirectory(context.workingDirectory, project: context.project)
@@ -268,6 +271,28 @@ final class AnthropicAPIProvider: LLMProvider {
         _ = await manager.buildSystemPrompt(project: context.project, workingDirectory: context.workingDirectory)
         stateManager = manager
         return manager
+    }
+
+    // MARK: - Context Warm-Up
+
+    /// Pre-build and cache the ConversationStateManager for a session before the first message.
+    /// Called when a conversation is opened — eliminates cold-start delay on first send.
+    func warmUp(sessionId: String, branchId: String, project: String?, workingDirectory: String?) async {
+        // Already warm for this session
+        if let existing = stateManager, existing.sessionId == sessionId { return }
+
+        canvasLog("[AnthropicAPIProvider] warming context for session=\(sessionId)")
+
+        let context = ProviderSendContext(
+            message: "",
+            sessionId: sessionId,
+            branchId: branchId,
+            workingDirectory: workingDirectory,
+            project: project
+        )
+
+        _ = try? await getOrCreateStateManager(context: context)
+        canvasLog("[AnthropicAPIProvider] context warm for session=\(sessionId)")
     }
 
     // MARK: - Helpers

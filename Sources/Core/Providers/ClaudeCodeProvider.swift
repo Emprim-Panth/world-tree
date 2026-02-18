@@ -131,10 +131,15 @@ final class ClaudeCodeProvider: LLMProvider {
                 }
             }
 
-            let systemPrompt = CortanaIdentity.cliSystemPrompt(
+            var systemPrompt = CortanaIdentity.cliSystemPrompt(
                 project: context.project,
                 workingDirectory: context.workingDirectory
             )
+            // Inject recent conversation history so context survives --resume failures.
+            // Server-side sessions can expire silently; this is the fallback.
+            if let recentCtx = context.recentContext {
+                systemPrompt += "\n\n\(recentCtx)"
+            }
             args += ["--append-system-prompt", systemPrompt]
 
             proc.arguments = args
@@ -175,6 +180,11 @@ final class ClaudeCodeProvider: LLMProvider {
                         continuation.yield(event)
                     }
                     if let sid = parser.cliSessionId, let self {
+                        // Detect silent resume failures: if we asked to resume a session
+                        // but got back a different session ID, the CLI started fresh.
+                        if let expected = self.getCliSession(for: context.sessionId), expected != sid {
+                            canvasLog("[ClaudeCodeProvider] ⚠️ Resume failed silently — new session. Expected: \(expected.prefix(8))…, Got: \(sid.prefix(8))…")
+                        }
                         self.setCliSession(sid, for: context.sessionId)
                     }
                 }

@@ -42,7 +42,11 @@ final class TreeStore {
                      JOIN messages m ON m.session_id = s.id
                      WHERE b.tree_id = t.id) as message_count,
                     (SELECT COUNT(*) FROM canvas_branches b
-                     WHERE b.tree_id = t.id AND b.status = 'active') as branch_count
+                     WHERE b.tree_id = t.id AND b.status = 'active') as branch_count,
+                    (SELECT m.content FROM messages m
+                     JOIN canvas_branches b ON m.session_id = b.session_id
+                     WHERE b.tree_id = t.id AND m.role = 'assistant'
+                     ORDER BY m.timestamp DESC LIMIT 1) as last_message_snippet
                 FROM canvas_trees t
                 """
             if !includeArchived {
@@ -54,6 +58,7 @@ final class TreeStore {
                 var tree = ConversationTree(row: row)
                 tree.messageCount = row["message_count"] ?? 0
                 tree.branchCount = row["branch_count"] ?? 0
+                tree.lastMessageSnippet = row["last_message_snippet"]
                 return tree
             }
         }
@@ -114,6 +119,44 @@ final class TreeStore {
                     arguments: [id]
                 )
             }
+        }
+    }
+
+    /// Update the working directory for all trees in a given project group.
+    /// Used when the user edits a project's path inline in the sidebar.
+    func updateWorkingDirectory(forProject project: String, path: String) throws {
+        try db.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE canvas_trees
+                    SET working_directory = ?, updated_at = datetime('now')
+                    WHERE project = ?
+                    """,
+                arguments: [path, project]
+            )
+        }
+    }
+
+    // MARK: - Project-Level Operations
+
+    /// Archive all trees in a project group — removes them from the active sidebar.
+    func archiveProject(_ projectName: String) throws {
+        try db.write { db in
+            try db.execute(
+                sql: "UPDATE canvas_trees SET archived = 1, updated_at = datetime('now') WHERE project = ?",
+                arguments: [projectName]
+            )
+        }
+    }
+
+    /// Delete all trees in a project group (full cascade: messages → sessions → branches → trees).
+    func deleteProject(_ projectName: String) throws {
+        let treeIds: [String] = try db.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT id FROM canvas_trees WHERE project = ?", arguments: [projectName])
+            return rows.map { $0["id"] }
+        }
+        for id in treeIds {
+            try deleteTree(id)
         }
     }
 

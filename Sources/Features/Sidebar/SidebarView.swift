@@ -5,7 +5,7 @@ struct SidebarView: View {
     @StateObject private var daemonService = DaemonService.shared
     @EnvironmentObject var appState: AppState
     @State private var showNewTreeSheet = false
-    @State private var sessionsExpanded = true
+    @State private var sessionsExpanded = false
     @State private var newTreeName = ""
     @State private var newTreeProject = ""
     private static let defaultWorkingDir = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Development"
@@ -23,9 +23,13 @@ struct SidebarView: View {
     @State private var showNewCategorySheet = false
     @State private var movingTreeId: String?
 
-    // Delete confirmation
+    // Delete tree confirmation
     @State private var deleteTarget: ConversationTree?
     @State private var showDeleteConfirm = false
+
+    // Delete/archive project confirmation
+    @State private var deleteProjectTarget: String?
+    @State private var showDeleteProjectConfirm = false
 
     // Rename category
     @State private var renamingCategory: String?
@@ -37,114 +41,178 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Projects section (collapsible)
-            ProjectListView()
-                .frame(minHeight: 120, maxHeight: 240)
+            // Search
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+                TextField("Search…", text: $viewModel.searchText)
+                    .textFieldStyle(.plain)
+                    .font(.callout)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.primary.opacity(0.06))
+            .cornerRadius(8)
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+
+            // Search scope toggle — only visible when there's a query
+            if !viewModel.searchText.isEmpty {
+                HStack(spacing: 4) {
+                    ForEach(SearchScope.allCases, id: \.self) { scope in
+                        Button {
+                            viewModel.searchScope = scope
+                        } label: {
+                            Text(scope.rawValue)
+                                .font(.caption2)
+                                .fontWeight(viewModel.searchScope == scope ? .semibold : .regular)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(viewModel.searchScope == scope
+                                    ? Color.accentColor.opacity(0.2)
+                                    : Color.primary.opacity(0.06))
+                                .foregroundStyle(viewModel.searchScope == scope ? Color.accentColor : Color.secondary)
+                                .cornerRadius(5)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Spacer()
+                    if viewModel.isSearching {
+                        ProgressView().controlSize(.mini)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 4)
+            }
+
+            // Unified project list — projects ARE the grouping, trees live inside them
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Content search results
+                    if viewModel.searchScope == .content && !viewModel.searchText.isEmpty {
+                        if viewModel.contentResults.isEmpty && !viewModel.isSearching {
+                            Text("No results")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.top, 24)
+                        } else {
+                            ForEach(viewModel.contentResults) { result in
+                                contentResultRow(result)
+                            }
+                        }
+                    }
+
+                    // Normal tree list (hidden when content search is active)
+                    if viewModel.searchScope != .content || viewModel.searchText.isEmpty {
+                        ForEach(viewModel.allProjectGroups, id: \.project) { group in
+                            // Project header row (replaces old plain text label)
+                            ProjectGroupHeader(
+                                projectName: group.project,
+                                resolvedPath: viewModel.resolvedPath(for: group.project),
+                                gitInfo: viewModel.gitInfo(for: group.project),
+                                typeIcon: viewModel.typeIcon(for: group.project),
+                                treeCount: group.trees.count,
+                                onNewTree: {
+                                    quickNewTreeProject = group.project
+                                    newTreeProject = group.project
+                                    if let path = viewModel.resolvedPath(for: group.project) {
+                                        newTreeWorkingDir = path
+                                    }
+                                    showNewTreeSheet = true
+                                },
+                                onRename: {
+                                    renamingCategory = group.project
+                                    renameCategoryText = group.project
+                                    showRenameCategorySheet = true
+                                },
+                                onPathChanged: { newPath in
+                                    viewModel.updateProjectPath(projectName: group.project, path: newPath)
+                                },
+                                onArchive: {
+                                    viewModel.archiveProject(group.project)
+                                },
+                                onDelete: {
+                                    deleteProjectTarget = group.project
+                                    showDeleteProjectConfirm = true
+                                }
+                            )
+
+                            ForEach(group.trees) { tree in
+                                treeRow(tree)
+                                    .contextMenu { treeContextMenu(tree) }
+                            }
+
+                            Spacer().frame(height: 4)
+                        }
+                    }
+                }
+                .padding(.bottom, 8)
+            }
 
             Divider()
 
-            // Active Sessions (collapsible)
+            // Active Sessions — collapsed by default, bottom of sidebar
             DisclosureGroup(isExpanded: $sessionsExpanded) {
                 AgentListView(showHeader: false)
-                    .frame(minHeight: 60, maxHeight: 200)
+                    .frame(minHeight: 40, maxHeight: 180)
             } label: {
                 HStack(spacing: 6) {
-                    Text("Active Sessions")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
+                    Text("Sessions")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .textCase(.uppercase)
                         .foregroundStyle(.secondary)
-
-                    let totalSessions = daemonService.activeSessions.count + daemonService.tmuxSessions.count
-                    if totalSessions > 0 {
-                        Text("\(totalSessions)")
+                    let total = daemonService.activeSessions.count + daemonService.tmuxSessions.count
+                    if total > 0 {
+                        Text("\(total)")
                             .font(.caption2)
-                            .fontWeight(.medium)
                             .foregroundStyle(.white)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(.blue)
+                            .background(Color.blue)
                             .cornerRadius(6)
                     }
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
 
             Divider()
 
-            // Search
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Search trees...", text: $viewModel.searchText)
-                    .textFieldStyle(.plain)
-            }
-            .padding(8)
-            .background(.quaternary)
-            .cornerRadius(8)
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-
-            // Tree list — ScrollView instead of List so contextMenu and
-            // single-click work correctly (NSTableView eats all mouse events)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(viewModel.groupedTrees, id: \.project) { group in
-                        // Section header — right-click to rename/delete category
-                        HStack {
-                            Text(group.project)
-                                .font(.caption2)
-                                .fontWeight(.semibold)
-                                .textCase(.uppercase)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button {
-                                quickNewTreeProject = group.project
-                                newTreeProject = group.project
-                                showNewTreeSheet = true
-                            } label: {
-                                Image(systemName: "plus")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.top, 12)
-                        .padding(.bottom, 2)
-                        .contentShape(Rectangle())
-                        .contextMenu {
-                            Button("Rename Category…") {
-                                renamingCategory = group.project
-                                renameCategoryText = group.project
-                                showRenameCategorySheet = true
-                            }
-                            Button("New Tree Here") {
-                                quickNewTreeProject = group.project
-                                newTreeProject = group.project
-                                showNewTreeSheet = true
-                            }
-                        }
-
-                        ForEach(group.trees) { tree in
-                            treeRow(tree)
-                                .contextMenu { treeContextMenu(tree) }
-                        }
-                    }
+            // Bottom action bar: New Tree + New Project
+            HStack(spacing: 0) {
+                Button {
+                    showNewTreeSheet = true
+                } label: {
+                    Label("New Tree", systemImage: "plus.circle")
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
                 }
-                .padding(.bottom, 4)
-            }
+                .buttonStyle(.plain)
 
-            // New tree button
-            Button {
-                showNewTreeSheet = true
-            } label: {
-                Label("New Tree", systemImage: "plus.circle")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
+                Divider().frame(height: 24)
+
+                Button {
+                    // Open new tree sheet with project field pre-focused
+                    newTreeProject = ""
+                    newTreeName = ""
+                    showTemplatePicker = false
+                    showNewTreeSheet = true
+                } label: {
+                    Label("New Project", systemImage: "folder.badge.plus")
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+                .help("Create a new project and tree")
             }
-            .buttonStyle(.plain)
         }
         .navigationTitle("Canvas")
         .onAppear {
@@ -169,7 +237,7 @@ struct SidebarView: View {
         .sheet(isPresented: $showNewCategorySheet) {
             newCategorySheet
         }
-        // Delete confirmation alert
+        // Delete tree confirmation alert
         .alert("Delete \"\(deleteTarget?.name ?? "Tree")\"?",
                isPresented: $showDeleteConfirm,
                presenting: deleteTarget) { tree in
@@ -179,6 +247,53 @@ struct SidebarView: View {
             Button("Cancel", role: .cancel) {}
         } message: { tree in
             Text("This permanently deletes \"\(tree.name)\" and all its messages. This cannot be undone.")
+        }
+        // Delete project confirmation alert
+        .alert("Delete Project \"\(deleteProjectTarget ?? "")\"?",
+               isPresented: $showDeleteProjectConfirm) {
+            Button("Delete All", role: .destructive) {
+                if let name = deleteProjectTarget {
+                    viewModel.deleteProject(name)
+                }
+                deleteProjectTarget = nil
+            }
+            Button("Cancel", role: .cancel) { deleteProjectTarget = nil }
+        } message: {
+            Text("This permanently deletes all trees and messages in \"\(deleteProjectTarget ?? "")\".\nThis cannot be undone.")
+        }
+    }
+
+    // MARK: - Content Search Result Row
+
+    private func contentResultRow(_ result: MessageSearchResult) -> some View {
+        let isSelected = appState.selectedTreeId == result.treeId
+        return HStack(spacing: 8) {
+            Image(systemName: result.role == .user ? "person.circle" : "cpu")
+                .font(.caption2)
+                .foregroundStyle(result.role == .user ? Color.blue : Color.purple)
+                .frame(width: 14)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(result.treeName)
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(result.snippet)
+                    .font(.callout)
+                    .lineLimit(2)
+                    .foregroundStyle(.primary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
+        .cornerRadius(6)
+        .padding(.horizontal, 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            appState.selectBranch(result.branchId, in: result.treeId)
         }
     }
 
@@ -206,6 +321,13 @@ struct SidebarView: View {
                     Text("Phone bridge")
                         .font(.caption2)
                         .foregroundStyle(.teal.opacity(0.8))
+                } else if let snippet = tree.lastMessageSnippet, !snippet.isEmpty {
+                    // Context trail: what was being worked on
+                    Text(snippet.contextSnippet)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary.opacity(0.7))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
 
@@ -507,6 +629,132 @@ struct SidebarView: View {
         showNewCategorySheet = false
         movingTreeId = nil
         newCategoryName = ""
+    }
+}
+
+// MARK: - Project Group Header
+
+struct ProjectGroupHeader: View {
+    let projectName: String
+    let resolvedPath: String?
+    let gitInfo: String?
+    let typeIcon: String
+    let treeCount: Int
+    let onNewTree: () -> Void
+    let onRename: () -> Void
+    let onPathChanged: (String) -> Void
+    let onArchive: () -> Void
+    let onDelete: () -> Void
+
+    @State private var isEditingPath = false
+    @State private var editingText = ""
+
+    private var shortenedPath: String {
+        guard let path = resolvedPath else { return "No path set" }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return path.replacingOccurrences(of: home, with: "~")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            // Name row: icon + name + git badge + tree count + new button
+            HStack(spacing: 5) {
+                Image(systemName: typeIcon)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 13)
+
+                Text(projectName)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                if let git = gitInfo {
+                    Text(git)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(.quaternary)
+                        .cornerRadius(3)
+                }
+
+                Spacer()
+
+                if treeCount > 0 {
+                    Text("\(treeCount)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                Button(action: onNewTree) {
+                    Image(systemName: "plus")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("New tree in \(projectName)")
+            }
+
+            // Path row: tap to edit inline
+            Group {
+                if isEditingPath {
+                    TextField("Path", text: $editingText)
+                        .font(.system(size: 9.5, design: .monospaced))
+                        .textFieldStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .onSubmit { commitPath() }
+                        .onExitCommand { isEditingPath = false }
+                } else {
+                    Text(shortenedPath)
+                        .font(.system(size: 9.5, design: .monospaced))
+                        .foregroundStyle(resolvedPath == nil ? Color.red.opacity(0.7) : Color.secondary.opacity(0.6))
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                        .help("Click to edit path")
+                        .onTapGesture {
+                            editingText = resolvedPath ?? ""
+                            isEditingPath = true
+                        }
+                }
+            }
+            .padding(.leading, 18)
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 3)
+        .contextMenu {
+            Button("Rename…", action: onRename)
+            Divider()
+            Button("Archive Project") { onArchive() }
+            Button("Delete Project…", role: .destructive) { onDelete() }
+        }
+    }
+
+    private func commitPath() {
+        let trimmed = editingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            onPathChanged(trimmed)
+        }
+        isEditingPath = false
+    }
+}
+
+// MARK: - String Helper
+
+private extension String {
+    /// Clean a raw message for use as a sidebar context trail snippet.
+    /// Strips markdown headers, code fences, and truncates to ~65 chars.
+    var contextSnippet: String {
+        var s = self
+            .replacingOccurrences(of: "^#{1,6}\\s+", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "```[\\s\\S]*?```", with: "…", options: .regularExpression)
+            .replacingOccurrences(of: "`[^`]+`", with: "…", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Collapse whitespace
+        s = s.components(separatedBy: .newlines).joined(separator: " ")
+        return s.count > 65 ? String(s.prefix(62)) + "…" : s
     }
 }
 

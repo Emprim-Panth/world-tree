@@ -15,14 +15,19 @@ struct BranchTerminalView: NSViewRepresentable {
     let branchId: String
     let workingDirectory: String
 
-    func makeNSView(context: Context) -> LocalProcessTerminalView {
-        BranchTerminalManager.shared.getOrCreate(
+    func makeNSView(context: Context) -> CapturingTerminalView {
+        let tv = BranchTerminalManager.shared.getOrCreate(
             branchId: branchId,
             workingDirectory: workingDirectory
         )
+        // Match Canvas dark theme — makes the terminal feel native rather than bolted-on
+        tv.nativeBackgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.10, alpha: 1.0)
+        tv.nativeForegroundColor = NSColor(red: 0.85, green: 0.87, blue: 0.91, alpha: 1.0)
+        tv.font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        return tv
     }
 
-    func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
+    func updateNSView(_ nsView: CapturingTerminalView, context: Context) {
         // BranchTerminalManager owns the view and its lifecycle.
         // No updates from SwiftUI needed — the terminal is self-contained.
     }

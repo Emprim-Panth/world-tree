@@ -65,8 +65,30 @@ final class ConversationStateManager {
             blocks.append(SystemBlock(text: sessionContext, cached: false))
         }
 
+        // 5. Active terminal output (last ~60 lines from the branch's PTY — NOT cached)
+        let terminalOutput = BranchTerminalManager.shared.getRecentOutput(branchId: branchId)
+        if !terminalOutput.isEmpty {
+            blocks.append(SystemBlock(
+                text: "<terminal_output>\n\(terminalOutput)\n</terminal_output>",
+                cached: false
+            ))
+        }
+
         systemBlocks = blocks
         return blocks
+    }
+
+    /// Refresh the terminal output block before each message (called by provider before send).
+    /// Replaces any previous terminal block so it stays current.
+    func refreshTerminalContext() {
+        systemBlocks.removeAll { $0.text.hasPrefix("<terminal_output>") }
+        let output = BranchTerminalManager.shared.getRecentOutput(branchId: branchId)
+        if !output.isEmpty {
+            systemBlocks.append(SystemBlock(
+                text: "<terminal_output>\n\(output)\n</terminal_output>",
+                cached: false
+            ))
+        }
     }
 
     /// Append per-query KB context (not cached — changes per message).
@@ -81,8 +103,26 @@ final class ConversationStateManager {
 
     // MARK: - Message Management
 
-    func addUserMessage(_ text: String) {
-        let msg = APIMessage(role: "user", content: [.text(text)])
+    func addUserMessage(_ text: String, attachments: [Attachment] = []) {
+        var blocks: [ContentBlock] = []
+
+        // Image attachments come first — Anthropic vision expects image blocks before text.
+        for attachment in attachments where attachment.type == .image {
+            blocks.append(.image(ContentBlock.ImageBlock(
+                mediaType: attachment.mimeType,
+                data: attachment.base64
+            )))
+        }
+
+        // Non-image files injected as text context blocks
+        for attachment in attachments where attachment.type == .file {
+            if let text = String(data: attachment.data, encoding: .utf8) {
+                blocks.append(.text("[\(attachment.filename)]\n\(text)"))
+            }
+        }
+
+        blocks.append(.text(text))
+        let msg = APIMessage(role: "user", content: blocks)
         apiMessages.append(msg)
     }
 
@@ -305,6 +345,9 @@ final class ConversationStateManager {
                     charCount += t.name.count + t.id.count + inputSize + 80
                 case .toolResult(let t):
                     charCount += t.content.count + t.toolUseId.count + 40
+                case .image(let img):
+                    // base64 is ~1.37x original bytes; treat as tokens conservatively
+                    charCount += img.data.count + 100
                 }
             }
         }
@@ -388,20 +431,10 @@ final class ConversationStateManager {
             return await buildMinimalProjectContext(path: path, name: project ?? URL(fileURLWithPath: path).lastPathComponent)
         }
 
-        // Build context from cached data
-        var output = "# Active Project: \(cached.name)\n"
-        output += "**Type:** \(cached.type.displayName) | **Path:** `\(cached.path)`"
-
-        if let branch = cached.gitBranch {
-            output += "\n**Git:** `\(branch)`"
-            if cached.gitDirty { output += " (uncommitted changes)" }
-        }
-
-        if let readme = cached.readme, !readme.isEmpty {
-            output += "\n\n## README (excerpt)\n\(String(readme.prefix(1500)))"
-        }
-
-        return output
+        // Build rich context via ProjectContextLoader (includes commits + directory structure)
+        let loader = ProjectContextLoader()
+        let richContext = await loader.loadContext(for: cached)
+        return richContext.formatForClaude()
     }
 
     /// Minimal fallback when no cache entry exists

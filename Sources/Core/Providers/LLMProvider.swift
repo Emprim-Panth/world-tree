@@ -25,6 +25,16 @@ protocol LLMProvider: AnyObject {
 
     /// Cancel the current in-flight request
     func cancel()
+
+    /// Pre-warm context for a session so the first message has zero cold-start delay.
+    /// Called when a conversation is opened, before any message is sent.
+    func warmUp(sessionId: String, branchId: String, project: String?, workingDirectory: String?) async
+}
+
+extension LLMProvider {
+    func warmUp(sessionId: String, branchId: String, project: String?, workingDirectory: String?) async {
+        // Default: no-op. Providers without state management don't need this.
+    }
 }
 
 // MARK: - Capabilities
@@ -92,4 +102,39 @@ struct ProviderSendContext {
     /// When present, the provider should prepend this to the message
     /// to carry forward context from a rotated session.
     var checkpointContext: String?
+
+    /// Attachments (images, files) to include with this message.
+    /// Images are sent as vision content blocks; other files are embedded as text context.
+    var attachments: [Attachment]
+
+    /// Recent conversation history for resilient context injection.
+    /// Appended to the system prompt on every send — provides fallback context
+    /// when server-side --resume silently fails (session expiry, CLI restart, etc.).
+    var recentContext: String?
+
+    init(
+        message: String,
+        sessionId: String,
+        branchId: String,
+        model: String? = nil,
+        workingDirectory: String? = nil,
+        project: String? = nil,
+        parentSessionId: String? = nil,
+        isNewSession: Bool = false,
+        checkpointContext: String? = nil,
+        attachments: [Attachment] = [],
+        recentContext: String? = nil
+    ) {
+        self.message = message
+        self.sessionId = sessionId
+        self.branchId = branchId
+        self.model = model
+        self.workingDirectory = workingDirectory
+        self.project = project
+        self.parentSessionId = parentSessionId
+        self.isNewSession = isNewSession
+        self.checkpointContext = checkpointContext
+        self.attachments = attachments
+        self.recentContext = recentContext
+    }
 }

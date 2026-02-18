@@ -189,6 +189,13 @@ enum MigrationManager {
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_checkpoints_branch ON canvas_context_checkpoints(branch_id)")
         }
 
+        // Migration 8: tmux session persistence per branch
+        migrator.registerMigration("v8_tmux_sessions") { db in
+            try db.execute(sql: """
+                ALTER TABLE canvas_branches ADD COLUMN tmux_session_name TEXT
+                """)
+        }
+
         try migrator.migrate(dbPool)
     }
 }
