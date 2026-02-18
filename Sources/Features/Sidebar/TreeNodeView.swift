@@ -49,6 +49,7 @@ struct TreeNodeView: View {
             statusIndicator
         }
         .padding(.vertical, 2)
+        .padding(.horizontal, 4)
         .contentShape(Rectangle())
         .onTapGesture {
             appState.selectBranch(branch.id, in: treeId)

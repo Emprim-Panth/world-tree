@@ -50,14 +50,18 @@ actor DaemonSocket {
             throw DaemonError.sendFailed(errno: errno)
         }
 
-        // Read response
-        var buffer = [UInt8](repeating: 0, count: 65536)
-        let received = Darwin.recv(fd, &buffer, buffer.count, 0)
-        guard received > 0 else {
+        // Read response — loop until newline or connection close (handles > 64KB payloads)
+        var responseData = Data()
+        var chunk = [UInt8](repeating: 0, count: 65536)
+        while true {
+            let received = Darwin.recv(fd, &chunk, chunk.count, 0)
+            if received <= 0 { break }
+            responseData.append(contentsOf: chunk[0..<received])
+            if chunk[received - 1] == UInt8(ascii: "\n") { break }
+        }
+        guard !responseData.isEmpty else {
             throw DaemonError.receiveFailed(errno: errno)
         }
-
-        let responseData = Data(buffer[0..<received])
         return try JSONDecoder().decode(DaemonResponse.self, from: responseData)
     }
 

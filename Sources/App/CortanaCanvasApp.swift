@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct CortanaCanvasApp: App {
     @StateObject private var appState = AppState.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -14,6 +15,11 @@ struct CortanaCanvasApp: App {
                     startProjectRefresh()
                     requestNotificationPermission()
                     startCanvasServerIfEnabled()
+                }
+                .onChange(of: scenePhase) { phase in
+                    if phase == .background {
+                        DaemonService.shared.stopMonitoring()
+                    }
                 }
         }
         .windowStyle(.titleBar)

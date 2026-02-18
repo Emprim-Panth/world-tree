@@ -436,7 +436,10 @@ final class CanvasServer: ObservableObject {
         let tree = try TreeStore.shared.createTree(name: treeName, project: project)
         let branch = try TreeStore.shared.createBranch(
             treeId: tree.id, title: String(firstMessage.prefix(60)))
-        let sid = branch.sessionId ?? UUID().uuidString
+        guard let sid = branch.sessionId else {
+            throw NSError(domain: "CanvasServer", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Branch \(branch.id) has no sessionId — session continuity would be broken"])
+        }
         return (sessionId: sid, branchId: branch.id, treeId: tree.id, isNew: true)
     }
 

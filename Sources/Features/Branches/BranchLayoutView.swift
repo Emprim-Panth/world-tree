@@ -64,45 +64,11 @@ class BranchLayoutViewModel: ObservableObject {
     }
 
     func loadBranches() {
-        // TODO: Load branches from database
-        // For now, create sample branches
-        let mainBranch = Branch(
-            id: UUID().uuidString,
-            treeId: treeId,
-            sessionId: UUID().uuidString,
-            parentBranchId: nil,
-            forkFromMessageId: nil,
-            branchType: .conversation,
-            title: "Main Conversation",
-            status: .active,
-            summary: nil,
-            model: nil,
-            daemonTaskId: nil,
-            contextSnapshot: nil,
-            collapsed: false,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        let exploreBranch = Branch(
-            id: UUID().uuidString,
-            treeId: treeId,
-            sessionId: UUID().uuidString,
-            parentBranchId: mainBranch.id,
-            forkFromMessageId: nil,
-            branchType: .exploration,
-            title: "Exploration: Alternative approach",
-            status: .active,
-            summary: nil,
-            model: nil,
-            daemonTaskId: nil,
-            contextSnapshot: nil,
-            collapsed: false,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        visibleBranches = [mainBranch, exploreBranch]
+        guard let tree = try? TreeStore.shared.getTree(treeId) else {
+            visibleBranches = []
+            return
+        }
+        visibleBranches = tree.branches.filter { $0.status == .active }
     }
 
     func createBranch(from sectionId: UUID, in parentBranchId: String) {

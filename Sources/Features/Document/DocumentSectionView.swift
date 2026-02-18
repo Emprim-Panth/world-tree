@@ -90,6 +90,8 @@ struct DocumentSectionView: View {
                     Image(systemName: "arrow.turn.up.right")
                         .font(.system(size: 12))
                         .foregroundColor(.blue)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Branch from here")

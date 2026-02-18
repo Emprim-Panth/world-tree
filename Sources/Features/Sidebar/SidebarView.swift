@@ -39,7 +39,7 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             // Projects section (collapsible)
             ProjectListView()
-                .frame(height: 200)
+                .frame(minHeight: 120, maxHeight: 240)
 
             Divider()
 

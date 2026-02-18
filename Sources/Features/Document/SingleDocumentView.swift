@@ -120,6 +120,13 @@ struct SingleDocumentView: View {
                 workingDirectory: viewModel.workingDirectory
             )
         }
+        .onDisappear {
+            // Terminate PTY processes when navigating away — prevents zsh accumulation
+            BranchTerminalManager.shared.terminate(branchId: viewModel.mainBranchId)
+            for branch in viewModel.activeBranches {
+                BranchTerminalManager.shared.terminate(branchId: branch.id)
+            }
+        }
     }
 }
 

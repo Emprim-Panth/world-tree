@@ -7,7 +7,8 @@ actor GatewayClient {
     private let session: URLSession
 
     init(baseURL: String = "http://localhost:4862", authToken: String) {
-        self.baseURL = URL(string: baseURL)!
+        // Fall back to default if a misconfigured URL is passed — prevents crash on bad input
+        self.baseURL = URL(string: baseURL) ?? URL(string: "http://localhost:4862")!
         self.authToken = authToken
         self.session = URLSession.shared
     }
@@ -51,10 +52,10 @@ actor GatewayClient {
         category: String? = nil,
         limit: Int = 50
     ) async throws -> [KnowledgeEntry] {
-        var components = URLComponents(
+        guard var components = URLComponents(
             url: baseURL.appendingPathComponent("/v1/cortana/memory/search"),
             resolvingAgainstBaseURL: false
-        )!
+        ) else { throw GatewayError.requestFailed }
 
         var queryItems: [URLQueryItem] = [
             URLQueryItem(name: "q", value: query),
@@ -88,10 +89,10 @@ actor GatewayClient {
     // MARK: - Handoff Operations
 
     func checkHandoffs(project: String? = nil) async throws -> [Handoff] {
-        var components = URLComponents(
+        guard var components = URLComponents(
             url: baseURL.appendingPathComponent("/v1/cortana/handoffs"),
             resolvingAgainstBaseURL: false
-        )!
+        ) else { throw GatewayError.requestFailed }
 
         if let project = project {
             components.queryItems = [URLQueryItem(name: "project", value: project)]

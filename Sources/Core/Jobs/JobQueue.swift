@@ -29,7 +29,11 @@ actor JobQueue {
     // MARK: - DB Helpers
 
     private func dbWrite(_ block: (Database) throws -> Void) {
-        try? dbPool?.write(block)
+        do {
+            try dbPool?.write(block)
+        } catch {
+            canvasLog("[JobQueue] DB write failed: \(error)")
+        }
     }
 
     private func dbRead<T>(_ block: (Database) throws -> T) -> T? {
