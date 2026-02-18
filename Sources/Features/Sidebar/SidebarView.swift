@@ -90,6 +90,9 @@ struct SidebarView: View {
             // Unified project list — projects ARE the grouping, trees live inside them
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    // Active jobs indicator — only visible when jobs are running
+                    ActiveJobsSection()
+
                     // Content search results
                     if viewModel.searchScope == .content && !viewModel.searchText.isEmpty {
                         if viewModel.contentResults.isEmpty && !viewModel.isSearching {
@@ -349,12 +352,12 @@ struct SidebarView: View {
         .padding(.horizontal, 4)
         .contentShape(Rectangle())
         .onTapGesture {
+            // Reset branch selection so the new tree always opens at its root.
+            // Without this, the previous tree's branchId stays in AppState and the
+            // wrong conversation appears in the detail pane.
+            appState.selectedBranchId = nil
             appState.selectedTreeId = tree.id
             loadTreeBranches(tree.id)
-            if appState.selectedBranchId == nil,
-               let root = tree.branches.first(where: { $0.parentBranchId == nil }) {
-                appState.selectBranch(root.id, in: tree.id)
-            }
         }
     }
 
@@ -397,16 +400,16 @@ struct SidebarView: View {
         }
     }
 
-    /// Load full tree with branches when selected
+    /// Load full tree with branches when selected — always selects root branch.
     private func loadTreeBranches(_ treeId: String) {
         do {
             if let fullTree = try TreeStore.shared.getTree(treeId) {
                 if let idx = viewModel.trees.firstIndex(where: { $0.id == treeId }) {
                     viewModel.trees[idx].branches = fullTree.branches
                 }
-                // Auto-select root branch if none selected
-                if appState.selectedBranchId == nil,
-                   let root = fullTree.rootBranch {
+                // Always select root branch when switching trees so the canvas
+                // opens the correct conversation (not a leftover from the previous tree).
+                if let root = fullTree.rootBranch {
                     appState.selectBranch(root.id, in: treeId)
                 }
             }

@@ -28,7 +28,13 @@ struct BranchTerminalView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: CapturingTerminalView, context: Context) {
-        // BranchTerminalManager owns the view and its lifecycle.
-        // No updates from SwiftUI needed — the terminal is self-contained.
+        // Make the terminal first responder whenever it (re)appears in the hierarchy.
+        // Without this, the NSView is visible but never receives keyboard events —
+        // the user can see output but can't type.
+        DispatchQueue.main.async {
+            if nsView.window != nil {
+                nsView.window?.makeFirstResponder(nsView)
+            }
+        }
     }
 }

@@ -11,7 +11,11 @@ struct ContentView: View {
         } detail: {
             if let treeId = appState.selectedTreeId {
                 // Phase 8: Full-screen document with organic branching
+                // .id(treeId) forces SwiftUI to fully recreate SingleDocumentView — and its
+                // @StateObject viewModel — when the tree changes. Without this, SwiftUI reuses
+                // the same view instance and the old tree's conversation stays on screen.
                 SingleDocumentView(treeId: treeId)
+                    .id(treeId)
             } else {
                 DashboardView()
             }
