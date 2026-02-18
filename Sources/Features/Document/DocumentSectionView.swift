@@ -41,13 +41,16 @@ struct DocumentSectionView: View {
                     )
                     .frame(minHeight: 60)
                 } else {
-                    Text(section.content)
-                        .textSelection(.enabled)
-                        .onTapGesture(count: 2) {
-                            if section.isEditable {
-                                isEditing = true
-                            }
+                    MarkdownTextView(
+                        content: section.content,
+                        author: section.author
+                    )
+                    .textSelection(.enabled)
+                    .onTapGesture(count: 2) {
+                        if section.isEditable {
+                            isEditing = true
                         }
+                    }
                 }
 
                 // Metadata (code blocks, tool calls, etc.)
@@ -182,6 +185,125 @@ struct ToolCallView: View {
     }
 }
 
+
+// MARK: - Markdown Text View
+
+/// Renders assistant content with markdown awareness.
+/// Code fences (``` blocks) are extracted and rendered via CodeBlockView.
+/// Everything else uses SwiftUI's built-in AttributedString markdown support.
+struct MarkdownTextView: View {
+    let content: AttributedString
+    let author: Author
+
+    var body: some View {
+        let raw = String(content.characters)
+
+        // For non-assistant messages, plain text is fine
+        guard case .assistant = author else {
+            return AnyView(
+                Text(content)
+                    .fixedSize(horizontal: false, vertical: true)
+            )
+        }
+
+        // Parse markdown — use AttributedString(markdown:) for inline formatting
+        let rendered = (try? AttributedString(
+            markdown: raw,
+            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? content
+
+        return AnyView(
+            MarkdownCodeFenceView(raw: raw, rendered: rendered)
+        )
+    }
+}
+
+/// Splits raw markdown text into prose + code fence segments and renders each.
+struct MarkdownCodeFenceView: View {
+    let raw: String
+    let rendered: AttributedString
+
+    var body: some View {
+        let segments = parseSegments(raw)
+        if segments.isEmpty {
+            return AnyView(
+                Text(rendered)
+                    .fixedSize(horizontal: false, vertical: true)
+            )
+        }
+        return AnyView(
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                    switch segment {
+                    case .prose(let text):
+                        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            if let attr = try? AttributedString(
+                                markdown: text,
+                                options: AttributedString.MarkdownParsingOptions(
+                                    interpretedSyntax: .inlineOnlyPreservingWhitespace
+                                )
+                            ) {
+                                Text(attr)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else {
+                                Text(text)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    case .codeBlock(let code, let language):
+                        CodeBlockView(code: code, language: language.isEmpty ? nil : language)
+                    }
+                }
+            }
+        )
+    }
+
+    enum Segment {
+        case prose(String)
+        case codeBlock(String, String)
+    }
+
+    private func parseSegments(_ text: String) -> [Segment] {
+        var segments: [Segment] = []
+        var remaining = text[text.startIndex...]
+
+        while !remaining.isEmpty {
+            if let fenceStart = remaining.range(of: "```") {
+                // Text before the fence
+                let before = String(remaining[remaining.startIndex..<fenceStart.lowerBound])
+                if !before.isEmpty {
+                    segments.append(.prose(before))
+                }
+
+                // Find language tag (rest of opening line)
+                let afterFence = remaining[fenceStart.upperBound...]
+                let langEnd = afterFence.firstIndex(of: "\n") ?? afterFence.endIndex
+                let language = String(afterFence[afterFence.startIndex..<langEnd])
+
+                let codeStart = langEnd < afterFence.endIndex ? afterFence.index(after: langEnd) : afterFence.endIndex
+                let codeRegion = remaining[codeStart...]
+
+                if let closingFence = codeRegion.range(of: "```") {
+                    let code = String(codeRegion[codeRegion.startIndex..<closingFence.lowerBound])
+                        .trimmingCharacters(in: .newlines)
+                    segments.append(.codeBlock(code, language.trimmingCharacters(in: .whitespaces)))
+                    remaining = codeRegion[closingFence.upperBound...]
+                    // Skip leading newline after closing fence
+                    if remaining.hasPrefix("\n") { remaining = remaining.dropFirst() }
+                } else {
+                    // Unclosed fence — treat as prose
+                    segments.append(.prose(String(remaining)))
+                    break
+                }
+            } else {
+                segments.append(.prose(String(remaining)))
+                break
+            }
+        }
+
+        return segments
+    }
+}
 
 // MARK: - Editable Text View
 

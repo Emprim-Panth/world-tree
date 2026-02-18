@@ -120,14 +120,16 @@ struct DashboardView: View {
                     Text(tree.name)
                         .fontWeight(.medium)
                     HStack(spacing: 8) {
-                        if let project = tree.project {
+                        if let project = tree.project, !project.isEmpty {
                             Text(project)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        Text("\(tree.branches.count) branches")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        if tree.messageCount > 0 {
+                            Text("\(tree.messageCount) messages")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 }
                 Spacer()

@@ -11,8 +11,9 @@ final class AppState: ObservableObject {
     @Published var selectedProjectPath: String?
     @Published var daemonConnected: Bool = false
 
-    /// Navigation history for branch back/forward
-    @Published var branchHistory: [String] = []
+    /// Navigation history for branch back/forward.
+    /// Each entry stores both treeId and branchId so both are restored on navigate.
+    @Published var branchHistory: [(treeId: String, branchId: String)] = []
     @Published var branchHistoryIndex: Int = -1
 
     private init() {}
@@ -25,20 +26,24 @@ final class AppState: ObservableObject {
         if branchHistoryIndex < branchHistory.count - 1 {
             branchHistory = Array(branchHistory.prefix(branchHistoryIndex + 1))
         }
-        branchHistory.append(branchId)
+        branchHistory.append((treeId: treeId, branchId: branchId))
         branchHistoryIndex = branchHistory.count - 1
     }
 
     func navigateBack() {
         guard branchHistoryIndex > 0 else { return }
         branchHistoryIndex -= 1
-        selectedBranchId = branchHistory[branchHistoryIndex]
+        let entry = branchHistory[branchHistoryIndex]
+        selectedTreeId = entry.treeId
+        selectedBranchId = entry.branchId
     }
 
     func navigateForward() {
         guard branchHistoryIndex < branchHistory.count - 1 else { return }
         branchHistoryIndex += 1
-        selectedBranchId = branchHistory[branchHistoryIndex]
+        let entry = branchHistory[branchHistoryIndex]
+        selectedTreeId = entry.treeId
+        selectedBranchId = entry.branchId
     }
 
     var canGoBack: Bool { branchHistoryIndex > 0 }

@@ -40,7 +40,9 @@ final class TreeStore {
                     (SELECT COUNT(*) FROM canvas_branches b
                      JOIN sessions s ON b.session_id = s.id
                      JOIN messages m ON m.session_id = s.id
-                     WHERE b.tree_id = t.id) as message_count
+                     WHERE b.tree_id = t.id) as message_count,
+                    (SELECT COUNT(*) FROM canvas_branches b
+                     WHERE b.tree_id = t.id AND b.status = 'active') as branch_count
                 FROM canvas_trees t
                 """
             if !includeArchived {
@@ -51,6 +53,7 @@ final class TreeStore {
             return try Row.fetchAll(db, sql: sql).map { row in
                 var tree = ConversationTree(row: row)
                 tree.messageCount = row["message_count"] ?? 0
+                tree.branchCount = row["branch_count"] ?? 0
                 return tree
             }
         }
@@ -322,10 +325,12 @@ final class TreeStore {
             lookup[branch.id] = branch
         }
 
-        // Attach children to parents
+        // Attach children to parents.
+        // Branch is a value type — must copy, mutate, then reassign back into the dictionary.
         for branch in branches {
-            if let parentId = branch.parentBranchId, lookup[parentId] != nil {
-                lookup[parentId]!.children.append(branch)
+            if let parentId = branch.parentBranchId, var parent = lookup[parentId] {
+                parent.children.append(branch)
+                lookup[parentId] = parent
             }
         }
 

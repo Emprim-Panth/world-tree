@@ -1,22 +1,6 @@
 import SwiftUI
 import Foundation
 
-// MARK: - Debug Logging Helper
-
-extension String {
-    func appendToFile(_ path: String) throws {
-        if let handle = FileHandle(forWritingAtPath: path) {
-            handle.seekToEndOfFile()
-            if let data = self.data(using: .utf8) {
-                handle.write(data)
-            }
-            handle.closeFile()
-        } else {
-            try self.write(toFile: path, atomically: false, encoding: .utf8)
-        }
-    }
-}
-
 /// Google Docs-style collaborative document editor for conversations
 struct DocumentEditorView: View {
     @StateObject private var viewModel: DocumentEditorViewModel
@@ -30,14 +14,12 @@ struct DocumentEditorView: View {
          branchId: String,
          workingDirectory: String,
          parentBranchLayout: BranchLayoutViewModel? = nil) {
-        print("🏗️ [DocumentEditorView] Initializing with sessionId: \(sessionId)")
         self.parentBranchLayout = parentBranchLayout
         _viewModel = StateObject(wrappedValue: DocumentEditorViewModel(
             sessionId: sessionId,
             branchId: branchId,
             workingDirectory: workingDirectory
         ))
-        print("✅ [DocumentEditorView] Initialized")
     }
 
     var body: some View {
@@ -45,6 +27,13 @@ struct DocumentEditorView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
+                        // Empty state — shown before the first message
+                        if viewModel.document.sections.isEmpty && !viewModel.isProcessing {
+                            EmptyConversationView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 60)
+                        }
+
                         // Document sections (replaces message bubbles)
                         ForEach(viewModel.document.sections) { section in
                             DocumentSectionView(
@@ -61,6 +50,20 @@ struct DocumentEditorView: View {
                             .onHover { hovering in
                                 hoveredSectionId = hovering ? section.id : nil
                             }
+                        }
+
+                        // Live streaming section — tokens appear as they arrive
+                        if let streaming = viewModel.streamingContent {
+                            StreamingSectionView(content: streaming)
+                                .id("streaming")
+                        }
+
+                        // Thinking indicator — shows between submit and first token
+                        if viewModel.isProcessing && viewModel.streamingContent == nil {
+                            ThinkingIndicatorView()
+                                .id("thinking")
+                                .padding(.horizontal, 0)
+                                .padding(.vertical, 8)
                         }
 
                         // User input area (always at bottom)
@@ -131,6 +134,18 @@ struct DocumentEditorView: View {
                         proxy.scrollTo(lastSection.id, anchor: .bottom)
                     }
                 }
+                // Auto-scroll during streaming — keeps the cursor visible
+                .onChange(of: viewModel.streamingContent) { _ in
+                    if viewModel.streamingContent != nil {
+                        proxy.scrollTo("streaming", anchor: .bottom)
+                    }
+                }
+                // Auto-scroll to thinking indicator when processing starts
+                .onChange(of: viewModel.isProcessing) { _ in
+                    if viewModel.isProcessing {
+                        proxy.scrollTo("thinking", anchor: .bottom)
+                    }
+                }
             }
         }
     }
@@ -149,15 +164,26 @@ class DocumentEditorViewModel: ObservableObject {
     }
     @Published var isProcessing = false
     @Published var branchOpportunity: BranchOpportunity?
+    /// Live token stream content — shown in the chat as Cortana types.
+    /// Nil when not streaming; cleared once the full response is persisted.
+    @Published var streamingContent: String?
 
     private let sessionId: String
     private let branchId: String
     private let workingDirectory: String
     private var seenMessageIds: Set<String> = []
+    /// Stable UUID per message ID — prevents random UUIDs being generated each
+    /// render cycle when msg.id is an integer string (not a UUID string).
+    private var stableSectionIds: [String: UUID] = [:]
+    /// Retained reference so the timer can be invalidated on teardown.
+    private var messageObserverTimer: Timer?
     weak var parentBranchLayout: BranchLayoutViewModel?
 
+    deinit {
+        messageObserverTimer?.invalidate()
+    }
+
     init(sessionId: String, branchId: String, workingDirectory: String) {
-        print("🎬 [DocumentEditorViewModel] Initializing with sessionId: \(sessionId)")
         self.sessionId = sessionId
         self.branchId = branchId
         self.workingDirectory = workingDirectory
@@ -170,7 +196,6 @@ class DocumentEditorViewModel: ObservableObject {
                 updatedAt: Date()
             )
         )
-        print("✅ [DocumentEditorViewModel] Initialized")
     }
 
     func loadDocument() {
@@ -190,7 +215,7 @@ class DocumentEditorViewModel: ObservableObject {
                         }()
 
                         return DocumentSection(
-                            id: UUID(uuidString: msg.id) ?? UUID(),
+                            id: stableId(for: msg.id),
                             content: AttributedString(msg.content),
                             author: author,
                             timestamp: msg.createdAt,
@@ -211,10 +236,20 @@ class DocumentEditorViewModel: ObservableObject {
         }
     }
 
+    /// Returns a stable UUID for a given message ID string.
+    /// Message IDs are integers, not UUIDs — without this, SwiftUI sees a new
+    /// identity on every render cycle and thrashes the view hierarchy.
+    private func stableId(for messageId: String) -> UUID {
+        if let existing = stableSectionIds[messageId] { return existing }
+        let id = UUID(uuidString: messageId) ?? UUID()
+        stableSectionIds[messageId] = id
+        return id
+    }
+
     private func startMessageObserver() {
-        // Poll for new messages every second
-        // TODO: Use DatabaseRegionObservation for real-time updates
-        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        // Guard against duplicate timers (e.g. if loadDocument is called twice)
+        guard messageObserverTimer == nil else { return }
+        messageObserverTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             Task {
                 await self.checkForNewMessages()
@@ -240,7 +275,7 @@ class DocumentEditorViewModel: ObservableObject {
                     }()
 
                     let section = DocumentSection(
-                        id: UUID(uuidString: msg.id) ?? UUID(),
+                        id: stableId(for: msg.id),
                         content: AttributedString(msg.content),
                         author: author,
                         timestamp: msg.createdAt,
@@ -288,16 +323,9 @@ class DocumentEditorViewModel: ObservableObject {
     }
 
     func submitInput() {
-        let logMsg = "📤 [DocumentEditor] submitInput() called\n"
-        try? logMsg.write(toFile: "/tmp/canvas-debug.log", atomically: false, encoding: .utf8)
-
-        guard !currentInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            try? "⚠️ [DocumentEditor] Input is empty\n".appendToFile("/tmp/canvas-debug.log")
-            return
-        }
+        guard !currentInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         let inputText = currentInput
-        try? "📤 [DocumentEditor] Input text: '\(inputText)'\n".appendToFile("/tmp/canvas-debug.log")
         currentInput = ""
 
         // Create section for immediate UI feedback
@@ -311,7 +339,6 @@ class DocumentEditorViewModel: ObservableObject {
 
         // Add to UI immediately (database write happens in processUserInput)
         document.sections.append(userSection)
-        print("✅ [DocumentEditor] Added section to document, total sections: \(document.sections.count)")
 
         // Send to daemon
         processUserInput(userSection)
@@ -332,7 +359,8 @@ class DocumentEditorViewModel: ObservableObject {
             BranchTerminalManager.shared.send(to: branchId, text: "\n\u{001B}[90m# \(content)\u{001B}[0m\n")
 
             // 3. Route through ClaudeCodeProvider
-            let isNew = document.sections.count <= 1
+            // isNewSession is true only if no messages have been persisted yet
+            let isNew = seenMessageIds.isEmpty
             let model = UserDefaults.standard.string(forKey: "defaultModel") ?? CortanaConstants.defaultModel
             let ctx = ProviderSendContext(
                 message: content,
@@ -354,13 +382,15 @@ class DocumentEditorViewModel: ObservableObject {
                 return
             }
 
-            // 4. Stream response — mirror every token and tool event to the terminal in real time
+            // 4. Stream response — mirror every token to the chat and terminal in real time
             var fullResponse = ""
+            streamingContent = ""  // Start streaming indicator
 
             for await event in provider.send(context: ctx) {
                 switch event {
                 case .text(let token):
                     fullResponse += token
+                    streamingContent = fullResponse  // Live update in chat
                     BranchTerminalManager.shared.send(to: branchId, text: token)
 
                 case .toolStart(let name, _):
@@ -378,6 +408,7 @@ class DocumentEditorViewModel: ObservableObject {
                     BranchTerminalManager.shared.send(to: branchId, text: "\n\u{001B}[31m[error: \(msg)]\u{001B}[0m\n")
                 }
             }
+            streamingContent = nil  // Stream complete — persisted section takes over
 
             // 5. Persist assistant response — polling observer will surface it in the chat
             if !fullResponse.isEmpty,
@@ -386,7 +417,7 @@ class DocumentEditorViewModel: ObservableObject {
                 seenMessageIds.insert(msg.id)
                 // Add directly to avoid polling delay
                 let assistantSection = DocumentSection(
-                    id: UUID(uuidString: msg.id) ?? UUID(),
+                    id: stableId(for: msg.id),
                     content: AttributedString(fullResponse),
                     author: .assistant,
                     timestamp: msg.createdAt,
@@ -471,6 +502,117 @@ class DocumentEditorViewModel: ObservableObject {
     }
 }
 
+// MARK: - Empty Conversation State
+
+struct EmptyConversationView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("💠")
+                .font(.system(size: 48))
+
+            Text("Start a conversation")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            Text("Ask anything — Cortana has full access to your project files,\nterminal, and knowledge base.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(4)
+        }
+        .padding()
+    }
+}
+
+// MARK: - Thinking Indicator (3-dot animation)
+
+struct ThinkingIndicatorView: View {
+    @State private var phase = 0
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            // Cortana avatar
+            Circle()
+                .fill(Color.cyan.gradient)
+                .frame(width: 32, height: 32)
+                .overlay {
+                    Text("💠")
+                        .font(.system(size: 14))
+                }
+
+            HStack(spacing: 4) {
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .fill(Color.secondary.opacity(phase == i ? 1.0 : 0.3))
+                        .frame(width: 7, height: 7)
+                        .animation(.easeInOut(duration: 0.5).repeatForever().delay(Double(i) * 0.2), value: phase)
+                }
+            }
+            .padding(.vertical, 12)
+        }
+        .onAppear {
+            withAnimation {
+                phase = (phase + 1) % 3
+            }
+            // Cycle the dot
+            Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+                withAnimation {
+                    phase = (phase + 1) % 3
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Live Streaming Section
+
+struct StreamingSectionView: View {
+    let content: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Circle()
+                .fill(Color.cyan.gradient)
+                .frame(width: 32, height: 32)
+                .overlay {
+                    Text("💠")
+                        .font(.system(size: 14))
+                }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(content.isEmpty ? " " : content)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Blinking cursor
+                HStack(spacing: 0) {
+                    BlinkingCursor()
+                }
+            }
+            .padding(.vertical, 8)
+
+            Spacer()
+        }
+        .padding(.horizontal, 0)
+    }
+}
+
+struct BlinkingCursor: View {
+    @State private var visible = true
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.cyan)
+            .frame(width: 2, height: 14)
+            .opacity(visible ? 1 : 0)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.5).repeatForever()) {
+                    visible.toggle()
+                }
+            }
+    }
+}
+
 // MARK: - User Input Area
 
 struct UserInputArea: View {
@@ -516,16 +658,7 @@ struct UserInputArea: View {
                     )
 
                     HStack {
-                        if isProcessing {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                            Text("Processing...")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-
                         Spacer()
-
                         Button(action: onSubmit) {
                             Label("Send", systemImage: "paperplane.fill")
                                 .font(.caption)
