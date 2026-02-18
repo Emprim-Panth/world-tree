@@ -38,6 +38,14 @@ struct TreeNodeView: View {
 
             Spacer()
 
+            // Green dot when this branch has a live terminal process
+            if BranchTerminalManager.shared.isActive(branchId: branch.id) {
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 6, height: 6)
+                    .help("Terminal active")
+            }
+
             statusIndicator
         }
         .padding(.vertical, 2)

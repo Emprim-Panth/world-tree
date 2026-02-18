@@ -77,13 +77,15 @@ final class DaemonService: ObservableObject {
     func dispatch(
         message: String,
         project: String,
-        priority: String = "normal"
+        priority: String = "normal",
+        canvasSessionId: String? = nil
     ) async -> String? {
         do {
             let command = DaemonCommand.dispatch(
                 message: message,
                 project: project,
-                priority: priority
+                priority: priority,
+                canvasSessionId: canvasSessionId
             )
             let response = try await socket.send(command)
             lastError = response.error

@@ -27,14 +27,32 @@ struct Message: Identifiable, Equatable, Hashable {
 
 extension Message: FetchableRecord {
     init(row: Row) {
-        id = row["id"]
+        // id is INTEGER in database, convert to String
+        if let intId = row["id"] as? Int64 {
+            id = String(intId)
+        } else if let stringId = row["id"] as? String {
+            id = stringId
+        } else {
+            id = "0"
+        }
+
         sessionId = row["session_id"]
         role = MessageRole(rawValue: row["role"] as String) ?? .system
         content = row["content"]
 
-        // Read created_at as INTEGER (Unix timestamp in ms) and convert to Date
-        if let timestampMs = row["created_at"] as? Int64 {
-            createdAt = Date(timeIntervalSince1970: TimeInterval(timestampMs) / 1000.0)
+        // Read timestamp as DATETIME text and convert to Date
+        if let timestampStr = row["timestamp"] as? String {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withDashSeparatorInDate, .withColonSeparatorInTime, .withSpaceBetweenDateAndTime]
+            if let date = formatter.date(from: timestampStr.replacingOccurrences(of: " ", with: "T") + "Z") {
+                createdAt = date
+            } else {
+                // Fallback: try basic SQLite datetime format
+                let sqlFormatter = DateFormatter()
+                sqlFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                sqlFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+                createdAt = sqlFormatter.date(from: timestampStr) ?? Date()
+            }
         } else {
             createdAt = Date()
         }

@@ -22,6 +22,8 @@ struct BranchColumn: View {
             if let sessionId = branch.sessionId {
                 DocumentEditorView(
                     sessionId: sessionId,
+                    branchId: branch.id,
+                    workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path + "/Development",
                     parentBranchLayout: onCreateBranch as? BranchLayoutViewModel
                 )
                 .frame(maxHeight: .infinity)

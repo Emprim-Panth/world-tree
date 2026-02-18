@@ -1,4 +1,21 @@
 import SwiftUI
+import Foundation
+
+// MARK: - Debug Logging Helper
+
+extension String {
+    func appendToFile(_ path: String) throws {
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            if let data = self.data(using: .utf8) {
+                handle.write(data)
+            }
+            handle.closeFile()
+        } else {
+            try self.write(toFile: path, atomically: false, encoding: .utf8)
+        }
+    }
+}
 
 /// Google Docs-style collaborative document editor for conversations
 struct DocumentEditorView: View {
@@ -9,9 +26,18 @@ struct DocumentEditorView: View {
 
     var parentBranchLayout: BranchLayoutViewModel?
 
-    init(sessionId: String, parentBranchLayout: BranchLayoutViewModel? = nil) {
+    init(sessionId: String,
+         branchId: String,
+         workingDirectory: String,
+         parentBranchLayout: BranchLayoutViewModel? = nil) {
+        print("🏗️ [DocumentEditorView] Initializing with sessionId: \(sessionId)")
         self.parentBranchLayout = parentBranchLayout
-        _viewModel = StateObject(wrappedValue: DocumentEditorViewModel(sessionId: sessionId))
+        _viewModel = StateObject(wrappedValue: DocumentEditorViewModel(
+            sessionId: sessionId,
+            branchId: branchId,
+            workingDirectory: workingDirectory
+        ))
+        print("✅ [DocumentEditorView] Initialized")
     }
 
     var body: some View {
@@ -125,10 +151,16 @@ class DocumentEditorViewModel: ObservableObject {
     @Published var branchOpportunity: BranchOpportunity?
 
     private let sessionId: String
+    private let branchId: String
+    private let workingDirectory: String
+    private var seenMessageIds: Set<String> = []
     weak var parentBranchLayout: BranchLayoutViewModel?
 
-    init(sessionId: String) {
+    init(sessionId: String, branchId: String, workingDirectory: String) {
+        print("🎬 [DocumentEditorViewModel] Initializing with sessionId: \(sessionId)")
         self.sessionId = sessionId
+        self.branchId = branchId
+        self.workingDirectory = workingDirectory
         self.document = ConversationDocument(
             sections: [],
             cursors: [],
@@ -138,29 +170,95 @@ class DocumentEditorViewModel: ObservableObject {
                 updatedAt: Date()
             )
         )
+        print("✅ [DocumentEditorViewModel] Initialized")
     }
 
     func loadDocument() {
-        // TODO: Load messages from database and convert to document sections
-        // For now, create sample document
-        let sampleSections = [
-            DocumentSection(
-                content: AttributedString("Welcome to Cortana Canvas"),
-                author: .system,
-                timestamp: Date(),
-                branchPoint: false,
-                isEditable: false
-            ),
-            DocumentSection(
-                content: AttributedString("This is a living document interface. You can edit anywhere, branch conversations, and collaborate seamlessly."),
-                author: .assistant,
-                timestamp: Date(),
-                branchPoint: true,
-                isEditable: false
-            )
-        ]
+        // Load existing messages from database
+        Task {
+            do {
+                let messages = try MessageStore.shared.getMessages(sessionId: sessionId)
 
-        document.sections = sampleSections
+                await MainActor.run {
+                    document.sections = messages.map { msg in
+                        let author: Author = {
+                            switch msg.role {
+                            case .user: return .user(name: "You")
+                            case .assistant: return .assistant
+                            case .system: return .system
+                            }
+                        }()
+
+                        return DocumentSection(
+                            id: UUID(uuidString: msg.id) ?? UUID(),
+                            content: AttributedString(msg.content),
+                            author: author,
+                            timestamp: msg.createdAt,
+                            branchPoint: true,
+                            isEditable: msg.role == .user
+                        )
+                    }
+
+                    // Track which message IDs we've already shown
+                    self.seenMessageIds = Set(messages.map { $0.id })
+
+                    // Start watching for new messages
+                    startMessageObserver()
+                }
+            } catch {
+                print("Error loading messages: \(error)")
+            }
+        }
+    }
+
+    private func startMessageObserver() {
+        // Poll for new messages every second
+        // TODO: Use DatabaseRegionObservation for real-time updates
+        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            Task {
+                await self.checkForNewMessages()
+            }
+        }
+    }
+
+    private func checkForNewMessages() async {
+        do {
+            let messages = try MessageStore.shared.getMessages(sessionId: sessionId)
+
+            await MainActor.run {
+                // Filter using string IDs — message IDs are integers, not UUIDs
+                let newMessages = messages.filter { !seenMessageIds.contains($0.id) }
+
+                for msg in newMessages {
+                    let author: Author = {
+                        switch msg.role {
+                        case .user: return .user(name: "You")
+                        case .assistant: return .assistant
+                        case .system: return .system
+                        }
+                    }()
+
+                    let section = DocumentSection(
+                        id: UUID(uuidString: msg.id) ?? UUID(),
+                        content: AttributedString(msg.content),
+                        author: author,
+                        timestamp: msg.createdAt,
+                        branchPoint: true,
+                        isEditable: msg.role == .user
+                    )
+                    document.sections.append(section)
+                    seenMessageIds.insert(msg.id)
+                }
+
+                // Stop processing indicator when assistant responds
+                if newMessages.contains(where: { $0.role == .assistant }) {
+                    isProcessing = false
+                }
+            }
+        } catch {
+            print("Error checking for new messages: \(error)")
+        }
     }
 
     func updateSection(_ sectionId: UUID, content: AttributedString) {
@@ -190,64 +288,115 @@ class DocumentEditorViewModel: ObservableObject {
     }
 
     func submitInput() {
+        let logMsg = "📤 [DocumentEditor] submitInput() called\n"
+        try? logMsg.write(toFile: "/tmp/canvas-debug.log", atomically: false, encoding: .utf8)
+
         guard !currentInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            try? "⚠️ [DocumentEditor] Input is empty\n".appendToFile("/tmp/canvas-debug.log")
             return
         }
 
-        // Add user input as new section
+        let inputText = currentInput
+        try? "📤 [DocumentEditor] Input text: '\(inputText)'\n".appendToFile("/tmp/canvas-debug.log")
+        currentInput = ""
+
+        // Create section for immediate UI feedback
         let userSection = DocumentSection(
-            content: AttributedString(currentInput),
-            author: .user(name: "Evan"),
+            content: AttributedString(inputText),
+            author: .user(name: "You"),
             timestamp: Date(),
             branchPoint: true,
             isEditable: true
         )
 
+        // Add to UI immediately (database write happens in processUserInput)
         document.sections.append(userSection)
-        currentInput = ""
+        print("✅ [DocumentEditor] Added section to document, total sections: \(document.sections.count)")
 
-        // TODO: Send to Claude for response
+        // Send to daemon
         processUserInput(userSection)
     }
 
     private func processUserInput(_ section: DocumentSection) {
         isProcessing = true
+        let content = String(section.content.characters)
 
         Task {
-            do {
-                // Send to Claude via gateway
-                let client = GatewayClient(authToken: "dev-token")
+            // 1. Persist user message to DB
+            if let msg = try? MessageStore.shared.sendMessage(
+                sessionId: sessionId, role: .user, content: content) {
+                seenMessageIds.insert(msg.id)
+            }
 
-                // Build conversation context from all sections
-                let messages = document.sections.map { section -> String in
-                    let role = switch section.author {
-                    case .user: "user"
-                    case .assistant: "assistant"
-                    case .system: "system"
-                    }
-                    return "\(role): \(section.content)"
-                }.joined(separator: "\n\n")
+            // 2. Echo to the branch's terminal (user sees their own message as context)
+            BranchTerminalManager.shared.send(to: branchId, text: "\n\u{001B}[90m# \(content)\u{001B}[0m\n")
 
-                // For now, just acknowledge - real gateway streaming coming next
-                let response = "I received your message! (Full Claude integration via gateway streaming coming next)"
+            // 3. Route through ClaudeCodeProvider
+            let isNew = document.sections.count <= 1
+            let ctx = ProviderSendContext(
+                message: content,
+                sessionId: sessionId,
+                branchId: branchId,
+                model: CortanaConstants.defaultModel,
+                workingDirectory: workingDirectory,
+                project: nil,
+                parentSessionId: nil,
+                isNewSession: isNew
+            )
 
-                await MainActor.run {
-                    let assistantSection = DocumentSection(
-                        content: AttributedString(response),
-                        author: .assistant,
-                        timestamp: Date(),
-                        branchPoint: true,
-                        isEditable: false
-                    )
-                    self.document.sections.append(assistantSection)
-                    self.isProcessing = false
-                }
-            } catch {
-                await MainActor.run {
-                    print("Error calling Claude: \(error)")
-                    self.isProcessing = false
+            let provider = ProviderManager.shared.providers.first { $0.identifier == "claude-code" }
+                        ?? ProviderManager.shared.activeProvider
+
+            guard let provider else {
+                isProcessing = false
+                BranchTerminalManager.shared.send(to: branchId, text: "\n\u{001B}[31m[error: no provider]\u{001B}[0m\n")
+                return
+            }
+
+            // 4. Stream response — mirror every token and tool event to the terminal in real time
+            var fullResponse = ""
+
+            for await event in provider.send(context: ctx) {
+                switch event {
+                case .text(let token):
+                    fullResponse += token
+                    BranchTerminalManager.shared.send(to: branchId, text: token)
+
+                case .toolStart(let name, _):
+                    BranchTerminalManager.shared.send(to: branchId, text: "\n\u{001B}[36m[→ \(name)]\u{001B}[0m\n")
+
+                case .toolEnd(let name, _, let isError):
+                    let icon = isError ? "✗" : "✓"
+                    let color = isError ? "\u{001B}[31m" : "\u{001B}[32m"
+                    BranchTerminalManager.shared.send(to: branchId, text: "\(color)[\(icon) \(name)]\u{001B}[0m\n")
+
+                case .done:
+                    break
+
+                case .error(let msg):
+                    BranchTerminalManager.shared.send(to: branchId, text: "\n\u{001B}[31m[error: \(msg)]\u{001B}[0m\n")
                 }
             }
+
+            // 5. Persist assistant response — polling observer will surface it in the chat
+            if !fullResponse.isEmpty,
+               let msg = try? MessageStore.shared.sendMessage(
+                   sessionId: sessionId, role: .assistant, content: fullResponse) {
+                seenMessageIds.insert(msg.id)
+                // Add directly to avoid polling delay
+                let assistantSection = DocumentSection(
+                    id: UUID(uuidString: msg.id) ?? UUID(),
+                    content: AttributedString(fullResponse),
+                    author: .assistant,
+                    timestamp: msg.createdAt,
+                    branchPoint: true,
+                    isEditable: false
+                )
+                document.sections.append(assistantSection)
+            }
+
+            isProcessing = false
+            BranchTerminalManager.shared.send(to: branchId, text: "\n")
         }
     }
 

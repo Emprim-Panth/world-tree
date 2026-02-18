@@ -10,8 +10,8 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 350)
         } detail: {
             if let treeId = appState.selectedTreeId {
-                // Phase 5: Visual branching - side-by-side columns
-                BranchLayoutView(treeId: treeId)
+                // Phase 8: Full-screen document with organic branching
+                SingleDocumentView(treeId: treeId)
             } else {
                 DashboardView()
             }
