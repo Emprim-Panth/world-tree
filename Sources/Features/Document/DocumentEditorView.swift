@@ -652,6 +652,13 @@ struct UserInputArea: View {
                     )
 
                     HStack {
+                        // Character count — warns at high usage
+                        if !text.isEmpty {
+                            Text("\(text.count)")
+                                .font(.caption2)
+                                .monospacedDigit()
+                                .foregroundStyle(text.count > 8000 ? Color.red : Color.secondary.opacity(0.4))
+                        }
                         Spacer()
                         Button(action: onSubmit) {
                             Label(
