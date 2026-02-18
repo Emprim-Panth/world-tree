@@ -89,6 +89,64 @@ final class TreeStore {
         }
     }
 
+    func renameTree(_ id: String, name: String) throws {
+        try db.write { db in
+            try db.execute(
+                sql: "UPDATE canvas_trees SET name = ?, updated_at = datetime('now') WHERE id = ?",
+                arguments: [name, id]
+            )
+        }
+    }
+
+    func moveTree(_ id: String, toProject: String?) throws {
+        try db.write { db in
+            if let project = toProject, !project.isEmpty {
+                try db.execute(
+                    sql: "UPDATE canvas_trees SET project = ?, updated_at = datetime('now') WHERE id = ?",
+                    arguments: [project, id]
+                )
+            } else {
+                try db.execute(
+                    sql: "UPDATE canvas_trees SET project = NULL, updated_at = datetime('now') WHERE id = ?",
+                    arguments: [id]
+                )
+            }
+        }
+    }
+
+    func deleteTree(_ id: String) throws {
+        try db.write { db in
+            // Delete messages for all branches in this tree
+            try db.execute(
+                sql: """
+                    DELETE FROM messages WHERE session_id IN (
+                        SELECT session_id FROM canvas_branches WHERE tree_id = ?
+                    )
+                    """,
+                arguments: [id]
+            )
+            // Delete sessions for all branches
+            try db.execute(
+                sql: """
+                    DELETE FROM sessions WHERE id IN (
+                        SELECT session_id FROM canvas_branches WHERE tree_id = ?
+                    )
+                    """,
+                arguments: [id]
+            )
+            // Delete branches
+            try db.execute(
+                sql: "DELETE FROM canvas_branches WHERE tree_id = ?",
+                arguments: [id]
+            )
+            // Delete tree
+            try db.execute(
+                sql: "DELETE FROM canvas_trees WHERE id = ?",
+                arguments: [id]
+            )
+        }
+    }
+
     // MARK: - Branches
 
     /// Creates a new branch with an associated session.

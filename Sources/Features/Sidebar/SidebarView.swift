@@ -13,6 +13,20 @@ struct SidebarView: View {
     @State private var selectedTemplate: WorkflowTemplate?
     @State private var showTemplatePicker = true
 
+    // Rename tree
+    @State private var renameTarget: ConversationTree?
+    @State private var renameText = ""
+    @State private var showRenameSheet = false
+
+    // New category (for Move to → New Category…)
+    @State private var newCategoryName = ""
+    @State private var showNewCategorySheet = false
+    @State private var movingTreeId: String?
+
+    // Delete confirmation
+    @State private var deleteTarget: ConversationTree?
+    @State private var showDeleteConfirm = false
+
     var body: some View {
         VStack(spacing: 0) {
             // Projects section (collapsible)
@@ -98,6 +112,25 @@ struct SidebarView: View {
         .sheet(isPresented: $showNewTreeSheet) {
             newTreeSheet
         }
+        // Rename sheet
+        .sheet(isPresented: $showRenameSheet) {
+            renameSheet
+        }
+        // New category sheet (for Move to → New Category…)
+        .sheet(isPresented: $showNewCategorySheet) {
+            newCategorySheet
+        }
+        // Delete confirmation alert
+        .alert("Delete \"\(deleteTarget?.name ?? "Tree")\"?",
+               isPresented: $showDeleteConfirm,
+               presenting: deleteTarget) { tree in
+            Button("Delete", role: .destructive) {
+                viewModel.deleteTree(tree.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { tree in
+            Text("This permanently deletes \"\(tree.name)\" and all its messages. This cannot be undone.")
+        }
     }
 
     // MARK: - Tree Row
@@ -126,8 +159,40 @@ struct SidebarView: View {
             }
         }
         .contextMenu {
+            Button("Rename…") {
+                renameTarget = tree
+                renameText = tree.name
+                showRenameSheet = true
+            }
+
+            Menu("Move to…") {
+                ForEach(viewModel.projectNames.filter { $0 != (tree.project ?? "") }, id: \.self) { project in
+                    Button(project) {
+                        viewModel.moveTree(tree.id, toProject: project)
+                    }
+                }
+                if tree.project != nil {
+                    Button("General (no project)") {
+                        viewModel.moveTree(tree.id, toProject: nil)
+                    }
+                }
+                Divider()
+                Button("New Category…") {
+                    movingTreeId = tree.id
+                    newCategoryName = ""
+                    showNewCategorySheet = true
+                }
+            }
+
+            Divider()
+
             Button("Archive") {
                 viewModel.archiveTree(tree.id)
+            }
+
+            Button("Delete…", role: .destructive) {
+                deleteTarget = tree
+                showDeleteConfirm = true
             }
         }
         .onChange(of: appState.selectedTreeId) { _, newId in
@@ -265,5 +330,71 @@ struct SidebarView: View {
         newTreeName = ""
         newTreeProject = ""
         newTreeWorkingDir = Self.defaultWorkingDir
+    }
+
+    // MARK: - Rename Sheet
+
+    private var renameSheet: some View {
+        VStack(spacing: 16) {
+            Text("Rename Tree")
+                .font(.headline)
+
+            TextField("Tree name", text: $renameText)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { commitRename() }
+
+            HStack {
+                Button("Cancel") { showRenameSheet = false }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Rename") { commitRename() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+
+    private func commitRename() {
+        if let target = renameTarget {
+            viewModel.renameTree(target.id, name: renameText)
+        }
+        showRenameSheet = false
+        renameTarget = nil
+    }
+
+    // MARK: - New Category Sheet
+
+    private var newCategorySheet: some View {
+        VStack(spacing: 16) {
+            Text("New Category")
+                .font(.headline)
+
+            TextField("Category name", text: $newCategoryName)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { commitNewCategory() }
+
+            HStack {
+                Button("Cancel") { showNewCategorySheet = false }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Create & Move") { commitNewCategory() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+
+    private func commitNewCategory() {
+        let name = newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty, let treeId = movingTreeId {
+            viewModel.moveTree(treeId, toProject: name)
+        }
+        showNewCategorySheet = false
+        movingTreeId = nil
+        newCategoryName = ""
     }
 }

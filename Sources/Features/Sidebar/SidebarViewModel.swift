@@ -117,4 +117,44 @@ final class SidebarViewModel: ObservableObject {
             self.error = error.localizedDescription
         }
     }
+
+    func renameTree(_ id: String, name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            try TreeStore.shared.renameTree(id, name: trimmed)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func moveTree(_ id: String, toProject: String?) {
+        do {
+            try TreeStore.shared.moveTree(id, toProject: toProject)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func deleteTree(_ id: String) {
+        do {
+            // Terminate any live terminal for this tree's branches
+            for branch in trees.first(where: { $0.id == id })?.branches ?? [] {
+                BranchTerminalManager.shared.terminate(branchId: branch.id)
+            }
+            try TreeStore.shared.deleteTree(id)
+            if AppState.shared.selectedTreeId == id {
+                AppState.shared.selectedTreeId = nil
+                AppState.shared.selectedBranchId = nil
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// All distinct project names currently in use (for "Move to…" submenu)
+    var projectNames: [String] {
+        let names = trees.compactMap { $0.project }.filter { !$0.isEmpty }
+        return Array(Set(names)).sorted()
+    }
 }
