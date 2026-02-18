@@ -138,13 +138,13 @@ class SingleDocumentViewModel: ObservableObject {
     init(treeId: String) {
         self.treeId = treeId
 
-        // Use existing root branch if one exists — never create duplicates on reopen
+        // One DB read — reused for both workingDirectory and root branch lookup.
         let cwd = FileManager.default.currentDirectoryPath
-        let workDir = (try? TreeStore.shared.getTree(treeId))?.workingDirectory
+        let existingTree = try? TreeStore.shared.getTree(treeId)
+        let workDir = existingTree?.workingDirectory
             .flatMap { $0.isEmpty ? nil : $0 } ?? cwd
 
-        if let tree = try? TreeStore.shared.getTree(treeId),
-           let root = tree.rootBranch,
+        if let root = existingTree?.rootBranch,
            let sessionId = root.sessionId {
             // Reuse the existing root branch and its session
             self.mainBranchId = root.id

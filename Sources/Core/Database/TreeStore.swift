@@ -247,7 +247,7 @@ final class TreeStore {
             args.append(id)
 
             let sql = "UPDATE canvas_branches SET \(setClauses.joined(separator: ", ")) WHERE id = ?"
-            try db.execute(sql: sql, arguments: StatementArguments(args)!)
+            try db.execute(sql: sql, arguments: StatementArguments(args))
         }
     }
 

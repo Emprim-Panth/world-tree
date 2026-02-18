@@ -326,9 +326,12 @@ class DocumentEditorViewModel: ObservableObject {
 
         Task {
             // 1. Persist user message to DB
-            if let msg = try? MessageStore.shared.sendMessage(
-                sessionId: sessionId, role: .user, content: content) {
+            do {
+                let msg = try MessageStore.shared.sendMessage(
+                    sessionId: sessionId, role: .user, content: content)
                 seenMessageIds.insert(msg.id)
+            } catch {
+                canvasLog("[DocumentEditor] Failed to persist user message: \(error)")
             }
 
             // 2. Echo to the branch's terminal (user sees their own message as context)
@@ -387,20 +390,33 @@ class DocumentEditorViewModel: ObservableObject {
             streamingContent = nil  // Stream complete — persisted section takes over
 
             // 5. Persist assistant response — polling observer will surface it in the chat
-            if !fullResponse.isEmpty,
-               let msg = try? MessageStore.shared.sendMessage(
-                   sessionId: sessionId, role: .assistant, content: fullResponse) {
-                seenMessageIds.insert(msg.id)
-                // Add directly to avoid polling delay
-                let assistantSection = DocumentSection(
-                    id: stableId(for: msg.id),
-                    content: AttributedString(fullResponse),
-                    author: .assistant,
-                    timestamp: msg.createdAt,
-                    branchPoint: true,
-                    isEditable: false
-                )
-                document.sections.append(assistantSection)
+            if !fullResponse.isEmpty {
+                do {
+                    let msg = try MessageStore.shared.sendMessage(
+                        sessionId: sessionId, role: .assistant, content: fullResponse)
+                    seenMessageIds.insert(msg.id)
+                    // Add directly to avoid polling delay
+                    let assistantSection = DocumentSection(
+                        id: stableId(for: msg.id),
+                        content: AttributedString(fullResponse),
+                        author: .assistant,
+                        timestamp: msg.createdAt,
+                        branchPoint: true,
+                        isEditable: false
+                    )
+                    document.sections.append(assistantSection)
+                } catch {
+                    canvasLog("[DocumentEditor] Failed to persist assistant response: \(error)")
+                    // Still display the response — content is not lost from UI even if DB write failed
+                    let assistantSection = DocumentSection(
+                        content: AttributedString(fullResponse),
+                        author: .assistant,
+                        timestamp: Date(),
+                        branchPoint: true,
+                        isEditable: false
+                    )
+                    document.sections.append(assistantSection)
+                }
             }
 
             isProcessing = false

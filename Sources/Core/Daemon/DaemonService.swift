@@ -182,7 +182,11 @@ final class DaemonService: ObservableObject {
                 }
 
                 for session in sessionsToRotate {
-                    await self?.autoRotateTmuxSession(session)
+                    // Explicit MainActor hop — autoRotateTmuxSession reads/writes
+                    // @MainActor state (tmuxRotationHistory, tmuxSessions).
+                    await MainActor.run { [weak self] in
+                        self?.autoRotateTmuxSession(session)
+                    }
                 }
             }
 
