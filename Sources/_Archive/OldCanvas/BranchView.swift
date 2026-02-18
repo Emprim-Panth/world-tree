@@ -16,6 +16,8 @@ struct BranchView: View {
     @State private var showForkSheet = false
     @State private var forkSourceMessage: Message?
     @State private var forkType: BranchType = .conversation
+    @FocusState private var isInputFocused: Bool
+    @State private var scrollDebounceTask: Task<Void, Never>?
 
     init(branchId: String) {
         self.branchId = branchId
@@ -33,6 +35,9 @@ struct BranchView: View {
                     activityCount: viewModel.activityCount,
                     contextUsage: viewModel.contextUsage,
                     isResponding: viewModel.isResponding,
+                    estimatedTokens: viewModel.estimatedTokens,
+                    pressureLevel: viewModel.pressureLevel,
+                    rotationCount: viewModel.rotationCount,
                     onNavigateToBranch: { branchId in
                         appState.selectBranch(branchId, in: branch.treeId)
                     },
@@ -156,29 +161,29 @@ struct BranchView: View {
                     .coordinateSpace(name: "scroll")
                     .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
                         // Detect if user has scrolled up from bottom
-                        // If offset is significantly negative, user is not at bottom
-                        if offset < -50 {
+                        // Wide threshold so accidental scrolls don't disengage
+                        if offset < -200 {
                             viewModel.shouldAutoScroll = false
-                        } else if offset > -10 {
-                            // User scrolled back to bottom
+                        } else if offset > -30 {
+                            // User scrolled back near bottom
                             viewModel.shouldAutoScroll = true
                         }
                     }
                 }
                 .onChange(of: viewModel.messages.count) { _, _ in
                     if viewModel.shouldAutoScroll {
-                        scrollToBottom(proxy: proxy)
+                        scrollToBottom(proxy: proxy, animated: true)
                     }
                 }
                 .onChange(of: viewModel.streamingResponse) { _, _ in
                     if viewModel.shouldAutoScroll {
-                        scrollToBottom(proxy: proxy)
+                        debouncedScrollToBottom(proxy: proxy)
                     }
                 }
                 .onAppear {
                     // Scroll to bottom on appear
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        scrollToBottom(proxy: proxy)
+                        scrollToBottom(proxy: proxy, animated: false)
                     }
                 }
             }
@@ -360,63 +365,102 @@ struct BranchView: View {
                 .fill(.secondary.opacity(0.2))
                 .frame(width: 2)
 
-            // Input field
-            HStack(alignment: .bottom, spacing: 8) {
-                if viewModel.isResponding {
-                    // Show cancel button while Cortana is responding
-                    Button {
-                        viewModel.cancelResponse()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "stop.circle.fill")
-                                .foregroundStyle(.red)
-                            Text("Stop")
-                                .font(.caption)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    Spacer()
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Cortana is thinking...")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    TextField("Message Cortana...", text: $viewModel.inputText, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .lineLimit(1...8)
-                        .onSubmit {
-                            viewModel.sendMessage()
-                        }
-
-                    Button {
+            // Input field — always rendered so focus is never lost
+            ZStack(alignment: .leading) {
+                // TextField is always in the view tree
+                TextField("Message Cortana...", text: $viewModel.inputText, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...8)
+                    .focused($isInputFocused)
+                    .onSubmit {
                         viewModel.sendMessage()
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(.blue)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .opacity(viewModel.isResponding ? 0 : 1)
+                    .disabled(viewModel.isResponding)
+
+                // Responding overlay
+                if viewModel.isResponding {
+                    HStack(spacing: 8) {
+                        Button {
+                            viewModel.cancelResponse()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "stop.circle.fill")
+                                    .foregroundStyle(.red)
+                                Text("Stop")
+                                    .font(.caption)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        Spacer()
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Cortana is thinking...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .padding(.leading, 10)
             .padding(.vertical, 6)
+
+            // Send button (visible only when not responding)
+            if !viewModel.isResponding {
+                Button {
+                    viewModel.sendMessage()
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .padding(.trailing, 4)
+                .padding(.bottom, 6)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(.background.opacity(0.5))
+        .onChange(of: viewModel.isResponding) { _, responding in
+            // Restore focus when response completes
+            if !responding {
+                isInputFocused = true
+            }
+        }
+        .onAppear {
+            // Focus input on initial load
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                isInputFocused = true
+            }
+        }
     }
 
-    private func scrollToBottom(proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.2)) {
-            if viewModel.isResponding {
-                proxy.scrollTo("streaming", anchor: .bottom)
-            } else if !viewModel.inputText.isEmpty {
-                proxy.scrollTo("typing-preview", anchor: .bottom)
-            } else {
-                proxy.scrollTo("input", anchor: .bottom)
+    private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool = true) {
+        let target: String = if viewModel.isResponding {
+            "streaming"
+        } else if !viewModel.inputText.isEmpty {
+            "typing-preview"
+        } else {
+            "input"
+        }
+
+        if animated {
+            withAnimation(.easeOut(duration: 0.15)) {
+                proxy.scrollTo(target, anchor: .bottom)
             }
+        } else {
+            proxy.scrollTo(target, anchor: .bottom)
+        }
+    }
+
+    /// Debounced scroll — coalesces rapid streaming updates into one scroll per 200ms
+    private func debouncedScrollToBottom(proxy: ScrollViewProxy) {
+        scrollDebounceTask?.cancel()
+        scrollDebounceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+            guard !Task.isCancelled else { return }
+            scrollToBottom(proxy: proxy, animated: true)
         }
     }
 

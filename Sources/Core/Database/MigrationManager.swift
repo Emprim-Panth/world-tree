@@ -30,7 +30,7 @@ enum MigrationManager {
                     tree_id TEXT NOT NULL REFERENCES canvas_trees(id),
                     session_id TEXT REFERENCES sessions(id),
                     parent_branch_id TEXT REFERENCES canvas_branches(id),
-                    fork_from_message_id INTEGER REFERENCES messages(id),
+                    fork_from_message_id TEXT REFERENCES messages(id),
                     branch_type TEXT NOT NULL DEFAULT 'conversation'
                         CHECK(branch_type IN ('conversation','implementation','exploration')),
                     title TEXT,
@@ -169,6 +169,24 @@ enum MigrationManager {
 
             // Ensure messages table has session_id index (DB quick win)
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)")
+        }
+
+        // Migration 7: Context checkpoints for session rotation
+        migrator.registerMigration("v7_context_checkpoints") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_context_checkpoints (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    branch_id TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    estimated_tokens_at_rotation INTEGER,
+                    message_count_at_rotation INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON canvas_context_checkpoints(session_id)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_checkpoints_branch ON canvas_context_checkpoints(branch_id)")
         }
 
         try migrator.migrate(dbPool)

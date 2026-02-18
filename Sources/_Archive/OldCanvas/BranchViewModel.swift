@@ -17,6 +17,9 @@ final class BranchViewModel: ObservableObject {
     @Published var toolTimelineEvents: [CanvasEvent] = []
     @Published var activityCount: Int = 0
     @Published var contextUsage: Double = 0
+    @Published var pressureLevel: PressureLevel = .low
+    @Published var estimatedTokens: Int = 0
+    @Published var rotationCount: Int = 0
 
     @Published var shouldAutoScroll: Bool = true
     private let branchId: String
@@ -129,13 +132,39 @@ final class BranchViewModel: ObservableObject {
         responseTask = Task {
             canvasLog("[BranchVM] starting response, provider=\(bridge.activeProviderName)")
 
+            // Check context pressure and rotate if needed
+            let toolEventCount = EventStore.shared.activityCount(branchId: self.branchId, minutes: 999_999)
+            let (tokens, level) = ContextPressureEstimator.estimate(
+                messages: self.messages,
+                toolEventCount: toolEventCount
+            )
+            self.estimatedTokens = tokens
+            self.pressureLevel = level
+            self.contextUsage = ContextPressureEstimator.usageRatio(tokens: tokens)
+
+            var checkpointContext: String?
+            if level.shouldRotate, let provider = ProviderManager.shared.activeProvider as? ClaudeCodeProvider {
+                canvasLog("[BranchVM] pressure \(level.rawValue) — attempting session rotation")
+                checkpointContext = await SessionRotator.rotateIfNeeded(
+                    sessionId: sessionId,
+                    branchId: self.branchId,
+                    messages: self.messages,
+                    toolEventCount: toolEventCount,
+                    provider: provider
+                )
+                if checkpointContext != nil {
+                    self.rotationCount = SessionRotator.rotationCount(sessionId: sessionId)
+                }
+            }
+
             let stream = bridge.send(
                 message: message,
                 sessionId: sessionId,
                 branchId: branchId,
                 model: branch?.model,
                 workingDirectory: branchCwd ?? tree?.workingDirectory,
-                project: tree?.project
+                project: tree?.project,
+                checkpointContext: checkpointContext
             )
 
             for await event in stream {
@@ -295,15 +324,24 @@ final class BranchViewModel: ObservableObject {
         streamingResponse = streamChunks.joined()
     }
 
-    /// Refresh observability metrics from EventStore.
+    /// Refresh observability metrics from EventStore and pressure estimator.
     func refreshObservability() {
         activityCount = EventStore.shared.activityCount(branchId: branchId)
         toolTimelineEvents = EventStore.shared.toolEvents(branchId: branchId)
 
-        // Estimate context usage from token data
-        if let usage = tokenUsage, usage.totalInputTokens > 0 {
-            let maxContext = 200_000  // Claude's max context
-            contextUsage = Double(usage.totalInputTokens) / Double(maxContext)
+        // Estimate context pressure from Canvas-side message data
+        let toolEventCount = EventStore.shared.activityCount(branchId: branchId, minutes: 999_999)
+        let (tokens, level) = ContextPressureEstimator.estimate(
+            messages: messages,
+            toolEventCount: toolEventCount
+        )
+        estimatedTokens = tokens
+        pressureLevel = level
+        contextUsage = ContextPressureEstimator.usageRatio(tokens: tokens)
+
+        // Update rotation count
+        if let sessionId = branch?.sessionId {
+            rotationCount = SessionRotator.rotationCount(sessionId: sessionId)
         }
     }
 

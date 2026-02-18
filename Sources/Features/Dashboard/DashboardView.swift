@@ -59,7 +59,7 @@ struct DashboardView: View {
                     .buttonStyle(.bordered)
                 }
 
-                // Recent trees
+                // Recent trees (or first-run empty state)
                 if !recentTrees.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Recent")
@@ -71,6 +71,18 @@ struct DashboardView: View {
                         }
                     }
                     .frame(maxWidth: 600)
+                } else {
+                    VStack(spacing: 8) {
+                        Text("No conversations yet")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                        Text("Create a tree to start branching conversations with Cortana.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding()
+                    .frame(maxWidth: 400)
                 }
 
                 Spacer(minLength: 40)
@@ -120,14 +132,16 @@ struct DashboardView: View {
                     Text(tree.name)
                         .fontWeight(.medium)
                     HStack(spacing: 8) {
-                        if let project = tree.project {
+                        if let project = tree.project, !project.isEmpty {
                             Text(project)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        Text("\(tree.branches.count) branches")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        if tree.messageCount > 0 {
+                            Text("\(tree.messageCount) messages")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 }
                 Spacer()
@@ -139,7 +153,6 @@ struct DashboardView: View {
             .padding(.vertical, 8)
             .background(.quaternary.opacity(0.5))
             .cornerRadius(8)
-            .padding(.horizontal)
         }
         .buttonStyle(.plain)
     }

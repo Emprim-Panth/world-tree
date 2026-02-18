@@ -21,9 +21,17 @@ final class SidebarViewModel: ObservableObject {
 
     /// Group trees by project for sidebar sections
     var groupedTrees: [(project: String, trees: [ConversationTree])] {
-        let grouped = Dictionary(grouping: filteredTrees) { $0.project ?? "General" }
-        return grouped.sorted { $0.key < $1.key }
-            .map { (project: $0.key, trees: $0.value) }
+        let grouped = Dictionary(grouping: filteredTrees) {
+            let p = $0.project ?? ""
+            return p.isEmpty ? "General" : p
+        }
+        return grouped.sorted { lhs, rhs in
+            // "General" always sorts last
+            if lhs.key == "General" { return false }
+            if rhs.key == "General" { return true }
+            return lhs.key < rhs.key
+        }
+        .map { (project: $0.key, trees: $0.value) }
     }
 
     func loadTrees() {
@@ -108,6 +116,12 @@ final class SidebarViewModel: ObservableObject {
 
     func archiveTree(_ id: String) {
         do {
+            // Load full tree to get branch IDs before archiving, then terminate any live PTYs
+            if let tree = try? TreeStore.shared.getTree(id) {
+                for branch in tree.branches {
+                    BranchTerminalManager.shared.terminate(branchId: branch.id)
+                }
+            }
             try TreeStore.shared.archiveTree(id)
             if AppState.shared.selectedTreeId == id {
                 AppState.shared.selectedTreeId = nil
@@ -116,5 +130,45 @@ final class SidebarViewModel: ObservableObject {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    func renameTree(_ id: String, name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            try TreeStore.shared.renameTree(id, name: trimmed)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func moveTree(_ id: String, toProject: String?) {
+        do {
+            try TreeStore.shared.moveTree(id, toProject: toProject)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func deleteTree(_ id: String) {
+        do {
+            // Terminate any live terminal for this tree's branches
+            for branch in trees.first(where: { $0.id == id })?.branches ?? [] {
+                BranchTerminalManager.shared.terminate(branchId: branch.id)
+            }
+            try TreeStore.shared.deleteTree(id)
+            if AppState.shared.selectedTreeId == id {
+                AppState.shared.selectedTreeId = nil
+                AppState.shared.selectedBranchId = nil
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// All distinct project names currently in use (for "Move to…" submenu)
+    var projectNames: [String] {
+        let names = trees.compactMap { $0.project }.filter { !$0.isEmpty }
+        return Array(Set(names)).sorted()
     }
 }

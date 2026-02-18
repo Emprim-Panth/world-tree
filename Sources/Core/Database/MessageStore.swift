@@ -31,7 +31,7 @@ final class MessageStore {
 
     /// Get messages up to (and including) a specific message ID.
     /// Used for building fork context.
-    func getMessagesUpTo(sessionId: String, messageId: Int, limit: Int? = nil) throws -> [Message] {
+    func getMessagesUpTo(sessionId: String, messageId: String, limit: Int? = nil) throws -> [Message] {
         try db.read { db in
             var sql = """
                 SELECT m.*, 0 as has_branches
@@ -70,7 +70,7 @@ final class MessageStore {
 
     /// Copy messages from source session up to (not including) a given message ID.
     /// Returns the number of messages copied.
-    func copyMessages(from sourceSessionId: String, upTo messageId: Int, to targetSessionId: String) throws -> Int {
+    func copyMessages(from sourceSessionId: String, upTo messageId: String, to targetSessionId: String) throws -> Int {
         try db.write { db in
             let rows = try Row.fetchAll(
                 db,

@@ -17,7 +17,8 @@ struct DaemonSession: Identifiable, Codable {
     let status: String
 }
 
-/// A tmux session discovered via `tmux list-sessions`.
+/// A tmux session discovered via `tmux list-panes -a`.
+/// Enriched with pane-level data for Claude session detection and context monitoring.
 struct TmuxSession: Identifiable {
     var id: String { name }
     let name: String
@@ -25,6 +26,29 @@ struct TmuxSession: Identifiable {
     let createdAt: Date
     let isAttached: Bool
     let lastActivity: Date
+
+    // Pane-level data (from the active pane)
+    var workingDirectory: String?
+    var currentCommand: String?
+    var panePid: Int?
+
+    // Claude session data (populated if Claude is running)
+    var claudeSessionId: String?
+    var estimatedTokens: Int?
+    var pressureLevel: PressureLevel?
+    var lastAutoCompact: Date?
+
+    /// Whether this pane appears to be running a Claude CLI session.
+    var isClaudeSession: Bool {
+        guard let cmd = currentCommand?.lowercased() else { return false }
+        return cmd.contains("claude") || claudeSessionId != nil
+    }
+
+    /// Project name inferred from working directory.
+    var projectName: String? {
+        guard let dir = workingDirectory else { return nil }
+        return URL(fileURLWithPath: dir).lastPathComponent
+    }
 }
 
 struct DaemonCommand: Codable {
@@ -33,9 +57,10 @@ struct DaemonCommand: Codable {
     var project: String?
     var priority: String?
     var taskId: String?
+    var canvasSessionId: String?  // For Canvas integration
 
-    static func dispatch(message: String, project: String, priority: String = "normal") -> DaemonCommand {
-        DaemonCommand(action: "dispatch", message: message, project: project, priority: priority)
+    static func dispatch(message: String, project: String, priority: String = "normal", canvasSessionId: String? = nil) -> DaemonCommand {
+        DaemonCommand(action: "dispatch", message: message, project: project, priority: priority, canvasSessionId: canvasSessionId)
     }
 
     static let status = DaemonCommand(action: "status")
@@ -43,6 +68,12 @@ struct DaemonCommand: Codable {
 
     static func kill(taskId: String) -> DaemonCommand {
         DaemonCommand(action: "kill", taskId: taskId)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case action, message, project, priority
+        case taskId = "task_id"
+        case canvasSessionId = "canvas_session_id"
     }
 }
 
@@ -59,37 +90,3 @@ struct DaemonResponse: Codable {
     }
 }
 
-/// Lightweight type-erased Codable for daemon JSON responses
-struct AnyCodable: Codable, Equatable {
-    let value: Any
-
-    init(_ value: Any) { self.value = value }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let int = try? container.decode(Int.self) { value = int }
-        else if let double = try? container.decode(Double.self) { value = double }
-        else if let string = try? container.decode(String.self) { value = string }
-        else if let bool = try? container.decode(Bool.self) { value = bool }
-        else if let dict = try? container.decode([String: AnyCodable].self) { value = dict }
-        else if let array = try? container.decode([AnyCodable].self) { value = array }
-        else { value = NSNull() }
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch value {
-        case let v as Int: try container.encode(v)
-        case let v as Double: try container.encode(v)
-        case let v as String: try container.encode(v)
-        case let v as Bool: try container.encode(v)
-        case let v as [String: AnyCodable]: try container.encode(v)
-        case let v as [AnyCodable]: try container.encode(v)
-        default: try container.encodeNil()
-        }
-    }
-
-    static func == (lhs: AnyCodable, rhs: AnyCodable) -> Bool {
-        String(describing: lhs.value) == String(describing: rhs.value)
-    }
-}

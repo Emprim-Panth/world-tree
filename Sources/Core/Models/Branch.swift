@@ -19,7 +19,7 @@ struct Branch: Identifiable, Equatable, Hashable {
     let treeId: String
     var sessionId: String?
     var parentBranchId: String?
-    var forkFromMessageId: Int?
+    var forkFromMessageId: String?
     var branchType: BranchType
     var title: String?
     var status: BranchStatus

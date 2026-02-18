@@ -10,25 +10,53 @@ enum MessageRole: String, Codable, DatabaseValueConvertible {
 /// Wraps the existing `messages` table from cortana-core.
 /// Canvas reads and writes these using the exact same schema.
 struct Message: Identifiable, Equatable, Hashable {
-    let id: Int
+    let id: String  // Gateway uses TEXT PRIMARY KEY
     let sessionId: String
     let role: MessageRole
     let content: String
-    let timestamp: Date
+    let createdAt: Date  // Table column is created_at, not timestamp
 
     /// Computed at query time: whether any branch forks from this message
     var hasBranches: Bool = false
+
+    /// Compatibility alias for timestamp
+    var timestamp: Date { createdAt }
 }
 
 // MARK: - GRDB Conformance
 
 extension Message: FetchableRecord {
     init(row: Row) {
-        id = row["id"]
+        // id is INTEGER in database, convert to String
+        if let intId = row["id"] as? Int64 {
+            id = String(intId)
+        } else if let stringId = row["id"] as? String {
+            id = stringId
+        } else {
+            id = "0"
+        }
+
         sessionId = row["session_id"]
         role = MessageRole(rawValue: row["role"] as String) ?? .system
         content = row["content"]
-        timestamp = row["timestamp"] as? Date ?? Date()
+
+        // Read timestamp as DATETIME text and convert to Date
+        if let timestampStr = row["timestamp"] as? String {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withDashSeparatorInDate, .withColonSeparatorInTime, .withSpaceBetweenDateAndTime]
+            if let date = formatter.date(from: timestampStr.replacingOccurrences(of: " ", with: "T") + "Z") {
+                createdAt = date
+            } else {
+                // Fallback: try basic SQLite datetime format
+                let sqlFormatter = DateFormatter()
+                sqlFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                sqlFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+                createdAt = sqlFormatter.date(from: timestampStr) ?? Date()
+            }
+        } else {
+            createdAt = Date()
+        }
+
         hasBranches = (row["has_branches"] as? Int ?? 0) > 0
     }
 }
@@ -55,13 +83,13 @@ extension Message {
                 """,
             arguments: [sessionId, role.rawValue, content]
         )
-        let id = Int(db.lastInsertedRowID)
+        let id = String(db.lastInsertedRowID)
         return Message(
             id: id,
             sessionId: sessionId,
             role: role,
             content: content,
-            timestamp: Date()
+            createdAt: Date()
         )
     }
 }

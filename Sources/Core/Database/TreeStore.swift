@@ -40,7 +40,9 @@ final class TreeStore {
                     (SELECT COUNT(*) FROM canvas_branches b
                      JOIN sessions s ON b.session_id = s.id
                      JOIN messages m ON m.session_id = s.id
-                     WHERE b.tree_id = t.id) as message_count
+                     WHERE b.tree_id = t.id) as message_count,
+                    (SELECT COUNT(*) FROM canvas_branches b
+                     WHERE b.tree_id = t.id AND b.status = 'active') as branch_count
                 FROM canvas_trees t
                 """
             if !includeArchived {
@@ -51,6 +53,7 @@ final class TreeStore {
             return try Row.fetchAll(db, sql: sql).map { row in
                 var tree = ConversationTree(row: row)
                 tree.messageCount = row["message_count"] ?? 0
+                tree.branchCount = row["branch_count"] ?? 0
                 return tree
             }
         }
@@ -89,6 +92,64 @@ final class TreeStore {
         }
     }
 
+    func renameTree(_ id: String, name: String) throws {
+        try db.write { db in
+            try db.execute(
+                sql: "UPDATE canvas_trees SET name = ?, updated_at = datetime('now') WHERE id = ?",
+                arguments: [name, id]
+            )
+        }
+    }
+
+    func moveTree(_ id: String, toProject: String?) throws {
+        try db.write { db in
+            if let project = toProject, !project.isEmpty {
+                try db.execute(
+                    sql: "UPDATE canvas_trees SET project = ?, updated_at = datetime('now') WHERE id = ?",
+                    arguments: [project, id]
+                )
+            } else {
+                try db.execute(
+                    sql: "UPDATE canvas_trees SET project = NULL, updated_at = datetime('now') WHERE id = ?",
+                    arguments: [id]
+                )
+            }
+        }
+    }
+
+    func deleteTree(_ id: String) throws {
+        try db.write { db in
+            // Delete messages for all branches in this tree
+            try db.execute(
+                sql: """
+                    DELETE FROM messages WHERE session_id IN (
+                        SELECT session_id FROM canvas_branches WHERE tree_id = ?
+                    )
+                    """,
+                arguments: [id]
+            )
+            // Delete sessions for all branches
+            try db.execute(
+                sql: """
+                    DELETE FROM sessions WHERE id IN (
+                        SELECT session_id FROM canvas_branches WHERE tree_id = ?
+                    )
+                    """,
+                arguments: [id]
+            )
+            // Delete branches
+            try db.execute(
+                sql: "DELETE FROM canvas_branches WHERE tree_id = ?",
+                arguments: [id]
+            )
+            // Delete tree
+            try db.execute(
+                sql: "DELETE FROM canvas_trees WHERE id = ?",
+                arguments: [id]
+            )
+        }
+    }
+
     // MARK: - Branches
 
     /// Creates a new branch with an associated session.
@@ -96,7 +157,7 @@ final class TreeStore {
     func createBranch(
         treeId: String,
         parentBranch: String? = nil,
-        forkFromMessage: Int? = nil,
+        forkFromMessage: String? = nil,
         type: BranchType = .conversation,
         title: String? = nil,
         model: String? = nil,
@@ -186,7 +247,7 @@ final class TreeStore {
             args.append(id)
 
             let sql = "UPDATE canvas_branches SET \(setClauses.joined(separator: ", ")) WHERE id = ?"
-            try db.execute(sql: sql, arguments: StatementArguments(args)!)
+            try db.execute(sql: sql, arguments: StatementArguments(args))
         }
     }
 
@@ -200,6 +261,14 @@ final class TreeStore {
     func branchesFromMessage(_ messageId: Int) throws -> [Branch] {
         try db.read { db in
             try Branch.filter(Column("fork_from_message_id") == messageId).fetchAll(db)
+        }
+    }
+
+    /// Find the branch whose associated session_id matches the given ID.
+    /// Used by CanvasServer to resume a conversation from an external client.
+    func getBranchBySessionId(_ sessionId: String) throws -> Branch? {
+        try db.read { db in
+            try Branch.filter(Column("session_id") == sessionId).fetchOne(db)
         }
     }
 
@@ -256,10 +325,12 @@ final class TreeStore {
             lookup[branch.id] = branch
         }
 
-        // Attach children to parents
+        // Attach children to parents.
+        // Branch is a value type — must copy, mutate, then reassign back into the dictionary.
         for branch in branches {
-            if let parentId = branch.parentBranchId, lookup[parentId] != nil {
-                lookup[parentId]!.children.append(branch)
+            if let parentId = branch.parentBranchId, var parent = lookup[parentId] {
+                parent.children.append(branch)
+                lookup[parentId] = parent
             }
         }
 

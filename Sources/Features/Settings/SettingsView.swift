@@ -6,6 +6,7 @@ struct SettingsView: View {
     @AppStorage("defaultModel") private var defaultModel = CortanaConstants.defaultModel
     @AppStorage("contextDepth") private var contextDepth = CortanaConstants.defaultContextDepth
     @ObservedObject private var providerManager = ProviderManager.shared
+    @ObservedObject private var server = CanvasServer.shared
 
     var body: some View {
         TabView {
@@ -22,6 +23,16 @@ struct SettingsView: View {
             apiTab
                 .tabItem {
                     Label("API", systemImage: "bolt.fill")
+                }
+
+            serverTab
+                .tabItem {
+                    Label("Server", systemImage: "server.rack")
+                }
+
+            remoteTab
+                .tabItem {
+                    Label("Remote", systemImage: "link.icloud")
                 }
 
             connectionTab
@@ -157,30 +168,324 @@ struct SettingsView: View {
 
     // MARK: - API
 
+    @State private var apiKeyInput = ""
+    @State private var showAPIKey = false
+
     private var apiTab: some View {
         Form {
-            Section("Anthropic API") {
-                let hasKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil
+            Section("Anthropic API Key") {
+                let envKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil
+                let keychainKey = ClaudeService.shared.isConfigured
 
-                Label(
-                    hasKey ? "API key found in environment" : "No ANTHROPIC_API_KEY in environment",
-                    systemImage: hasKey ? "checkmark.circle.fill" : "xmark.circle"
-                )
-                .foregroundStyle(hasKey ? .green : .orange)
+                if envKey {
+                    Label("API key loaded from environment", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else if keychainKey {
+                    Label("API key loaded from Keychain", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
 
-                if hasKey {
-                    Text("Direct API provider available. Switch to it in the Provider tab.")
+                    Button("Clear Keychain Key") {
+                        // Clear by saving empty string
+                        ClaudeService.shared.setAPIKey("")
+                    }
+                    .foregroundStyle(.red)
+                } else {
+                    Label("No API key configured", systemImage: "xmark.circle")
+                        .foregroundStyle(.orange)
+                }
+
+                Divider()
+
+                HStack {
+                    if showAPIKey {
+                        TextField("sk-ant-...", text: $apiKeyInput)
+                            .textFieldStyle(.roundedBorder)
+                            .monospaced()
+                            .font(.caption)
+                    } else {
+                        SecureField("sk-ant-...", text: $apiKeyInput)
+                            .textFieldStyle(.roundedBorder)
+                            .monospaced()
+                            .font(.caption)
+                    }
+
+                    Button(action: { showAPIKey.toggle() }) {
+                        Image(systemName: showAPIKey ? "eye.slash" : "eye")
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button("Save to Keychain") {
+                    ClaudeService.shared.setAPIKey(apiKeyInput)
+                    apiKeyInput = ""
+                }
+                .disabled(apiKeyInput.isEmpty)
+
+                Text("Get your API key from: https://console.anthropic.com")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    // MARK: - Server
+
+    @AppStorage(CanvasServer.enabledKey) private var serverEnabled = false
+    @AppStorage(CanvasServer.tokenKey) private var serverToken = ""
+    @State private var tokenInput = ""
+    @State private var showToken = false
+
+    private var serverTab: some View {
+        Form {
+            Section("Canvas Hub Server") {
+                Toggle("Enable server (port \(CanvasServer.port))", isOn: $serverEnabled)
+                    .onChange(of: serverEnabled) { _, enabled in
+                        if enabled { server.start() } else { server.stop() }
+                    }
+
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(server.isRunning ? Color.green : Color.red)
+                        .frame(width: 8, height: 8)
+                    Text(server.isRunning
+                         ? "Running — \(server.requestCount) requests"
+                         : (server.lastError ?? "Stopped"))
                         .font(.caption)
+                        .foregroundStyle(server.isRunning ? .primary : .secondary)
+                }
+            }
+
+            Section("Auth Token") {
+                Text("Clients must send this token in the x-canvas-token header.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    if showToken {
+                        TextField("Enter token", text: $tokenInput)
+                            .textFieldStyle(.roundedBorder)
+                            .monospaced()
+                            .font(.caption)
+                    } else {
+                        SecureField("Enter token", text: $tokenInput)
+                            .textFieldStyle(.roundedBorder)
+                            .monospaced()
+                            .font(.caption)
+                    }
+                    Button(action: { showToken.toggle() }) {
+                        Image(systemName: showToken ? "eye.slash" : "eye")
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                HStack {
+                    Button("Save Token") {
+                        let trimmed = tokenInput.trimmingCharacters(in: .whitespaces)
+                        guard !trimmed.isEmpty else { return }
+                        UserDefaults.standard.set(trimmed, forKey: CanvasServer.tokenKey)
+                        tokenInput = ""
+                    }
+                    .disabled(tokenInput.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                    Spacer()
+
+                    if !serverToken.isEmpty {
+                        Label("Token configured", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    } else {
+                        Label("No token set", systemImage: "xmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+
+            Section("Remote Access") {
+                if let ngrok = server.ngrokPublicURL {
+                    Label("Tunnel active", systemImage: "network")
+                        .foregroundStyle(.green)
+                        .font(.caption)
+                    Text(ngrok)
+                        .font(.caption)
+                        .monospaced()
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                    Text("Copy this URL into MacBook Canvas → Settings → Server.")
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("Set ANTHROPIC_API_KEY in your shell profile to enable the Direct API provider.")
+                    Label("No ngrok tunnel detected", systemImage: "network.slash")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Text("Start com.cortana.canvas-tunnel to enable remote access.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Quick test") {
+                Text(#"curl -H "x-canvas-token: TOKEN" http://localhost:\#(CanvasServer.port)/health"#)
+                    .font(.caption)
+                    .monospaced()
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    // MARK: - Remote Studio (MacBook client mode)
+
+    @AppStorage(CortanaConstants.remoteCanvasEnabledKey) private var remoteEnabled = false
+    @AppStorage(CortanaConstants.remoteCanvasURLKey) private var remoteURL = ""
+    @AppStorage(CortanaConstants.remoteCanvasTokenKey) private var remoteToken = ""
+    @State private var remoteURLInput = ""
+    @State private var remoteTokenInput = ""
+    @State private var showRemoteToken = false
+    @State private var remoteHealthStatus = ""
+
+    private var remoteTab: some View {
+        Form {
+            Section("Connect to Studio") {
+                Text("When enabled, all messages are sent to your Mac Studio's Canvas server. The UI is identical — tokens stream in real time.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Connect to Remote Studio", isOn: $remoteEnabled)
+                    .onChange(of: remoteEnabled) { _, enabled in
+                        applyRemoteToggle(enabled)
+                    }
+
+                // Status dot
+                HStack(spacing: 6) {
+                    let isActive = providerManager.selectedProviderId == "remote-canvas"
+                    Circle()
+                        .fill(isActive ? Color.green : Color.secondary.opacity(0.4))
+                        .frame(width: 8, height: 8)
+                    Text(isActive ? "Active — routing to Studio" : "Inactive — local providers in use")
+                        .font(.caption)
+                        .foregroundStyle(isActive ? .primary : .secondary)
+                }
+            }
+
+            Section("Studio URL") {
+                if !remoteURL.isEmpty {
+                    Text(remoteURL)
+                        .font(.caption).monospaced()
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                }
+
+                HStack {
+                    TextField("https://…ngrok-free.app  or  http://192.168.x.x:5865",
+                              text: $remoteURLInput)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption).monospaced()
+                    Button("Save") {
+                        let trimmed = remoteURLInput.trimmingCharacters(in: .whitespaces)
+                        guard !trimmed.isEmpty else { return }
+                        remoteURL = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
+                        remoteURLInput = ""
+                        if remoteEnabled { applyRemoteToggle(true) }
+                    }
+                    .disabled(remoteURLInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+
+                Text("Paste the ngrok URL from Studio Canvas → Settings → Server.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Studio Token") {
+                HStack {
+                    if showRemoteToken {
+                        TextField("x-canvas-token", text: $remoteTokenInput)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption).monospaced()
+                    } else {
+                        SecureField("x-canvas-token", text: $remoteTokenInput)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption).monospaced()
+                    }
+                    Button(action: { showRemoteToken.toggle() }) {
+                        Image(systemName: showRemoteToken ? "eye.slash" : "eye")
+                    }
+                    .buttonStyle(.plain)
+                    Button("Save") {
+                        let trimmed = remoteTokenInput.trimmingCharacters(in: .whitespaces)
+                        guard !trimmed.isEmpty else { return }
+                        remoteToken = trimmed
+                        remoteTokenInput = ""
+                        if remoteEnabled { applyRemoteToggle(true) }
+                    }
+                    .disabled(remoteTokenInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+
+                HStack {
+                    if !remoteToken.isEmpty {
+                        Label("Token configured", systemImage: "checkmark.circle.fill")
+                            .font(.caption).foregroundStyle(.green)
+                    } else {
+                        Label("No token set", systemImage: "xmark.circle")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+
+                    Spacer()
+
+                    Button("Test Connection") {
+                        Task { await testRemoteConnection() }
+                    }
+                    .disabled(remoteURL.isEmpty || remoteToken.isEmpty)
+                    .font(.caption)
+                }
+
+                if !remoteHealthStatus.isEmpty {
+                    Text(remoteHealthStatus)
+                        .font(.caption)
+                        .foregroundStyle(remoteHealthStatus.hasPrefix("✓") ? .green : .red)
                 }
             }
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    private func applyRemoteToggle(_ enabled: Bool) {
+        if enabled {
+            guard !remoteURL.isEmpty, !remoteToken.isEmpty,
+                  let url = URL(string: remoteURL) else {
+                // Can't enable without URL + token — silently revert
+                remoteEnabled = false
+                return
+            }
+            UserDefaults.standard.set(true, forKey: CortanaConstants.remoteCanvasEnabledKey)
+            providerManager.enableRemoteProvider(url: url, token: remoteToken)
+        } else {
+            UserDefaults.standard.set(false, forKey: CortanaConstants.remoteCanvasEnabledKey)
+            providerManager.disableRemoteProvider()
+        }
+    }
+
+    private func testRemoteConnection() async {
+        guard let url = URL(string: remoteURL) else {
+            remoteHealthStatus = "✗ Invalid URL"
+            return
+        }
+        remoteHealthStatus = "Testing…"
+        let provider = RemoteCanvasProvider(serverURL: url, token: remoteToken)
+        let health = await provider.checkHealth()
+        switch health {
+        case .available:
+            remoteHealthStatus = "✓ Connected — Studio is online"
+        case .degraded(let reason):
+            remoteHealthStatus = "⚠ Degraded: \(reason)"
+        case .unavailable(let reason):
+            remoteHealthStatus = "✗ Unreachable: \(reason)"
+        }
     }
 
     // MARK: - Connection

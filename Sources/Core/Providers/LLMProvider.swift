@@ -87,4 +87,9 @@ struct ProviderSendContext {
 
     /// True if this is the first message in the session
     let isNewSession: Bool
+
+    /// Optional checkpoint context from session rotation.
+    /// When present, the provider should prepend this to the message
+    /// to carry forward context from a rotated session.
+    var checkpointContext: String?
 }

@@ -11,8 +11,18 @@ final class DaemonService: ObservableObject {
     @Published var tmuxSessions: [TmuxSession] = []
     @Published var lastError: String?
 
+    /// Whether to automatically manage context for tmux Claude sessions.
+    @Published var autoManageTmuxContext: Bool = true
+
     private let socket = DaemonSocket()
     private var healthTimer: Timer?
+
+    /// Track sessions we've already sent a /compact to, so we don't spam.
+    /// Key: session name, Value: timestamp of last intervention.
+    private var tmuxRotationHistory: [String: Date] = [:]
+
+    /// Minimum interval between auto-rotations for the same session (5 minutes).
+    private let rotationCooldown: TimeInterval = 300
 
     private init() {}
 
@@ -67,13 +77,15 @@ final class DaemonService: ObservableObject {
     func dispatch(
         message: String,
         project: String,
-        priority: String = "normal"
+        priority: String = "normal",
+        canvasSessionId: String? = nil
     ) async -> String? {
         do {
             let command = DaemonCommand.dispatch(
                 message: message,
                 project: project,
-                priority: priority
+                priority: priority,
+                canvasSessionId: canvasSessionId
             )
             let response = try await socket.send(command)
             lastError = response.error
@@ -140,25 +152,163 @@ final class DaemonService: ObservableObject {
 
     // MARK: - Tmux Sessions
 
-    /// Discover active tmux sessions by shelling out to `tmux list-sessions`.
+    /// Discover active tmux sessions with pane-level data and Claude context info.
+    /// Automatically manages context for high-pressure Claude sessions.
     func refreshTmuxSessions() {
+        let shouldAutoManage = autoManageTmuxContext
         Task.detached { [weak self] in
-            let sessions = Self.discoverTmuxSessions()
+            var sessions = Self.discoverTmuxSessions()
+
+            // Enrich sessions with Claude CLI session data
+            for i in sessions.indices {
+                if let cwd = sessions[i].workingDirectory {
+                    let claudeInfo = CLISessionReader.findActiveSession(workingDirectory: cwd)
+                    sessions[i].claudeSessionId = claudeInfo?.sessionId
+                    sessions[i].estimatedTokens = claudeInfo?.totalInputTokens
+                    if let tokens = claudeInfo?.totalInputTokens {
+                        sessions[i].pressureLevel = Self.pressureFromRealTokens(tokens)
+                        sessions[i].estimatedTokens = tokens
+                    }
+                }
+            }
+
+            // Auto-manage: send /compact to high-pressure Claude sessions
+            if shouldAutoManage {
+                let sessionsToRotate = sessions.filter { session in
+                    guard session.isClaudeSession,
+                          let level = session.pressureLevel,
+                          level.shouldRotate else { return false }
+                    return true
+                }
+
+                for session in sessionsToRotate {
+                    // Explicit MainActor hop — autoRotateTmuxSession reads/writes
+                    // @MainActor state (tmuxRotationHistory, tmuxSessions).
+                    await MainActor.run { [weak self] in
+                        self?.autoRotateTmuxSession(session)
+                    }
+                }
+            }
+
             await MainActor.run {
                 self?.tmuxSessions = sessions
             }
         }
     }
 
-    /// Runs `tmux list-sessions` off the main thread and parses results.
+    /// Send /compact to a tmux Claude session that's running hot.
+    /// Respects cooldown to avoid spamming the same session.
+    private func autoRotateTmuxSession(_ session: TmuxSession) {
+        let now = Date()
+
+        // Check cooldown — don't rotate the same session too frequently
+        if let lastRotation = tmuxRotationHistory[session.name],
+           now.timeIntervalSince(lastRotation) < rotationCooldown {
+            return
+        }
+
+        // Only intervene if the session is idle (not mid-response).
+        // If currentCommand is "claude", it's at the prompt (idle).
+        // If it's something else (like "bash" running a subcommand), skip.
+        guard session.currentCommand?.lowercased() == "claude" else { return }
+
+        canvasLog("[DaemonService] Auto-compacting tmux session '\(session.name)' — pressure \(session.pressureLevel?.rawValue ?? "unknown") (\(session.estimatedTokens ?? 0) tokens)")
+
+        // Send /compact to trigger Claude's built-in context compaction
+        let sent = Self.sendToTmux(session: session.name, keys: "/compact")
+        if sent {
+            tmuxRotationHistory[session.name] = now
+
+            // Update the session's lastAutoCompact in our published list
+            if let idx = tmuxSessions.firstIndex(where: { $0.name == session.name }) {
+                tmuxSessions[idx].lastAutoCompact = now
+            }
+
+            // Log event if we have a branch ID (we don't for tmux, so use session name)
+            EventStore.shared.log(
+                branchId: "tmux:\(session.name)",
+                sessionId: session.claudeSessionId,
+                type: .sessionRotation,
+                data: [
+                    "source": "auto_tmux",
+                    "session_name": session.name,
+                    "estimated_tokens": session.estimatedTokens ?? 0,
+                    "pressure": session.pressureLevel?.rawValue ?? "unknown",
+                ]
+            )
+        }
+    }
+
+    /// Calculate pressure level from real token counts (more accurate than heuristic).
+    nonisolated private static func pressureFromRealTokens(_ tokens: Int) -> PressureLevel {
+        let ratio = Double(tokens) / Double(ContextPressureEstimator.maxContextTokens)
+        switch ratio {
+        case ..<0.5: return .low
+        case 0.5..<0.75: return .moderate
+        case 0.75..<0.9: return .high
+        default: return .critical
+        }
+    }
+
+    /// Runs `tmux list-panes -a` off the main thread for pane-level discovery.
+    /// Groups panes by session, captures working directory and running command.
     nonisolated private static func discoverTmuxSessions() -> [TmuxSession] {
-        let proc = Process()
-        // Use absolute path — GUI apps don't have Homebrew in PATH
         let tmuxPath = "/opt/homebrew/bin/tmux"
         guard FileManager.default.fileExists(atPath: tmuxPath) else { return [] }
-        proc.executableURL = URL(fileURLWithPath: tmuxPath)
-        proc.arguments = ["list-sessions", "-F",
-                          "#{session_name}||#{session_windows}||#{session_created}||#{session_attached}||#{session_activity}"]
+
+        // Step 1: Get session-level data
+        let sessionOutput = runTmux(tmuxPath, args: [
+            "list-sessions", "-F",
+            "#{session_name}||#{session_windows}||#{session_created}||#{session_attached}||#{session_activity}"
+        ])
+        guard let sessionOutput else { return [] }
+
+        var sessionMap: [String: TmuxSession] = [:]
+        for line in sessionOutput.split(separator: "\n", omittingEmptySubsequences: true) {
+            let fields = String(line).components(separatedBy: "||")
+            guard fields.count >= 5 else { continue }
+
+            let name = fields[0]
+            sessionMap[name] = TmuxSession(
+                name: name,
+                windowCount: Int(fields[1]) ?? 0,
+                createdAt: Date(timeIntervalSince1970: TimeInterval(fields[2]) ?? 0),
+                isAttached: fields[3] == "1",
+                lastActivity: Date(timeIntervalSince1970: TimeInterval(fields[4]) ?? 0)
+            )
+        }
+
+        // Step 2: Get pane-level data (active pane per session)
+        let paneOutput = runTmux(tmuxPath, args: [
+            "list-panes", "-a", "-F",
+            "#{session_name}||#{pane_current_path}||#{pane_current_command}||#{pane_pid}||#{pane_active}"
+        ])
+
+        if let paneOutput {
+            for line in paneOutput.split(separator: "\n", omittingEmptySubsequences: true) {
+                let fields = String(line).components(separatedBy: "||")
+                guard fields.count >= 5 else { continue }
+
+                let sessionName = fields[0]
+                let isActive = fields[4] == "1"
+
+                // Only take data from the active pane (or first if none active)
+                if isActive || sessionMap[sessionName]?.workingDirectory == nil {
+                    sessionMap[sessionName]?.workingDirectory = fields[1]
+                    sessionMap[sessionName]?.currentCommand = fields[2]
+                    sessionMap[sessionName]?.panePid = Int(fields[3])
+                }
+            }
+        }
+
+        return Array(sessionMap.values).sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// Helper to run tmux commands and return stdout.
+    nonisolated private static func runTmux(_ path: String, args: [String]) -> String? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: path)
+        proc.arguments = args
 
         let pipe = Pipe()
         proc.standardOutput = pipe
@@ -167,37 +317,56 @@ final class DaemonService: ObservableObject {
         do {
             try proc.run()
         } catch {
-            return []
+            return nil
         }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         proc.waitUntilExit()
 
-        guard proc.terminationStatus == 0,
-              let output = String(data: data, encoding: .utf8) else {
-            return []
+        guard proc.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    // MARK: - Tmux Commands
+
+    /// Send keystrokes to a tmux session (for rotation commands, etc.)
+    nonisolated static func sendToTmux(session: String, keys: String) -> Bool {
+        let tmuxPath = "/opt/homebrew/bin/tmux"
+        guard FileManager.default.fileExists(atPath: tmuxPath) else { return false }
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: tmuxPath)
+        proc.arguments = ["send-keys", "-t", session, keys, "Enter"]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            return proc.terminationStatus == 0
+        } catch {
+            return false
         }
+    }
 
-        return output
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .compactMap { line -> TmuxSession? in
-                let fields = String(line).components(separatedBy: "||")
-                guard fields.count >= 5 else { return nil }
+    /// Send Ctrl+C to a tmux session to cancel the running command.
+    nonisolated static func cancelTmuxSession(session: String) -> Bool {
+        let tmuxPath = "/opt/homebrew/bin/tmux"
+        guard FileManager.default.fileExists(atPath: tmuxPath) else { return false }
 
-                let name = fields[0]
-                let windowCount = Int(fields[1]) ?? 0
-                let created = Date(timeIntervalSince1970: TimeInterval(fields[2]) ?? 0)
-                let isAttached = fields[3] == "1"
-                let activity = Date(timeIntervalSince1970: TimeInterval(fields[4]) ?? 0)
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: tmuxPath)
+        proc.arguments = ["send-keys", "-t", session, "C-c"]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
 
-                return TmuxSession(
-                    name: name,
-                    windowCount: windowCount,
-                    createdAt: created,
-                    isAttached: isAttached,
-                    lastActivity: activity
-                )
-            }
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            return proc.terminationStatus == 0
+        } catch {
+            return false
+        }
     }
 
     // MARK: - Status

@@ -18,18 +18,24 @@ packages:
   GRDB:
     url: https://github.com/groue/GRDB.swift.git
     from: 6.24.0
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm.git
+    from: 1.2.0
 
 targets:
   CortanaCanvas:
     type: application
     platform: macOS
     sources:
-      - Sources
+      - path: Sources
+        excludes:
+          - "_Archive/**"
     resources:
       - path: Resources
         buildPhase: resources
     dependencies:
       - package: GRDB
+      - package: SwiftTerm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.heiloprojects.cortana-canvas

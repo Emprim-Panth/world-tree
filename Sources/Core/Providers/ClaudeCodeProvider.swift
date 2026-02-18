@@ -57,6 +57,7 @@ final class ClaudeCodeProvider: LLMProvider {
 
             var env = ProcessInfo.processInfo.environment
             env.removeValue(forKey: "ANTHROPIC_API_KEY")
+            env.removeValue(forKey: "CLAUDECODE")
             proc.environment = env
 
             proc.terminationHandler = { process in
@@ -93,12 +94,26 @@ final class ClaudeCodeProvider: LLMProvider {
             let cliPath = "\(home)/.local/bin/claude"
             proc.executableURL = URL(fileURLWithPath: cliPath)
 
+            // Build the message — prepend checkpoint context if session was rotated
+            let effectiveMessage: String
+            if let checkpoint = context.checkpointContext {
+                effectiveMessage = """
+                    [Context carried forward from previous session — continue seamlessly]
+                    \(checkpoint)
+
+                    [New message]
+                    \(context.message)
+                    """
+            } else {
+                effectiveMessage = context.message
+            }
+
             var args = [
                 "--output-format", "stream-json",
                 "--verbose",
                 "--include-partial-messages",
                 "--dangerously-skip-permissions",
-                "-p", context.message,
+                "-p", effectiveMessage,
             ]
 
             if let model = context.model {
@@ -132,6 +147,7 @@ final class ClaudeCodeProvider: LLMProvider {
 
             var env = ProcessInfo.processInfo.environment
             env.removeValue(forKey: "ANTHROPIC_API_KEY")
+            env.removeValue(forKey: "CLAUDECODE")  // prevent nested-session guard from tripping
             let existingPath = env["PATH"] ?? "/usr/bin:/bin"
             env["PATH"] = "\(home)/.local/bin:\(home)/.cortana/bin:/opt/homebrew/bin:/usr/local/bin:\(existingPath)"
             env["HOME"] = home
@@ -213,6 +229,17 @@ final class ClaudeCodeProvider: LLMProvider {
                 self.stateLock.unlock()
             }
         }
+    }
+
+    // MARK: - Session Rotation
+
+    /// Clear the CLI session mapping for a Canvas session.
+    /// Next send() will start a fresh CLI session instead of resuming.
+    func rotateSession(for canvasSessionId: String) {
+        mapLock.lock()
+        cliSessionMap.removeValue(forKey: canvasSessionId)
+        mapLock.unlock()
+        canvasLog("[ClaudeCodeProvider] Rotated session mapping for \(canvasSessionId)")
     }
 
     // MARK: - Cancel

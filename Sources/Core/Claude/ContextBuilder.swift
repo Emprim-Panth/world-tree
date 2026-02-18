@@ -14,7 +14,7 @@ enum ContextBuilder {
     /// - Returns: Formatted context string for system message injection
     static func buildForkContext(
         parentBranch: Branch,
-        forkMessageId: Int,
+        forkMessageId: String,
         depth: Int = CortanaConstants.defaultContextDepth
     ) throws -> String {
         guard let sessionId = parentBranch.sessionId else {
@@ -47,7 +47,12 @@ enum ContextBuilder {
 
         if !messages.isEmpty {
             let formatted = messages.map { msg in
-                let role = msg.role == .user ? "User" : msg.role == .assistant ? "Cortana" : "System"
+                let role: String
+                switch msg.role {
+                case .user: role = "User"
+                case .assistant: role = "Cortana"
+                case .system: role = "System"
+                }
                 let content = truncate(msg.content, max: 500)
                 return "[\(role)]: \(content)"
             }.joined(separator: "\n\n")
@@ -68,7 +73,7 @@ enum ContextBuilder {
     /// Includes more detail about what needs to be done.
     static func buildImplementationContext(
         parentBranch: Branch,
-        forkMessageId: Int,
+        forkMessageId: String,
         instruction: String? = nil
     ) throws -> String {
         let baseContext = try buildForkContext(
@@ -87,6 +92,23 @@ enum ContextBuilder {
 
         return result
     }
+
+    // MARK: - Child Digest
+
+    /// Build a compact digest from a completed child branch for injection into parent.
+    /// Used when a child branch completes and the parent needs a summary of what was accomplished.
+    static func buildChildDigest(childBranch: Branch) -> String? {
+        guard let summary = childBranch.summary, !summary.isEmpty else { return nil }
+
+        return """
+            [Result from \(childBranch.branchType.rawValue) branch '\(childBranch.displayTitle)']
+            Status: \(childBranch.status.rawValue)
+            \(summary)
+            [End branch result]
+            """
+    }
+
+    // MARK: - Helpers
 
     private static func truncate(_ text: String, max: Int) -> String {
         if text.count <= max { return text }

@@ -17,7 +17,10 @@ enum CanvasEventType: String, Codable, DatabaseValueConvertible {
     case branchFork      // New branch forked
     case branchComplete  // Branch marked completed
     case error           // General error
-    case tokenUsage      // Token usage snapshot
+    case tokenUsage          // Token usage snapshot
+    case contextCheckpoint   // Session rotation checkpoint created
+    case sessionRotation     // CLI session was rotated
+    case summaryGenerated    // Branch summary was generated
 }
 
 /// A single recorded event in Canvas.

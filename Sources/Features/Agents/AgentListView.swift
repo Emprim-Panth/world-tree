@@ -74,17 +74,32 @@ struct AgentListView: View {
     }
 
     private var refreshButton: some View {
-        Button {
-            Task {
-                await daemonService.refreshSessions()
-                daemonService.refreshTmuxSessions()
+        HStack(spacing: 8) {
+            // Auto-manage toggle
+            Button {
+                daemonService.autoManageTmuxContext.toggle()
+            } label: {
+                Image(systemName: daemonService.autoManageTmuxContext ? "bolt.circle.fill" : "bolt.circle")
+                    .font(.caption)
+                    .foregroundStyle(daemonService.autoManageTmuxContext ? .cyan : .secondary)
             }
-        } label: {
-            Image(systemName: "arrow.clockwise")
-                .font(.caption)
+            .buttonStyle(.plain)
+            .help(daemonService.autoManageTmuxContext
+                  ? "Auto-compact: ON — Claude sessions auto-compact when context is high"
+                  : "Auto-compact: OFF — Click to enable automatic context management")
+
+            Button {
+                Task {
+                    await daemonService.refreshSessions()
+                    daemonService.refreshTmuxSessions()
+                }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .help("Refresh sessions")
         }
-        .buttonStyle(.plain)
-        .help("Refresh sessions")
     }
 
     // MARK: - Tmux Sessions
@@ -102,47 +117,107 @@ struct AgentListView: View {
 
     private func tmuxRow(_ session: TmuxSession) -> some View {
         HStack(spacing: 10) {
-            // Attached indicator
+            // Status indicator — Claude sessions get cyan, others green/gray
             Circle()
-                .fill(session.isAttached ? .green : .gray)
+                .fill(session.isClaudeSession ? .cyan : (session.isAttached ? .green : .gray))
                 .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Image(systemName: "terminal")
+                    Image(systemName: session.isClaudeSession ? "brain" : "terminal")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(session.isClaudeSession ? .cyan : .secondary)
 
                     Text(session.name)
                         .fontWeight(.medium)
                         .lineLimit(1)
 
-                    Text("\(session.windowCount)w")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(.quaternary)
-                        .cornerRadius(3)
+                    if let project = session.projectName {
+                        Text(project)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(.quaternary)
+                            .cornerRadius(3)
+                    } else {
+                        Text("\(session.windowCount)w")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(.quaternary)
+                            .cornerRadius(3)
+                    }
                 }
 
-                if let uptime = uptimeString(from: session.createdAt) {
-                    Text("up \(uptime)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .monospaced()
+                HStack(spacing: 6) {
+                    if let uptime = uptimeString(from: session.createdAt) {
+                        Text("up \(uptime)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .monospaced()
+                    }
+
+                    // Context pressure gauge for Claude sessions
+                    if let tokens = session.estimatedTokens, tokens > 0 {
+                        let usage = Double(tokens) / Double(ContextPressureEstimator.maxContextTokens)
+                        ContextGauge(
+                            usage: min(usage, 1.0),
+                            label: "CLI Context",
+                            estimatedTokens: tokens
+                        )
+                    }
                 }
             }
 
             Spacer()
 
-            Text(session.isAttached ? "attached" : "detached")
-                .font(.caption2)
-                .foregroundStyle(session.isAttached ? .green : .secondary)
+            // Status + controls
+            VStack(alignment: .trailing, spacing: 2) {
+                HStack(spacing: 4) {
+                    // Auto-compact indicator
+                    if let compactTime = session.lastAutoCompact,
+                       Date().timeIntervalSince(compactTime) < 300 {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.cyan)
+                            .help("Auto-compacted \(compactTime, style: .relative) ago")
+                    }
+
+                    Text(session.isAttached ? "attached" : "detached")
+                        .font(.caption2)
+                        .foregroundStyle(session.isAttached ? .green : .secondary)
+                }
+
+                if let cmd = session.currentCommand, !cmd.isEmpty {
+                    Text(cmd)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+
+            // Cancel button for Claude sessions
+            if session.isClaudeSession {
+                Button {
+                    Task.detached {
+                        _ = DaemonService.cancelTmuxSession(session: session.name)
+                        await MainActor.run {
+                            daemonService.refreshTmuxSessions()
+                        }
+                    }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.red.opacity(0.7))
+                }
+                .buttonStyle(.plain)
+                .help("Cancel Claude session")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(.quaternary.opacity(0.5))
+        .background(session.isClaudeSession ? AnyShapeStyle(Color.cyan.opacity(0.05)) : AnyShapeStyle(.quaternary.opacity(0.5)))
         .cornerRadius(6)
         .padding(.horizontal, 8)
     }

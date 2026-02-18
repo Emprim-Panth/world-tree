@@ -13,11 +13,33 @@ struct SidebarView: View {
     @State private var selectedTemplate: WorkflowTemplate?
     @State private var showTemplatePicker = true
 
+    // Rename tree
+    @State private var renameTarget: ConversationTree?
+    @State private var renameText = ""
+    @State private var showRenameSheet = false
+
+    // New category (for Move to → New Category…)
+    @State private var newCategoryName = ""
+    @State private var showNewCategorySheet = false
+    @State private var movingTreeId: String?
+
+    // Delete confirmation
+    @State private var deleteTarget: ConversationTree?
+    @State private var showDeleteConfirm = false
+
+    // Rename category
+    @State private var renamingCategory: String?
+    @State private var renameCategoryText = ""
+    @State private var showRenameCategorySheet = false
+
+    // New tree pre-filled for a specific category
+    @State private var quickNewTreeProject = ""
+
     var body: some View {
         VStack(spacing: 0) {
             // Projects section (collapsible)
             ProjectListView()
-                .frame(height: 200)
+                .frame(minHeight: 120, maxHeight: 240)
 
             Divider()
 
@@ -63,18 +85,55 @@ struct SidebarView: View {
             .padding(.horizontal, 12)
             .padding(.top, 8)
 
-            // Tree list
-            List(selection: $appState.selectedTreeId) {
-                ForEach(viewModel.groupedTrees, id: \.project) { group in
-                    Section(group.project) {
+            // Tree list — ScrollView instead of List so contextMenu and
+            // single-click work correctly (NSTableView eats all mouse events)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(viewModel.groupedTrees, id: \.project) { group in
+                        // Section header — right-click to rename/delete category
+                        HStack {
+                            Text(group.project)
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .textCase(.uppercase)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button {
+                                quickNewTreeProject = group.project
+                                newTreeProject = group.project
+                                showNewTreeSheet = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.top, 12)
+                        .padding(.bottom, 2)
+                        .contentShape(Rectangle())
+                        .contextMenu {
+                            Button("Rename Category…") {
+                                renamingCategory = group.project
+                                renameCategoryText = group.project
+                                showRenameCategorySheet = true
+                            }
+                            Button("New Tree Here") {
+                                quickNewTreeProject = group.project
+                                newTreeProject = group.project
+                                showNewTreeSheet = true
+                            }
+                        }
+
                         ForEach(group.trees) { tree in
                             treeRow(tree)
-                                .tag(tree.id)
+                                .contextMenu { treeContextMenu(tree) }
                         }
                     }
                 }
+                .padding(.bottom, 4)
             }
-            .listStyle(.sidebar)
 
             // New tree button
             Button {
@@ -98,42 +157,121 @@ struct SidebarView: View {
         .sheet(isPresented: $showNewTreeSheet) {
             newTreeSheet
         }
+        // Rename tree sheet
+        .sheet(isPresented: $showRenameSheet) {
+            renameSheet
+        }
+        // Rename category sheet
+        .sheet(isPresented: $showRenameCategorySheet) {
+            renameCategorySheet
+        }
+        // New category sheet (for Move to → New Category…)
+        .sheet(isPresented: $showNewCategorySheet) {
+            newCategorySheet
+        }
+        // Delete confirmation alert
+        .alert("Delete \"\(deleteTarget?.name ?? "Tree")\"?",
+               isPresented: $showDeleteConfirm,
+               presenting: deleteTarget) { tree in
+            Button("Delete", role: .destructive) {
+                viewModel.deleteTree(tree.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { tree in
+            Text("This permanently deletes \"\(tree.name)\" and all its messages. This cannot be undone.")
+        }
     }
 
     // MARK: - Tree Row
 
     private func treeRow(_ tree: ConversationTree) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(tree.name)
-                    .fontWeight(appState.selectedTreeId == tree.id ? .semibold : .regular)
-                Spacer()
-                Text("\(tree.messageCount)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.quaternary)
-                    .cornerRadius(4)
+        let isSelected = appState.selectedTreeId == tree.id
+        let isBridge = tree.isTelegramBridge
+        let accentColor: Color = isBridge ? .teal : .accentColor
+
+        return HStack(spacing: 8) {
+            // Bridge trees get a phone icon; regular trees get nothing
+            if isBridge {
+                Image(systemName: "iphone.radiowaves.left.and.right")
+                    .font(.caption)
+                    .foregroundStyle(.teal)
             }
 
-            // Show branch tree when selected
-            if appState.selectedTreeId == tree.id, !tree.branches.isEmpty {
-                ForEach(tree.branches.filter { $0.parentBranchId == nil }) { rootBranch in
-                    TreeNodeView(branch: rootBranch, treeId: tree.id)
-                        .padding(.leading, 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(tree.name)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .lineLimit(1)
+
+                if isBridge {
+                    Text("Phone bridge")
+                        .font(.caption2)
+                        .foregroundStyle(.teal.opacity(0.8))
                 }
             }
+
+            Spacer()
+
+            Text("\(tree.messageCount)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.quaternary)
+                .cornerRadius(6)
         }
-        .contextMenu {
-            Button("Archive") {
-                viewModel.archiveTree(tree.id)
+        .padding(.horizontal, 10)
+        .padding(.vertical, isBridge ? 7 : 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isSelected ? accentColor.opacity(0.18) : Color.clear)
+        .cornerRadius(6)
+        .padding(.horizontal, 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            appState.selectedTreeId = tree.id
+            loadTreeBranches(tree.id)
+            if appState.selectedBranchId == nil,
+               let root = tree.branches.first(where: { $0.parentBranchId == nil }) {
+                appState.selectBranch(root.id, in: tree.id)
             }
         }
-        .onChange(of: appState.selectedTreeId) { _, newId in
-            if newId == tree.id {
-                loadTreeBranches(tree.id)
+    }
+
+    @ViewBuilder
+    private func treeContextMenu(_ tree: ConversationTree) -> some View {
+        Button("Rename…") {
+            renameTarget = tree
+            renameText = tree.name
+            showRenameSheet = true
+        }
+
+        Menu("Move to…") {
+            ForEach(viewModel.projectNames.filter { $0 != (tree.project ?? "") }, id: \.self) { project in
+                Button(project) {
+                    viewModel.moveTree(tree.id, toProject: project)
+                }
             }
+            if tree.project != nil {
+                Button("General (no project)") {
+                    viewModel.moveTree(tree.id, toProject: nil)
+                }
+            }
+            Divider()
+            Button("New Category…") {
+                movingTreeId = tree.id
+                newCategoryName = ""
+                showNewCategorySheet = true
+            }
+        }
+
+        Divider()
+
+        Button("Archive") {
+            viewModel.archiveTree(tree.id)
+        }
+
+        Button("Delete…", role: .destructive) {
+            deleteTarget = tree
+            showDeleteConfirm = true
         }
     }
 
@@ -266,4 +404,109 @@ struct SidebarView: View {
         newTreeProject = ""
         newTreeWorkingDir = Self.defaultWorkingDir
     }
+
+    // MARK: - Rename Sheet
+
+    private var renameSheet: some View {
+        VStack(spacing: 16) {
+            Text("Rename Tree")
+                .font(.headline)
+
+            TextField("Tree name", text: $renameText)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { commitRename() }
+
+            HStack {
+                Button("Cancel") { showRenameSheet = false }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Rename") { commitRename() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+
+    private func commitRename() {
+        if let target = renameTarget {
+            viewModel.renameTree(target.id, name: renameText)
+        }
+        showRenameSheet = false
+        renameTarget = nil
+    }
+
+    // MARK: - Rename Category Sheet
+
+    private var renameCategorySheet: some View {
+        VStack(spacing: 16) {
+            Text("Rename Category")
+                .font(.headline)
+
+            TextField("Category name", text: $renameCategoryText)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { commitRenameCategory() }
+
+            HStack {
+                Button("Cancel") { showRenameCategorySheet = false }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Rename") { commitRenameCategory() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(renameCategoryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+
+    private func commitRenameCategory() {
+        let newName = renameCategoryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty, let oldName = renamingCategory else {
+            showRenameCategorySheet = false
+            return
+        }
+        // Move every tree in the old category to the new name
+        for tree in viewModel.trees where (tree.project ?? "General") == oldName {
+            viewModel.moveTree(tree.id, toProject: newName == "General" ? nil : newName)
+        }
+        showRenameCategorySheet = false
+        renamingCategory = nil
+    }
+
+    // MARK: - New Category Sheet
+
+    private var newCategorySheet: some View {
+        VStack(spacing: 16) {
+            Text("New Category")
+                .font(.headline)
+
+            TextField("Category name", text: $newCategoryName)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { commitNewCategory() }
+
+            HStack {
+                Button("Cancel") { showNewCategorySheet = false }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Create & Move") { commitNewCategory() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+
+    private func commitNewCategory() {
+        let name = newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty, let treeId = movingTreeId {
+            viewModel.moveTree(treeId, toProject: name)
+        }
+        showNewCategorySheet = false
+        movingTreeId = nil
+        newCategoryName = ""
+    }
 }
+
