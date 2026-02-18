@@ -25,6 +25,13 @@ struct ConversationTree: Identifiable, Equatable, Hashable {
 
     /// Total messages across all branches (set by query)
     var messageCount: Int = 0
+
+    /// True if this tree is a Telegram phone-bridge channel.
+    /// Detected by naming convention (name starts with "Telegram").
+    /// A proper `tree_type` column can formalise this in a future migration.
+    var isTelegramBridge: Bool {
+        name.lowercased().hasPrefix("telegram")
+    }
 }
 
 // MARK: - GRDB Conformance

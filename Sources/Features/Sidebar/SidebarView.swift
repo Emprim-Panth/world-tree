@@ -185,33 +185,43 @@ struct SidebarView: View {
 
     private func treeRow(_ tree: ConversationTree) -> some View {
         let isSelected = appState.selectedTreeId == tree.id
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(tree.name)
-                    .fontWeight(isSelected ? .semibold : .regular)
-                    .foregroundStyle(isSelected ? Color.primary : Color.primary)
-                Spacer()
-                Text("\(tree.messageCount)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.quaternary)
-                    .cornerRadius(4)
+        let isBridge = tree.isTelegramBridge
+        let accentColor: Color = isBridge ? .teal : .accentColor
+
+        return HStack(spacing: 8) {
+            // Bridge trees get a phone icon; regular trees get nothing
+            if isBridge {
+                Image(systemName: "iphone.radiowaves.left.and.right")
+                    .font(.caption)
+                    .foregroundStyle(.teal)
             }
 
-            // Show branch tree when selected
-            if isSelected, !tree.branches.isEmpty {
-                ForEach(tree.branches.filter { $0.parentBranchId == nil }) { rootBranch in
-                    TreeNodeView(branch: rootBranch, treeId: tree.id)
-                        .padding(.leading, 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(tree.name)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .lineLimit(1)
+
+                if isBridge {
+                    Text("Phone bridge")
+                        .font(.caption2)
+                        .foregroundStyle(.teal.opacity(0.8))
                 }
             }
+
+            Spacer()
+
+            Text("\(tree.messageCount)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.quaternary)
+                .cornerRadius(4)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 5)
+        .padding(.vertical, isBridge ? 7 : 5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
+        .background(isSelected ? accentColor.opacity(0.18) : Color.clear)
         .cornerRadius(6)
         .padding(.horizontal, 4)
         .contentShape(Rectangle())
