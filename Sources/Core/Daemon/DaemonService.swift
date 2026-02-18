@@ -89,9 +89,13 @@ final class DaemonService: ObservableObject {
             )
             let response = try await socket.send(command)
             lastError = response.error
+            if let err = response.error {
+                canvasLog("[DaemonService] dispatch error: \(err)")
+            }
             return response.taskId
         } catch {
             lastError = error.localizedDescription
+            canvasLog("[DaemonService] dispatch failed: \(error)")
             return nil
         }
     }
@@ -102,6 +106,9 @@ final class DaemonService: ObservableObject {
         do {
             let response = try await socket.send(.sessions)
             lastError = response.error
+            if let err = response.error {
+                canvasLog("[DaemonService] sessions error: \(err)")
+            }
 
             // Parse sessions from response.data (array of dictionaries)
             guard let anyCodable = response.data,
@@ -113,6 +120,7 @@ final class DaemonService: ObservableObject {
             activeSessions = rawArray.compactMap { parseDaemonSession(from: $0) }
         } catch {
             lastError = error.localizedDescription
+            canvasLog("[DaemonService] refreshSessions failed: \(error)")
         }
     }
 
@@ -190,8 +198,9 @@ final class DaemonService: ObservableObject {
                 }
             }
 
-            await MainActor.run {
-                self?.tmuxSessions = sessions
+            let finalSessions = sessions
+            await MainActor.run { [weak self] in
+                self?.tmuxSessions = finalSessions
             }
         }
     }

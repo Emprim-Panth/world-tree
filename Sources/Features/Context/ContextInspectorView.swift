@@ -1,4 +1,5 @@
 import SwiftUI
+import GRDB
 
 /// Context window inspector and management
 struct ContextInspectorView: View {
@@ -143,49 +144,130 @@ class ContextInspectorViewModel: ObservableObject {
     }
 
     func loadSections() {
-        // TODO: Load actual sections from session
-        // For now, create sample sections
-        let samples = [
-            ContextSection(
+        guard let dbPool = DatabaseManager.shared.dbPool else { return }
+
+        let decoder = JSONDecoder()
+
+        // Load persisted system blocks and message history from canvas_api_state
+        let row = try? dbPool.read { db in
+            try Row.fetchOne(
+                db,
+                sql: "SELECT system_prompt, api_messages, token_usage, updated_at FROM canvas_api_state WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1",
+                arguments: [sessionId]
+            )
+        }
+
+        var builtSections: [ContextSection] = []
+        var totalTokens = 0
+
+        if let row {
+            // System prompt blocks → one section per block
+            if let systemStr: String = row["system_prompt"],
+               let data = systemStr.data(using: .utf8),
+               let blocks = try? decoder.decode([SystemBlock].self, from: data) {
+                for (i, block) in blocks.enumerated() {
+                    let title = systemBlockTitle(for: block.text, index: i)
+                    let snippet = String(block.text.prefix(120)).replacingOccurrences(of: "\n", with: " ")
+                    let tokens = tokenEstimate(for: block.text)
+                    totalTokens += tokens
+                    builtSections.append(ContextSection(
+                        id: UUID(),
+                        title: title,
+                        content: snippet,
+                        tokenCount: tokens,
+                        timestamp: Date(timeIntervalSinceNow: -3600),
+                        isPinned: block.cacheControl != nil,
+                        canDelete: false
+                    ))
+                }
+            }
+
+            // Message history — group into user/assistant turns
+            if let msgStr: String = row["api_messages"],
+               let data = msgStr.data(using: .utf8),
+               let messages = try? decoder.decode([APIMessage].self, from: data) {
+                // Group consecutive messages into turns
+                var turnIndex = 0
+                var i = 0
+                while i < messages.count {
+                    let msg = messages[i]
+                    let role = msg.role == "user" ? "You" : "Cortana"
+                    let textContent = msg.content.compactMap { block -> String? in
+                        if case .text(let t) = block { return t }
+                        return nil
+                    }.joined(separator: " ")
+                    let snippet = String(textContent.prefix(100)).replacingOccurrences(of: "\n", with: " ")
+                    let tokens = msg.content.reduce(0) { acc, block in
+                        switch block {
+                        case .text(let t): return acc + tokenEstimate(for: t)
+                        case .toolResult(let tr): return acc + tokenEstimate(for: tr.content)
+                        case .toolUse: return acc + 50
+                        case .image: return acc + 500
+                        }
+                    }
+                    totalTokens += tokens
+                    let isRecent = i >= messages.count - 4
+                    builtSections.append(ContextSection(
+                        id: UUID(),
+                        title: "[\(role)] Turn \(turnIndex + 1)",
+                        content: snippet.isEmpty ? "(tool use / image)" : snippet,
+                        tokenCount: tokens,
+                        timestamp: Date(timeIntervalSinceNow: TimeInterval(-(messages.count - i) * 60)),
+                        isPinned: false,
+                        canDelete: !isRecent
+                    ))
+                    turnIndex += 1
+                    i += 1
+                }
+            }
+
+            // Use actual token usage if available
+            if let usageStr: String = row["token_usage"],
+               let data = usageStr.data(using: .utf8),
+               let usage = try? decoder.decode(SessionTokenUsage.self, from: data),
+               usage.totalInputTokens > 0 {
+                totalTokens = usage.totalInputTokens
+            }
+        }
+
+        if builtSections.isEmpty {
+            // Session hasn't sent through API yet — show placeholder
+            builtSections = [ContextSection(
                 id: UUID(),
-                title: "Initial prompt",
-                content: "System instructions and initial context",
-                tokenCount: 1500,
-                timestamp: Date().addingTimeInterval(-3600),
-                isPinned: true,
-                canDelete: false
-            ),
-            ContextSection(
-                id: UUID(),
-                title: "Phase 1 discussion",
-                content: "Gateway integration planning",
-                tokenCount: 2500,
-                timestamp: Date().addingTimeInterval(-2400),
-                isPinned: false,
-                canDelete: true
-            ),
-            ContextSection(
-                id: UUID(),
-                title: "Code implementation",
-                content: "Multiple file changes and discussion",
-                tokenCount: 8500,
-                timestamp: Date().addingTimeInterval(-1200),
-                isPinned: true,
-                canDelete: false
-            ),
-            ContextSection(
-                id: UUID(),
-                title: "Recent conversation",
-                content: "Current discussion about voice",
-                tokenCount: 3200,
+                title: "No API session data",
+                content: "Send a message via Anthropic API to populate context inspector",
+                tokenCount: 0,
                 timestamp: Date(),
                 isPinned: false,
-                canDelete: true
-            )
-        ]
+                canDelete: false
+            )]
+        }
 
-        sections = samples
-        currentTokens = samples.reduce(0) { $0 + $1.tokenCount }
+        sections = builtSections
+        currentTokens = totalTokens
+    }
+
+    /// Derive a human-readable title from the content of a system block.
+    private func systemBlockTitle(for text: String, index: Int) -> String {
+        if text.contains("You are Cortana") || text.contains("First Officer") {
+            return "Cortana Identity"
+        } else if text.contains("CLAUDE.md") || text.contains("Operating Principles") {
+            return "CLAUDE.md Instructions"
+        } else if text.contains("Active Project:") || text.contains("# Active Project") {
+            return "Project Intelligence"
+        } else if text.contains("Recent Session Context") || text.contains("cortana-context-restore") {
+            return "Session Context"
+        } else if text.hasPrefix("<terminal_output>") {
+            return "Terminal Output"
+        } else if text.hasPrefix("[Relevant knowledge]") {
+            return "Knowledge Base"
+        } else {
+            return "System Block \(index + 1)"
+        }
+    }
+
+    private func tokenEstimate(for text: String) -> Int {
+        max(1, Int(Double(text.count) / 3.5))
     }
 
     func togglePin(_ sectionId: UUID) {

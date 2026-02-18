@@ -226,8 +226,11 @@ class VoiceControlViewModel: ObservableObject {
 
     private func startAudioLevelMonitoring() {
         levelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            // Simulate audio level (replace with actual audio level from service)
-            self?.audioLevel = Double.random(in: 0...1) * (self?.isListening == true ? 1.0 : 0.1)
+            // Timer fires on RunLoop.main — hop to MainActor to satisfy Swift concurrency checker.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.audioLevel = Double.random(in: 0...1) * (self.isListening ? 1.0 : 0.1)
+            }
         }
     }
 

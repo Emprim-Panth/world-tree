@@ -29,8 +29,12 @@ actor JobQueue {
     // MARK: - DB Helpers
 
     private func dbWrite(_ block: (Database) throws -> Void) {
+        guard let pool = dbPool else {
+            canvasLog("[JobQueue] DB write skipped — pool not configured. Call JobQueue.configure() before enqueuing jobs.")
+            return
+        }
         do {
-            try dbPool?.write(block)
+            try pool.write(block)
         } catch {
             canvasLog("[JobQueue] DB write failed: \(error)")
         }
@@ -102,7 +106,11 @@ actor JobQueue {
             return
         }
 
-        proc.waitUntilExit()
+        // Async wait — does not block the actor thread during job execution
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            proc.terminationHandler = { _ in continuation.resume() }
+        }
+        proc.terminationHandler = nil
         runningProcesses.removeValue(forKey: job.id)
 
         let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()

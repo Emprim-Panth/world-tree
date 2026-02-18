@@ -112,12 +112,47 @@ struct APIMessage: Codable {
     let content: [ContentBlock]
 }
 
-/// A content block in an API message — text, tool_use, or tool_result.
+/// A content block in an API message — text, image, tool_use, or tool_result.
 /// Uses a `type` discriminator for Codable.
 enum ContentBlock: Codable {
     case text(String)
+    case image(ImageBlock)
     case toolUse(ToolUseBlock)
     case toolResult(ToolResultBlock)
+
+    /// Anthropic vision image block — base64-encoded image with media type.
+    struct ImageBlock: Codable {
+        let mediaType: String    // "image/jpeg", "image/png", "image/gif", "image/webp"
+        let data: String         // base64-encoded image bytes
+
+        enum CodingKeys: String, CodingKey {
+            case type, source
+        }
+        enum SourceCodingKeys: String, CodingKey {
+            case type, mediaType = "media_type", data
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode("image", forKey: .type)
+            var source = container.nestedContainer(keyedBy: SourceCodingKeys.self, forKey: .source)
+            try source.encode("base64", forKey: .type)
+            try source.encode(mediaType, forKey: .mediaType)
+            try source.encode(data, forKey: .data)
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let source = try container.nestedContainer(keyedBy: SourceCodingKeys.self, forKey: .source)
+            mediaType = try source.decode(String.self, forKey: .mediaType)
+            data = try source.decode(String.self, forKey: .data)
+        }
+
+        init(mediaType: String, data: String) {
+            self.mediaType = mediaType
+            self.data = data
+        }
+    }
 
     struct ToolUseBlock: Codable {
         let id: String
@@ -161,6 +196,9 @@ enum ContentBlock: Codable {
         case "text":
             let full = try TextBlockFull(from: decoder)
             self = .text(full.text)
+        case "image":
+            let block = try ImageBlock(from: decoder)
+            self = .image(block)
         case "tool_use":
             let block = try ToolUseBlock(from: decoder)
             self = .toolUse(block)
@@ -182,6 +220,8 @@ enum ContentBlock: Codable {
             try container.encode("text", forKey: .type)
             var textContainer = encoder.container(keyedBy: TextCodingKeys.self)
             try textContainer.encode(text, forKey: .text)
+        case .image(let block):
+            try block.encode(to: encoder)
         case .toolUse(let block):
             try container.encode("tool_use", forKey: .type)
             try block.encode(to: encoder)

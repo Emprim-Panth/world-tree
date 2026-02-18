@@ -33,8 +33,18 @@ final class DatabaseManager {
         try MigrationManager.migrate(dbPool!)
     }
 
-    /// Resolves database path: Dropbox primary, local fallback
+    /// Resolves database path — priority order:
+    /// 1. User override from Settings (UserDefaults "databasePath") if the file exists
+    /// 2. Dropbox-synced path (default)
+    /// 3. Local fallback (~/.cortana/cortana.db)
     private func resolveDatabasePath() -> String {
+        // User-configured override (Settings → Connection tab)
+        if let override = UserDefaults.standard.string(forKey: "databasePath"),
+           !override.isEmpty,
+           FileManager.default.fileExists(atPath: override) {
+            return override
+        }
+
         let dropbox = CortanaConstants.dropboxDatabasePath
         if FileManager.default.fileExists(atPath: dropbox) {
             return dropbox

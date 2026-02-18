@@ -17,11 +17,21 @@ struct MessageSearchResult: Identifiable {
 
 @MainActor
 final class SidebarViewModel: ObservableObject {
-    @Published var trees: [ConversationTree] = []
-    @Published var cachedProjects: [CachedProject] = []
-    @Published var searchText: String = "" {
-        didSet { scheduleContentSearch() }
+    @Published var trees: [ConversationTree] = [] {
+        didSet { rebuildProjectGroups() }
     }
+    @Published var cachedProjects: [CachedProject] = [] {
+        didSet { rebuildProjectGroups() }
+    }
+    @Published var searchText: String = "" {
+        didSet {
+            rebuildProjectGroups()
+            scheduleContentSearch()
+        }
+    }
+    /// Pre-computed project groups — recalculated only when trees, projects, or search changes.
+    /// Avoids expensive Dictionary rebuilds on every SwiftUI body evaluation.
+    @Published private(set) var allProjectGroups: [(project: String, trees: [ConversationTree])] = []
     @Published var searchScope: SearchScope = .trees {
         didSet {
             if searchScope == .content {
@@ -108,10 +118,9 @@ final class SidebarViewModel: ObservableObject {
         .map { (project: $0.key, trees: $0.value) }
     }
 
-    /// Merged project list: ALL scanned projects (from ProjectCache) + any orphaned tree groups.
-    /// Projects with no trees still appear so they're accessible and can have trees created under them.
-    var allProjectGroups: [(project: String, trees: [ConversationTree])] {
-        // Build a lookup of trees per project name
+    /// Rebuild allProjectGroups from current source data.
+    /// Called on trees, cachedProjects, or searchText change — not on every render.
+    private func rebuildProjectGroups() {
         let treesByProject = Dictionary(grouping: filteredTrees) {
             let p = $0.project ?? ""
             return p.isEmpty ? "General" : p
@@ -120,7 +129,6 @@ final class SidebarViewModel: ObservableObject {
         var seen: Set<String> = []
         var result: [(project: String, trees: [ConversationTree])] = []
 
-        // 1. Scanned projects — alphabetical, these are primary
         let filtered = searchText.isEmpty
             ? cachedProjects
             : cachedProjects.filter { $0.name.lowercased().contains(searchText.lowercased()) }
@@ -130,17 +138,15 @@ final class SidebarViewModel: ObservableObject {
             result.append((project: p.name, trees: treesByProject[p.name] ?? []))
         }
 
-        // 2. Tree groups whose project name isn't in ProjectCache (e.g. manually entered)
         for group in groupedTrees where group.project != "General" && !seen.contains(group.project) {
             result.append((project: group.project, trees: group.trees))
         }
 
-        // 3. General last
         if let general = treesByProject["General"] {
             result.append((project: "General", trees: general))
         }
 
-        return result
+        allProjectGroups = result
     }
 
     func loadTrees() {

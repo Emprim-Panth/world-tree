@@ -133,7 +133,7 @@ class BranchLayoutViewModel: ObservableObject {
         // Add to visible branches (side-by-side)
         visibleBranches.append(newBranch)
 
-        print("✨ Created branch: \(suggestion.title)")
+        canvasLog("[BranchLayout] Created branch: \(suggestion.title)")
     }
 
     func spawnParallelBranches(_ suggestions: [BranchSuggestion], userInput: String) {
@@ -160,7 +160,7 @@ class BranchLayoutViewModel: ObservableObject {
             visibleBranches.append(newBranch)
         }
 
-        print("✨ Spawned \(suggestions.count) parallel branches for exploration!")
+        canvasLog("[BranchLayout] Spawned \(suggestions.count) parallel branches")
     }
 }
 

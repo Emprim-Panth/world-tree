@@ -27,6 +27,7 @@ struct Branch: Identifiable, Equatable, Hashable {
     var model: String?
     var daemonTaskId: String?
     var contextSnapshot: String?
+    var tmuxSessionName: String?
     var collapsed: Bool
     var createdAt: Date
     var updatedAt: Date
@@ -60,6 +61,7 @@ extension Branch: FetchableRecord {
         model = row["model"]
         daemonTaskId = row["daemon_task_id"]
         contextSnapshot = row["context_snapshot"]
+        tmuxSessionName = row["tmux_session_name"]
         collapsed = (row["collapsed"] as? Int ?? 0) != 0
         createdAt = row["created_at"] as? Date ?? Date()
         updatedAt = row["updated_at"] as? Date ?? Date()
@@ -82,6 +84,7 @@ extension Branch: PersistableRecord {
         container["model"] = model
         container["daemon_task_id"] = daemonTaskId
         container["context_snapshot"] = contextSnapshot
+        container["tmux_session_name"] = tmuxSessionName
         container["collapsed"] = collapsed ? 1 : 0
         container["created_at"] = createdAt
         container["updated_at"] = updatedAt

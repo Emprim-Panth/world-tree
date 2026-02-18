@@ -75,36 +75,60 @@ struct DiffView: View {
         let oldLines = oldText.components(separatedBy: "\n")
         let newLines = newText.components(separatedBy: "\n")
 
+        // Use Swift's CollectionDifference for a proper LCS-based unified diff
+        let diff = newLines.difference(from: oldLines)
+
+        // Build a map of changed indices for interleaving
+        var removedOffsets = Set<Int>()
+        var insertedOffsets = Set<Int>()
+        for change in diff {
+            switch change {
+            case .remove(let offset, _, _): removedOffsets.insert(offset)
+            case .insert(let offset, _, _): insertedOffsets.insert(offset)
+            }
+        }
+
         var result: [DiffLine] = []
 
-        // Show removed lines
-        for line in oldLines {
-            result.append(DiffLine(
-                prefix: "-",
-                text: line,
-                color: Color(nsColor: .init(red: 1.0, green: 0.4, blue: 0.4, alpha: 1.0)),
-                background: Color.red.opacity(0.1)
-            ))
-        }
+        // Walk both arrays in tandem, interleaving changes
+        var oldIdx = 0
+        var newIdx = 0
 
-        // Separator
-        if !oldLines.isEmpty && !newLines.isEmpty {
-            result.append(DiffLine(
-                prefix: " ",
-                text: "───",
-                color: .secondary.opacity(0.3),
-                background: .clear
-            ))
-        }
+        while oldIdx < oldLines.count || newIdx < newLines.count {
+            let oldRemoved = oldIdx < oldLines.count && removedOffsets.contains(oldIdx)
+            let newInserted = newIdx < newLines.count && insertedOffsets.contains(newIdx)
 
-        // Show added lines
-        for line in newLines {
-            result.append(DiffLine(
-                prefix: "+",
-                text: line,
-                color: Color(nsColor: .init(red: 0.4, green: 0.9, blue: 0.4, alpha: 1.0)),
-                background: Color.green.opacity(0.08)
-            ))
+            if oldIdx < oldLines.count && oldRemoved {
+                result.append(DiffLine(
+                    prefix: "-",
+                    text: oldLines[oldIdx],
+                    color: Color(nsColor: .init(red: 1.0, green: 0.4, blue: 0.4, alpha: 1.0)),
+                    background: Color.red.opacity(0.1)
+                ))
+                oldIdx += 1
+            } else if newIdx < newLines.count && newInserted {
+                result.append(DiffLine(
+                    prefix: "+",
+                    text: newLines[newIdx],
+                    color: Color(nsColor: .init(red: 0.4, green: 0.9, blue: 0.4, alpha: 1.0)),
+                    background: Color.green.opacity(0.08)
+                ))
+                newIdx += 1
+            } else {
+                // Context line — present in both
+                if oldIdx < oldLines.count {
+                    result.append(DiffLine(
+                        prefix: " ",
+                        text: oldLines[oldIdx],
+                        color: Color.primary.opacity(0.6),
+                        background: .clear
+                    ))
+                    oldIdx += 1
+                    newIdx += 1
+                } else {
+                    break
+                }
+            }
         }
 
         return result

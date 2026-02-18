@@ -1,6 +1,6 @@
 name: CortanaCanvas
 options:
-  bundleIdPrefix: com.heiloprojects
+  bundleIdPrefix: com.forgeandcode
   deploymentTarget:
     macOS: "14.0"
   xcodeVersion: "16.0"
@@ -30,15 +30,23 @@ targets:
       - path: Sources
         excludes:
           - "_Archive/**"
-    resources:
-      - path: Resources
+      - path: Resources/highlight.min.js
         buildPhase: resources
+      - path: Resources/highlight-github-dark.min.css
+        buildPhase: resources
+      - path: Resources/mermaid.min.js
+        buildPhase: resources
+      - path: Resources/vis-network.min.js
+        buildPhase: resources
+    resources:
+      - path: Resources/Assets.xcassets
     dependencies:
       - package: GRDB
       - package: SwiftTerm
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.heiloprojects.cortana-canvas
+        PRODUCT_BUNDLE_IDENTIFIER: com.forgeandcode.cortana-canvas
         PRODUCT_NAME: "Cortana Canvas"
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_LSUIElement: false
+        INFOPLIST_KEY_LSMultipleInstancesProhibited: true

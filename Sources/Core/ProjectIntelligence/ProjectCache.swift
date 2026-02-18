@@ -18,6 +18,18 @@ final class ProjectCache {
         }
     }
     
+    /// Get a project by name (case-insensitive) — used for sidebar project group lookup
+    func getByName(_ name: String) throws -> CachedProject? {
+        guard let dbPool = DatabaseManager.shared.dbPool else {
+            throw ProjectCacheError.databaseNotInitialized
+        }
+        return try dbPool.read { db in
+            try CachedProject
+                .filter(sql: "lower(name) = lower(?)", arguments: [name])
+                .fetchOne(db)
+        }
+    }
+
     /// Get a project by path
     func get(path: String) throws -> CachedProject? {
         guard let dbPool = DatabaseManager.shared.dbPool else {

@@ -6,7 +6,7 @@ func canvasLog(_ msg: String) {
     let path = FileManager.default.homeDirectoryForCurrentUser.path + "/.cortana/logs/canvas-debug.log"
     if let handle = FileHandle(forWritingAtPath: path) {
         handle.seekToEndOfFile()
-        handle.write(line.data(using: .utf8)!)
+        if let data = line.data(using: .utf8) { handle.write(data) }
         handle.closeFile()
     } else {
         FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))

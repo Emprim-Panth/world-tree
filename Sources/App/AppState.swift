@@ -6,8 +6,12 @@ import Combine
 final class AppState: ObservableObject {
     static let shared = AppState()
 
-    @Published var selectedTreeId: String?
-    @Published var selectedBranchId: String?
+    @Published var selectedTreeId: String? {
+        didSet { UserDefaults.standard.set(selectedTreeId, forKey: "lastSelectedTreeId") }
+    }
+    @Published var selectedBranchId: String? {
+        didSet { UserDefaults.standard.set(selectedBranchId, forKey: "lastSelectedBranchId") }
+    }
     @Published var selectedProjectPath: String?
     @Published var daemonConnected: Bool = false
 
@@ -16,7 +20,11 @@ final class AppState: ObservableObject {
     @Published var branchHistory: [(treeId: String, branchId: String)] = []
     @Published var branchHistoryIndex: Int = -1
 
-    private init() {}
+    private init() {
+        // Restore last selected conversation from previous session
+        selectedTreeId = UserDefaults.standard.string(forKey: "lastSelectedTreeId")
+        selectedBranchId = UserDefaults.standard.string(forKey: "lastSelectedBranchId")
+    }
 
     func selectBranch(_ branchId: String, in treeId: String) {
         selectedTreeId = treeId

@@ -24,7 +24,7 @@ struct BranchColumn: View {
                     sessionId: sessionId,
                     branchId: branch.id,
                     workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path + "/Development",
-                    parentBranchLayout: onCreateBranch as? BranchLayoutViewModel
+                    parentBranchLayout: nil
                 )
                 .frame(maxHeight: .infinity)
             } else {

@@ -25,6 +25,11 @@ final class ImplementationVM: ObservableObject {
         self.branch = branch
     }
 
+    deinit {
+        logTask?.cancel()
+        logTailer?.stop()
+    }
+
     // MARK: - Dispatch
 
     func dispatch() async {
@@ -37,6 +42,7 @@ final class ImplementationVM: ObservableObject {
 
         // Determine project from tree
         let tree = try? TreeStore.shared.getTree(branch.treeId)
+        if tree == nil { canvasLog("[ImplementationVM] WARNING: Could not load tree \(branch.treeId) — defaulting project to 'cortana-core'") }
         let project = tree?.project ?? "cortana-core"
 
         // Send to daemon
@@ -52,7 +58,11 @@ final class ImplementationVM: ObservableObject {
         taskId = id
 
         // Store task ID on branch
-        try? TreeStore.shared.updateBranch(branch.id, daemonTaskId: id)
+        do {
+            try TreeStore.shared.updateBranch(branch.id, daemonTaskId: id)
+        } catch {
+            canvasLog("[ImplementationVM] WARNING: Failed to persist daemonTaskId on branch \(branch.id): \(error)")
+        }
 
         phase = .running
 

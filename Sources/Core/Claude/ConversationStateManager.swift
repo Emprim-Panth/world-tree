@@ -549,9 +549,9 @@ final class ConversationStateManager {
                     """,
                 arguments: [
                     sessionId,
-                    String(data: messagesJSON, encoding: .utf8)!,
-                    String(data: systemJSON, encoding: .utf8)!,
-                    String(data: usageJSON, encoding: .utf8)!,
+                    String(data: messagesJSON, encoding: .utf8) ?? "[]",
+                    String(data: systemJSON, encoding: .utf8) ?? "[]",
+                    String(data: usageJSON, encoding: .utf8) ?? "{}",
                 ]
             )
         }
@@ -574,12 +574,23 @@ final class ConversationStateManager {
 
         if let messagesStr: String = row["api_messages"],
            let jsonData = messagesStr.data(using: String.Encoding.utf8) {
-            manager.apiMessages = (try? decoder.decode([APIMessage].self, from: jsonData)) ?? []
+            if let decoded = try? decoder.decode([APIMessage].self, from: jsonData) {
+                manager.apiMessages = decoded
+            } else {
+                canvasLog("[ConversationStateManager] WARNING: Failed to decode api_messages for session \(sessionId) — resetting to empty")
+                manager.apiMessages = []
+            }
         }
 
         if let systemStr: String = row["system_prompt"],
            let jsonData = systemStr.data(using: String.Encoding.utf8) {
-            var blocks = (try? decoder.decode([SystemBlock].self, from: jsonData)) ?? []
+            var blocks: [SystemBlock]
+            if let decoded = try? decoder.decode([SystemBlock].self, from: jsonData) {
+                blocks = decoded
+            } else {
+                canvasLog("[ConversationStateManager] WARNING: Failed to decode system_prompt for session \(sessionId) — resetting to empty")
+                blocks = []
+            }
             // Always strip ALL KB context blocks on restore — appendKBContext will
             // add the current one fresh. This prevents any accumulation regardless
             // of how many KB blocks were persisted.
@@ -593,7 +604,12 @@ final class ConversationStateManager {
 
         if let usageStr: String = row["token_usage"],
            let jsonData = usageStr.data(using: String.Encoding.utf8) {
-            manager.tokenUsage = (try? decoder.decode(SessionTokenUsage.self, from: jsonData)) ?? .init()
+            if let decoded = try? decoder.decode(SessionTokenUsage.self, from: jsonData) {
+                manager.tokenUsage = decoded
+            } else {
+                canvasLog("[ConversationStateManager] WARNING: Failed to decode token_usage for session \(sessionId) — resetting")
+                manager.tokenUsage = .init()
+            }
         }
 
         return manager

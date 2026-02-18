@@ -12,6 +12,20 @@ actor ToolExecutor {
     private let home = FileManager.default.homeDirectoryForCurrentUser.path
     private let maxOutputSize = 100_000 // 100KB cap on tool output
 
+    // Pre-compiled regex patterns — initialized once, never crash at call sites
+    private static let xcodeDiagnosticPattern = try! NSRegularExpression(
+        pattern: #"^(.+):(\d+):(\d+): (error|warning): (.+)$"#,
+        options: .anchorsMatchLines
+    )
+    private static let xcodeTestPattern = try! NSRegularExpression(
+        pattern: #"Test Case '-\[(.+?) (.+?)\]' (passed|failed) \((\d+\.\d+) seconds\)"#,
+        options: .anchorsMatchLines
+    )
+    private static let cargoTestPattern = try! NSRegularExpression(
+        pattern: #"test (.+?) \.\.\. (ok|FAILED|ignored)"#,
+        options: .anchorsMatchLines
+    )
+
     init(workingDirectory: URL) {
         self.workingDirectory = workingDirectory
     }
@@ -388,7 +402,7 @@ actor ToolExecutor {
 
     private func parseXcodeBuildErrors(_ output: String) -> ToolResult {
         var errors: [[String: String]] = []
-        let pattern = try! NSRegularExpression(pattern: #"^(.+):(\d+):(\d+): (error|warning): (.+)$"#, options: .anchorsMatchLines)
+        let pattern = Self.xcodeDiagnosticPattern
         let range = NSRange(output.startIndex..., in: output)
 
         for match in pattern.matches(in: output, range: range) {
@@ -521,10 +535,7 @@ actor ToolExecutor {
         var tests: [[String: String]] = []
 
         // Pattern: Test Case '-[Bundle.Class testMethod]' passed (0.001 seconds).
-        let passPattern = try! NSRegularExpression(
-            pattern: #"Test Case '-\[(.+?) (.+?)\]' (passed|failed) \((\d+\.\d+) seconds\)"#,
-            options: .anchorsMatchLines
-        )
+        let passPattern = Self.xcodeTestPattern
         let range = NSRange(output.startIndex..., in: output)
         for match in passPattern.matches(in: output, range: range) {
             guard match.numberOfRanges == 5 else { continue }
@@ -560,10 +571,7 @@ actor ToolExecutor {
         var tests: [[String: String]] = []
 
         // Pattern: test module::test_name ... ok/FAILED
-        let testPattern = try! NSRegularExpression(
-            pattern: #"test (.+?) \.\.\. (ok|FAILED|ignored)"#,
-            options: .anchorsMatchLines
-        )
+        let testPattern = Self.cargoTestPattern
         let range = NSRange(output.startIndex..., in: output)
         for match in testPattern.matches(in: output, range: range) {
             guard match.numberOfRanges == 3 else { continue }
@@ -702,8 +710,9 @@ actor ToolExecutor {
         }
 
         let result = await bash(["command": AnyCodable("git checkout -- . && git stash apply stash@{\(stashIdx)} 2>&1")])
+        let checkpointLabel = stashes.indices.contains(index) ? stashes[index] : "checkpoint \(index)"
         return ToolResult(
-            content: result.isError ? "Revert failed: \(result.content)" : "Reverted to checkpoint \(index)\n\(stashes[index])",
+            content: result.isError ? "Revert failed: \(result.content)" : "Reverted to \(checkpointLabel)",
             isError: result.isError
         )
     }
@@ -805,8 +814,17 @@ actor ToolExecutor {
         let pane = input["pane"]?.value as? String
         let lines = min((input["lines"]?.value as? Int) ?? 50, 500)
 
-        let target = pane != nil ? "\(session):\(pane!)" : session
-        let cmd = "tmux capture-pane -t '\(target)' -p -S -\(lines) 2>&1"
+        // Sanitize session/pane to prevent single-quote injection in shell command.
+        // tmux session names cannot contain single quotes — strip them.
+        let safeSession = session.replacingOccurrences(of: "'", with: "")
+        let safePaneTarget: String
+        if let p = pane {
+            let safePane = p.replacingOccurrences(of: "'", with: "")
+            safePaneTarget = "\(safeSession):\(safePane)"
+        } else {
+            safePaneTarget = safeSession
+        }
+        let cmd = "tmux capture-pane -t '\(safePaneTarget)' -p -S -\(lines) 2>&1"
 
         let result = await bash(["command": AnyCodable(cmd)])
         if result.isError {
@@ -814,7 +832,7 @@ actor ToolExecutor {
         }
 
         return ToolResult(
-            content: "Output from tmux pane '\(target)' (last \(lines) lines):\n\(result.content)",
+            content: "Output from tmux pane '\(safePaneTarget)' (last \(lines) lines):\n\(result.content)",
             isError: false
         )
     }

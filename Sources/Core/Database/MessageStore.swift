@@ -81,9 +81,14 @@ final class MessageStore {
                     """,
                 arguments: [sourceSessionId, messageId]
             )
+            let validRoles: Set<String> = ["user", "assistant", "system"]
             for row in rows {
                 let role: String = row["role"]
                 let content: String = row["content"]
+                guard validRoles.contains(role) else {
+                    canvasLog("[MessageStore] copyMessages: skipping row with invalid role '\(role)' in session \(sourceSessionId)")
+                    continue
+                }
                 try db.execute(
                     sql: """
                         INSERT INTO messages (session_id, role, content, timestamp)

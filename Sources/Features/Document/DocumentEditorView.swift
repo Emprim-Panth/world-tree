@@ -136,14 +136,14 @@ struct DocumentEditorView: View {
                 }
                 // Unified scroll handler — one source of truth, no race conditions.
                 // Priority: streaming > thinking > new section (never fight each other).
-                .onChange(of: viewModel.document.sections.count) { _ in
+                .onChange(of: viewModel.document.sections.count) { _, _ in
                     // Only scroll to new section when not streaming — streaming handler owns the anchor then.
                     guard viewModel.streamingContent == nil, !viewModel.isProcessing else { return }
                     if let lastSection = viewModel.document.sections.last {
                         proxy.scrollTo(lastSection.id, anchor: .bottom)
                     }
                 }
-                .onChange(of: viewModel.streamingContent) { content in
+                .onChange(of: viewModel.streamingContent) { _, content in
                     if content != nil {
                         proxy.scrollTo("streaming", anchor: .bottom)
                     } else if let lastSection = viewModel.document.sections.last {
@@ -151,7 +151,7 @@ struct DocumentEditorView: View {
                         proxy.scrollTo(lastSection.id, anchor: .bottom)
                     }
                 }
-                .onChange(of: viewModel.isProcessing) { processing in
+                .onChange(of: viewModel.isProcessing) { _, processing in
                     if processing && viewModel.streamingContent == nil {
                         proxy.scrollTo("thinking", anchor: .bottom)
                     }
@@ -251,9 +251,7 @@ class DocumentEditorViewModel: ObservableObject {
                     (try? TreeStore.shared.getTree(branch.treeId))?.project
                 }
             self.cachedProject = project
-            let provider = ProviderManager.shared.providers.first { $0.identifier == "claude-code" }
-                ?? ProviderManager.shared.activeProvider
-            await provider?.warmUp(
+            await ProviderManager.shared.activeProvider?.warmUp(
                 sessionId: self.sessionId,
                 branchId: self.branchId,
                 project: project,
@@ -268,11 +266,31 @@ class DocumentEditorViewModel: ObservableObject {
     /// always maps to the same UUID across render cycles, preventing view thrash.
     private func stableId(for messageId: String) -> UUID {
         if let existing = stableSectionIds[messageId] { return existing }
-        // Deterministic: pad the integer string into a UUID namespace
-        // Format: 00000000-0000-0000-0000-XXXXXXXXXXXX where X is the message ID
-        let padded = messageId.padding(toLength: 12, withPad: "0", startingAt: 0)
-        let uuidString = "00000000-0000-0000-0000-\(padded.suffix(12))"
-        let id = UUID(uuidString: uuidString) ?? UUID()
+        // Hash the message ID string into a stable 128-bit space using a simple
+        // deterministic approach: parse as integer and embed directly.
+        // For integer IDs (typical DB rowids), this is always unique.
+        // For UUID-format IDs, try parsing directly first.
+        let id: UUID
+        if let directUUID = UUID(uuidString: messageId) {
+            id = directUUID
+        } else if let intVal = Int64(messageId) {
+            // Embed the integer in the last 8 bytes of the UUID namespace
+            let hi = UInt32((intVal >> 32) & 0xFFFFFFFF)
+            let lo = UInt32(intVal & 0xFFFFFFFF)
+            let uuidString = String(format: "00000000-0000-4000-8000-%08X%08X", hi, lo)
+            id = UUID(uuidString: uuidString) ?? UUID()
+        } else {
+            // Fallback: hash the string bytes
+            var hash: UInt64 = 14695981039346656037
+            for byte in messageId.utf8 {
+                hash ^= UInt64(byte)
+                hash = hash &* 1099511628211
+            }
+            let hi = UInt32(hash >> 32)
+            let lo = UInt32(hash & 0xFFFFFFFF)
+            let uuidString = String(format: "00000000-0000-4000-8000-%08X%08X", hi, lo)
+            id = UUID(uuidString: uuidString) ?? UUID()
+        }
         stableSectionIds[messageId] = id
         return id
     }
@@ -332,7 +350,7 @@ class DocumentEditorViewModel: ObservableObject {
         // 1. Take all sections up to this point
         // 2. Create new branch in database
         // 3. Navigate to new branch
-        print("Creating branch from section at index \(index)")
+        canvasLog("[DocumentEditor] createBranch called at section index \(index)")
     }
 
     /// One-click error recovery: inject structured error context + auto-submit.
@@ -444,21 +462,26 @@ class DocumentEditorViewModel: ObservableObject {
                     + "\nEND CONTEXT"
             }()
 
+            // Prefer the sidebar-selected project path when available;
+            // fall back to the tree's stored project name.
+            let resolvedProject = AppState.shared.selectedProjectPath.flatMap {
+                URL(fileURLWithPath: $0).lastPathComponent
+            } ?? cachedProject
+
             let ctx = ProviderSendContext(
                 message: content,
                 sessionId: sessionId,
                 branchId: branchId,
                 model: model,
-                workingDirectory: workingDirectory,
-                project: cachedProject,
+                workingDirectory: AppState.shared.selectedProjectPath ?? workingDirectory,
+                project: resolvedProject,
                 parentSessionId: nil,
                 isNewSession: isNew,
                 attachments: attachments,
                 recentContext: recentContext
             )
 
-            let provider = ProviderManager.shared.providers.first { $0.identifier == "claude-code" }
-                        ?? ProviderManager.shared.activeProvider
+            let provider = ProviderManager.shared.activeProvider
 
             guard let provider else {
                 isProcessing = false
@@ -550,8 +573,7 @@ class DocumentEditorViewModel: ObservableObject {
     }
 
     func acceptSuggestion(_ suggestion: BranchSuggestion) {
-        // Create a new branch with this suggestion
-        print("Accepting suggestion: \(suggestion.title)")
+        canvasLog("[DocumentEditor] Accepting branch suggestion: \(suggestion.title)")
 
         // Clear the opportunity
         branchOpportunity = nil
@@ -566,7 +588,7 @@ class DocumentEditorViewModel: ObservableObject {
     func spawnParallelBranches() {
         guard let opportunity = branchOpportunity else { return }
 
-        print("Spawning \(opportunity.suggestions.count) parallel branches")
+        canvasLog("[DocumentEditor] Spawning \(opportunity.suggestions.count) parallel branches")
 
         // Clear the opportunity
         branchOpportunity = nil
@@ -625,6 +647,7 @@ struct EmptyConversationView: View {
 
 struct ThinkingIndicatorView: View {
     @State private var phase = 0
+    @State private var dotTimer: Timer?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -648,15 +671,16 @@ struct ThinkingIndicatorView: View {
             .padding(.vertical, 12)
         }
         .onAppear {
-            withAnimation {
-                phase = (phase + 1) % 3
-            }
-            // Cycle the dot
-            Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            phase = 1
+            dotTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
                 withAnimation {
                     phase = (phase + 1) % 3
                 }
             }
+        }
+        .onDisappear {
+            dotTimer?.invalidate()
+            dotTimer = nil
         }
     }
 }

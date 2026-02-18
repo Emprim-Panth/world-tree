@@ -91,13 +91,66 @@ struct CodeBlock: Identifiable {
 struct Attachment: Identifiable {
     let id: UUID
     let type: AttachmentType
-    let url: URL?
-    let data: Data?
+    let filename: String
+    let mimeType: String
+    let data: Data
 
     enum AttachmentType {
         case image
         case file
-        case link
+
+        var systemImage: String {
+            switch self {
+            case .image: return "photo"
+            case .file: return "doc"
+            }
+        }
+    }
+
+    /// Base64-encoded data for the Anthropic API.
+    var base64: String { data.base64EncodedString() }
+
+    /// NSImage from raw data (images only).
+    var nsImage: NSImage? {
+        guard type == .image else { return nil }
+        return NSImage(data: data)
+    }
+
+    /// Build from a file URL — reads data, determines type from extension.
+    static func from(url: URL) -> Attachment? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let ext = url.pathExtension.lowercased()
+        let imageExts = ["jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "tiff"]
+        let isImage = imageExts.contains(ext)
+        let mimeType: String
+        switch ext {
+        case "jpg", "jpeg": mimeType = "image/jpeg"
+        case "png":         mimeType = "image/png"
+        case "gif":         mimeType = "image/gif"
+        case "webp":        mimeType = "image/webp"
+        case "pdf":         mimeType = "application/pdf"
+        default:            mimeType = "application/octet-stream"
+        }
+        return Attachment(
+            id: UUID(),
+            type: isImage ? .image : .file,
+            filename: url.lastPathComponent,
+            mimeType: mimeType,
+            data: data
+        )
+    }
+
+    /// Build from raw image data (clipboard paste / drag NSImage).
+    static func from(imageData: Data, filename: String = "image.png") -> Attachment {
+        let isPNG = imageData.prefix(4) == Data([0x89, 0x50, 0x4E, 0x47])
+        let mime = isPNG ? "image/png" : "image/jpeg"
+        return Attachment(
+            id: UUID(),
+            type: .image,
+            filename: filename,
+            mimeType: mime,
+            data: imageData
+        )
     }
 }
 

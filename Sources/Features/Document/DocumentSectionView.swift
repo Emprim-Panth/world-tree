@@ -6,6 +6,7 @@ struct DocumentSectionView: View {
     let isHovered: Bool
     let onEdit: (AttributedString) -> Void
     let onBranch: () -> Void
+    var onFixError: ((ToolCall) -> Void)?
 
     @State private var isEditing = false
     @State private var editedContent: AttributedString
@@ -14,12 +15,14 @@ struct DocumentSectionView: View {
         section: DocumentSection,
         isHovered: Bool,
         onEdit: @escaping (AttributedString) -> Void,
-        onBranch: @escaping () -> Void
+        onBranch: @escaping () -> Void,
+        onFixError: ((ToolCall) -> Void)? = nil
     ) {
         self.section = section
         self.isHovered = isHovered
         self.onEdit = onEdit
         self.onBranch = onBranch
+        self.onFixError = onFixError
         _editedContent = State(initialValue: section.content)
     }
 
@@ -56,7 +59,7 @@ struct DocumentSectionView: View {
                 // Metadata (code blocks, tool calls, etc.)
                 if let toolCalls = section.metadata.toolCalls {
                     ForEach(toolCalls) { call in
-                        ToolCallView(call: call)
+                        ToolCallView(call: call, onFixError: onFixError)
                     }
                 }
 
@@ -64,6 +67,11 @@ struct DocumentSectionView: View {
                     ForEach(codeBlocks) { block in
                         CodeBlockView(code: block.code, language: block.language.isEmpty ? nil : block.language)
                     }
+                }
+
+                // Inline attachments — images shown as thumbnails, files as chips
+                if let attachments = section.metadata.attachments, !attachments.isEmpty {
+                    FlowAttachmentRow(attachments: attachments)
                 }
 
                 // Timestamp and tokens (subtle)
@@ -101,6 +109,7 @@ struct DocumentSectionView: View {
         .background(
             isHovered ? Color.blue.opacity(0.05) : Color.clear
         )
+        .animation(.easeInOut(duration: 0.15), value: isHovered)
     }
 }
 
@@ -135,6 +144,7 @@ struct AuthorIndicator: View {
 
 struct ToolCallView: View {
     let call: ToolCall
+    var onFixError: ((ToolCall) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -144,9 +154,25 @@ struct ToolCallView: View {
                 Text(call.name)
                     .font(.caption.monospaced().bold())
                 Spacer()
-                Text(call.status == .success ? "✓" : "...")
-                    .font(.caption2)
-                    .foregroundColor(statusColor)
+                if call.status == .error, let onFixError {
+                    Button {
+                        onFixError(call)
+                    } label: {
+                        Label("Fix", systemImage: "arrow.counterclockwise")
+                            .font(.caption2.bold())
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.red.opacity(0.8))
+                            .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Send error to Cortana for diagnosis")
+                } else {
+                    Text(call.status == .success ? "✓" : "...")
+                        .font(.caption2)
+                        .foregroundColor(statusColor)
+                }
             }
 
             if !call.input.isEmpty {
@@ -159,13 +185,19 @@ struct ToolCallView: View {
             if let output = call.output, !output.isEmpty {
                 Text(output)
                     .font(.caption.monospaced())
-                    .foregroundColor(.primary)
+                    .foregroundColor(call.status == .error ? .red.opacity(0.9) : .primary)
                     .lineLimit(5)
             }
         }
         .padding(8)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(call.status == .error
+            ? Color.red.opacity(0.06)
+            : Color(nsColor: .controlBackgroundColor))
         .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(call.status == .error ? Color.red.opacity(0.3) : Color.clear, lineWidth: 1)
+        )
     }
 
     private var statusIcon: String {
@@ -346,5 +378,71 @@ struct EditableTextView: View {
                 .buttonStyle(.borderedProminent)
             }
         }
+    }
+}
+
+// MARK: - Inline Attachment Row
+
+/// Renders attached images as thumbnails and files as chips, wrapping as needed.
+struct FlowAttachmentRow: View {
+    let attachments: [Attachment]
+
+    @State private var expandedImageId: UUID?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            ForEach(attachments) { attachment in
+                if attachment.type == .image, let img = attachment.nsImage {
+                    inlineImage(img, attachment: attachment)
+                } else {
+                    fileChip(attachment)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func inlineImage(_ img: NSImage, attachment: Attachment) -> some View {
+        let isExpanded = expandedImageId == attachment.id
+        Image(nsImage: img)
+            .resizable()
+            .scaledToFill()
+            .frame(
+                width: isExpanded ? min(img.size.width, 480) : 120,
+                height: isExpanded ? min(img.size.height * (min(img.size.width, 480) / img.size.width), 360) : 80
+            )
+            .clipped()
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    expandedImageId = isExpanded ? nil : attachment.id
+                }
+            }
+            .help(attachment.filename)
+    }
+
+    private func fileChip(_ attachment: Attachment) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: attachment.type.systemImage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(attachment.filename)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 1)
+        )
     }
 }

@@ -16,31 +16,35 @@ final class ProjectContextLoader {
         )
     }
     
-    /// Load recent commit messages via git log
+    /// Load recent commit messages via git log (non-blocking async)
     private func loadRecentCommits(at path: String) async -> [String] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["log", "-10", "--pretty=format:%h %s"]
-        process.currentDirectoryURL = URL(fileURLWithPath: path)
-        
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        
-        do {
-            try process.run()
-            process.waitUntilExit()
-            
-            guard process.terminationStatus == 0 else { return [] }
-            
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8) else { return [] }
-            
-            return output
-                .split(separator: "\n")
-                .map { String($0) }
-        } catch {
-            return []
+        await withCheckedContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["log", "-10", "--pretty=format:%h %s"]
+            process.currentDirectoryURL = URL(fileURLWithPath: path)
+
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = Pipe()
+
+            process.terminationHandler = { p in
+                guard p.terminationStatus == 0 else {
+                    continuation.resume(returning: [])
+                    return
+                }
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let lines = String(data: data, encoding: .utf8)?
+                    .split(separator: "\n")
+                    .map { String($0) } ?? []
+                continuation.resume(returning: lines)
+            }
+
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(returning: [])
+            }
         }
     }
     

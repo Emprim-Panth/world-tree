@@ -511,7 +511,7 @@ struct SidebarView: View {
                     resetNewTreeState()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(newTreeName.isEmpty)
+                .disabled(newTreeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(20)

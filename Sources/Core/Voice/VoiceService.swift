@@ -23,6 +23,13 @@ actor VoiceService {
     private var conversationContext: [VoiceMessage] = []
 
     private init() {
+        // Note: actor-isolated methods called from init are safe within the actor's own init.
+        // Swift 6 will require explicit handling — use Task if strict concurrency is enabled.
+    }
+
+    /// Called once after initialization to set up providers and commands.
+    /// Separated from init to avoid Swift 6 actor-isolation warnings on nonisolated init context.
+    func configure() {
         setupProviders()
         registerSystemCommands()
     }
@@ -87,7 +94,7 @@ actor VoiceService {
 
         if level > silenceThreshold {
             // Speech detected - accumulate buffer
-            await accumulateAudio(buffer)
+            accumulateAudio(buffer)
         } else if !accumulatedBuffers.isEmpty {
             // Silence after speech - transcribe
             await transcribeAccumulatedAudio()

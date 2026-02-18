@@ -51,6 +51,18 @@ enum ToolGuard {
         (":> /", "File truncation (redirect)", .destructive),
         ("mkfs", "Filesystem formatting", .critical),
         ("dd if=", "Low-level disk write", .critical),
+        ("dd of=", "Low-level disk write (output)", .critical),
+        ("chmod 0777", "World-writable permissions", .destructive),
+        ("chmod 7777", "World-writable permissions (sticky/suid)", .destructive),
+        ("| bash", "Pipe to bash shell (potential code injection)", .critical),
+        ("| sh", "Pipe to sh shell (potential code injection)", .critical),
+        ("| eval", "Pipe to eval (potential code injection)", .critical),
+        ("base64 -d", "Base64 decode (common obfuscation technique)", .destructive),
+        ("git config core.hookspath", "Git hook path override (enables arbitrary code execution)", .critical),
+        ("git config core.fsmonitor", "Git fsmonitor hook (enables arbitrary code execution)", .critical),
+        (":> /etc", "File truncation in system paths", .destructive),
+        (":> /usr", "File truncation in system paths", .destructive),
+        (":> ~/.ssh", "File truncation in SSH directory", .destructive),
         ("kill -9", "Force kill process", .caution),
         ("pkill", "Process pattern kill", .caution),
         ("launchctl unload", "Service removal", .caution),
@@ -87,10 +99,46 @@ enum ToolGuard {
             return .safe(tool: "bash")
         }
 
-        // Normalize whitespace for pattern matching (defeats "rm  -rf" bypass)
+        // Normalize for pattern matching:
+        // - Lowercase for case-insensitive matching
+        // - Strip quotes so "rm" "-rf" still matches (quote bypass)
+        // - Split on ANY whitespace (tabs, newlines) not just spaces (whitespace bypass)
         let lowered = command.lowercased()
-            .split(separator: " ", omittingEmptySubsequences: true)
+            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: "\"", with: "")
+            .split { $0.isWhitespace }
             .joined(separator: " ")
+
+        // Reject command substitution — enables encoded/obfuscated destructive commands
+        if command.contains("$(") || command.contains("`") {
+            return Assessment(
+                riskLevel: .destructive,
+                reason: "Command uses shell substitution (potential obfuscation)",
+                toolName: "bash",
+                requiresApproval: true
+            )
+        }
+
+        // Flag variable expansion — $VAR can alias to dangerous commands at runtime.
+        // We allow common safe env vars ($HOME, $PATH, $USER, $PWD, etc.)
+        // but flag unknown variables. This catches: ALIAS="rm -rf"; $ALIAS /
+        let knownSafeVars: Set<String> = ["home", "path", "user", "pwd", "shell", "term", "lang", "tmpdir"]
+        if command.contains("$") {
+            // Extract all variable names used (e.g. "$FOO" → "foo")
+            let parts = command.lowercased().components(separatedBy: "$").dropFirst()
+            let hasUnknownVar = parts.contains { segment in
+                let varName = String(segment.prefix(while: { $0.isLetter || $0.isNumber || $0 == "_" }))
+                return !varName.isEmpty && !knownSafeVars.contains(varName)
+            }
+            if hasUnknownVar {
+                return Assessment(
+                    riskLevel: .caution,
+                    reason: "Command uses shell variable expansion — verify no variable aliases a dangerous command",
+                    toolName: "bash",
+                    requiresApproval: false
+                )
+            }
+        }
 
         for (pattern, reason, level) in destructiveBashPatterns {
             if lowered.contains(pattern.lowercased()) {

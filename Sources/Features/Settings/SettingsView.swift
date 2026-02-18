@@ -493,18 +493,50 @@ struct SettingsView: View {
     private var connectionTab: some View {
         Form {
             Section("Database") {
-                TextField("Path", text: $databasePath)
-                    .textFieldStyle(.roundedBorder)
-                    .monospaced()
-                    .font(.caption)
+                HStack {
+                    TextField("Path", text: $databasePath)
+                        .textFieldStyle(.roundedBorder)
+                        .monospaced()
+                        .font(.caption)
+
+                    Button("Browse…") {
+                        let panel = NSOpenPanel()
+                        panel.title = "Select Database File"
+                        panel.allowedContentTypes = []
+                        panel.allowsOtherFileTypes = true
+                        panel.canChooseFiles = true
+                        panel.canChooseDirectories = false
+                        panel.allowsMultipleSelection = false
+                        if panel.runModal() == .OK, let url = panel.url {
+                            databasePath = url.path
+                        }
+                    }
+                    .controlSize(.small)
+                }
 
                 let exists = FileManager.default.fileExists(atPath: databasePath)
-                Label(
-                    exists ? "Database found" : "Database not found",
-                    systemImage: exists ? "checkmark.circle" : "xmark.circle"
-                )
-                .foregroundStyle(exists ? .green : .red)
-                .font(.caption)
+                HStack {
+                    Label(
+                        exists ? "Database found" : "Database not found",
+                        systemImage: exists ? "checkmark.circle" : "xmark.circle"
+                    )
+                    .foregroundStyle(exists ? .green : .red)
+                    .font(.caption)
+
+                    Spacer()
+
+                    if databasePath != CortanaConstants.dropboxDatabasePath {
+                        Button("Reset to Default") {
+                            databasePath = CortanaConstants.dropboxDatabasePath
+                        }
+                        .controlSize(.mini)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+
+                Text("Change takes effect on next app launch.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
 
             Section("Daemon") {

@@ -344,7 +344,7 @@ final class CanvasServer: ObservableObject {
 
         // Persist user message
         do {
-            try MessageStore.shared.sendMessage(
+            _ = try MessageStore.shared.sendMessage(
                 sessionId: resolved.sessionId, role: .user, content: content)
         } catch {
             canvasLog("[CanvasServer] Failed to persist user message: \(error)")
@@ -387,7 +387,7 @@ final class CanvasServer: ObservableObject {
 
             case .done:
                 do {
-                    try MessageStore.shared.sendMessage(
+                    _ = try MessageStore.shared.sendMessage(
                         sessionId: resolved.sessionId, role: .assistant, content: fullResponse)
                     try TreeStore.shared.updateTreeTimestamp(resolved.treeId)
                 } catch {
@@ -412,7 +412,7 @@ final class CanvasServer: ObservableObject {
 
         // Stream ended without .done
         if !fullResponse.isEmpty {
-            try? MessageStore.shared.sendMessage(
+            _ = try? MessageStore.shared.sendMessage(
                 sessionId: resolved.sessionId, role: .assistant, content: fullResponse)
         }
         sendSSEClose(connection)
@@ -501,11 +501,15 @@ final class CanvasServer: ObservableObject {
                      "Cache-Control: no-cache\r\n" +
                      "Access-Control-Allow-Origin: *\r\n" +
                      "Connection: keep-alive\r\n\r\n"
-        connection.send(content: header.data(using: .utf8)!, completion: .idempotent)
+        if let data = header.data(using: .utf8) {
+            connection.send(content: data, completion: .idempotent)
+        }
     }
 
     private func sendSSEChunk(_ connection: NWConnection, _ payload: String) {
-        connection.send(content: "data: \(payload)\n\n".data(using: .utf8)!, completion: .idempotent)
+        if let data = "data: \(payload)\n\n".data(using: .utf8) {
+            connection.send(content: data, completion: .idempotent)
+        }
     }
 
     private func sendSSEClose(_ connection: NWConnection) {

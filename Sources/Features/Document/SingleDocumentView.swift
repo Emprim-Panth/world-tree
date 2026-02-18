@@ -79,12 +79,18 @@ struct SingleDocumentView: View {
 
             // ── Terminal panel (branch-bound, persistent) ─────────────────
             if showTerminal {
-                BranchTerminalView(
+                TerminalPanelView(
                     branchId: activeTerminalBranchId,
-                    workingDirectory: viewModel.workingDirectory
+                    workingDirectory: viewModel.workingDirectory,
+                    onClose: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            showTerminal = false
+                        }
+                    }
                 )
-                .id(activeTerminalBranchId)   // force NSViewRepresentable recreation on branch switch
-                .frame(minHeight: 150, idealHeight: 280, maxHeight: 600)
+                .id(activeTerminalBranchId)
+                .frame(minHeight: 160, idealHeight: 300, maxHeight: 600)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .toolbar {
@@ -99,10 +105,12 @@ struct SingleDocumentView: View {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         showTerminal.toggle()
                         if showTerminal {
-                            // Pre-type "claude" into the terminal so user just hits Enter
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                                BranchTerminalManager.shared.send(
-                                    to: activeTerminalBranchId, text: "claude\n")
+                            // Pre-type "claude" into the terminal so user just hits Enter.
+                            // Task.sleep respects cancellation unlike DispatchQueue.asyncAfter.
+                            let branchId = activeTerminalBranchId
+                            Task {
+                                try? await Task.sleep(nanoseconds: 400_000_000)
+                                BranchTerminalManager.shared.send(to: branchId, text: "claude\n")
                             }
                         }
                     }
@@ -114,19 +122,20 @@ struct SingleDocumentView: View {
             }
         }
         .onAppear {
-            // Pre-warm the main branch terminal so it's ready when user opens it
+            // Pre-warm the main branch terminal so it's ready when user opens it.
+            // Pass the persisted tmux session name so that on app restart we reattach
+            // to the exact same tmux session (preserves shell history + running processes).
             BranchTerminalManager.shared.warmUp(
                 branchId: viewModel.mainBranchId,
-                workingDirectory: viewModel.workingDirectory
+                workingDirectory: viewModel.workingDirectory,
+                knownTmuxSession: viewModel.mainBranchTmuxSession
             )
         }
-        .onDisappear {
-            // Terminate PTY processes when navigating away — prevents zsh accumulation
-            BranchTerminalManager.shared.terminate(branchId: viewModel.mainBranchId)
-            for branch in viewModel.activeBranches {
-                BranchTerminalManager.shared.terminate(branchId: branch.id)
-            }
-        }
+        // NOTE: Terminals are intentionally NOT terminated on disappear.
+        // BranchTerminalManager owns the PTY processes for their full lifetime —
+        // they survive branch switching, sidebar navigation, and view recreation.
+        // Terminals are only killed by explicit user action (closeBranch, archive, delete)
+        // or at app quit via NSApplication.willTerminateNotification.
     }
 }
 
@@ -137,6 +146,7 @@ class SingleDocumentViewModel: ObservableObject {
     let treeId: String
     let mainBranchId: String         // branch.id (used for terminal routing)
     let mainBranchSessionId: String  // branch.sessionId (used for DB queries)
+    let mainBranchTmuxSession: String?  // persisted tmux session name (nil on first open)
     /// Cached at init — workingDirectory is immutable after tree creation.
     /// Prevents repeated DB reads on every body re-evaluation.
     let workingDirectory: String
@@ -156,6 +166,7 @@ class SingleDocumentViewModel: ObservableObject {
             // Reuse the existing root branch and its session
             self.mainBranchId = root.id
             self.mainBranchSessionId = sessionId
+            self.mainBranchTmuxSession = root.tmuxSessionName
         } else if let branch = try? TreeStore.shared.createBranch(
             treeId: treeId,
             parentBranch: nil,
@@ -164,9 +175,10 @@ class SingleDocumentViewModel: ObservableObject {
             title: "Main",
             workingDirectory: workDir
         ), let sessionId = branch.sessionId {
-            // First open — create the root branch
+            // First open — create the root branch (no tmux session yet)
             self.mainBranchId = branch.id
             self.mainBranchSessionId = sessionId
+            self.mainBranchTmuxSession = nil
         } else {
             // Last resort fallback
             let branchId = UUID().uuidString
@@ -182,6 +194,7 @@ class SingleDocumentViewModel: ObservableObject {
             }
             self.mainBranchId = branchId
             self.mainBranchSessionId = sessionId
+            self.mainBranchTmuxSession = nil
         }
 
         self.workingDirectory = workDir
@@ -196,5 +209,69 @@ class SingleDocumentViewModel: ObservableObject {
 
     func addBranch(_ branch: Branch) {
         activeBranches.append(branch)
+    }
+}
+
+// MARK: - Terminal Panel
+
+/// Integrated terminal panel — styled to feel native to Canvas, not bolted-on.
+/// Adds a header bar with directory context and a close button above the raw SwiftTerm view.
+struct TerminalPanelView: View {
+    let branchId: String
+    let workingDirectory: String
+    let onClose: () -> Void
+
+    private var directoryName: String {
+        URL(fileURLWithPath: workingDirectory).lastPathComponent
+    }
+
+    private var shortenedPath: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return workingDirectory.replacingOccurrences(of: home, with: "~")
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // ── Integrated header ─────────────────────────────────────────
+            HStack(spacing: 8) {
+                Image(systemName: "terminal")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text(directoryName)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.primary)
+
+                Text(shortenedPath)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+
+                Spacer()
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Close terminal (⌘`)")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color(nsColor: .windowBackgroundColor))
+
+            Divider()
+                .opacity(0.4)
+
+            // ── Terminal ──────────────────────────────────────────────────
+            BranchTerminalView(
+                branchId: branchId,
+                workingDirectory: workingDirectory
+            )
+        }
+        .background(Color(red: 0.08, green: 0.08, blue: 0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 0))
     }
 }

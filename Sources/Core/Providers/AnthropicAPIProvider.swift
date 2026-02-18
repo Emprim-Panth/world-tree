@@ -60,8 +60,8 @@ final class AnthropicAPIProvider: LLMProvider {
                     // Refresh terminal context (captures latest PTY output before each message)
                     state.refreshTerminalContext()
 
-                    // Query KB
-                    let kbContext = self.queryKnowledgeBase(message: context.message)
+                    // Query KB (async — runs off MainActor during process wait)
+                    let kbContext = await self.queryKnowledgeBase(message: context.message)
                     state.appendKBContext(kbContext)
 
                     // Add user message (with any image/file attachments)
@@ -317,7 +317,7 @@ final class AnthropicAPIProvider: LLMProvider {
         return "\(home)/Development"
     }
 
-    private func queryKnowledgeBase(message: String) -> String {
+    private func queryKnowledgeBase(message: String) async -> String {
         let kbCli = "\(home)/.cortana/bin/cortana-kb"
         guard FileManager.default.fileExists(atPath: kbCli) else { return "" }
 
@@ -337,7 +337,11 @@ final class AnthropicAPIProvider: LLMProvider {
 
         do {
             try proc.run()
-            proc.waitUntilExit()
+            // Wait off the main thread — don't block the MainActor during KB lookup
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                proc.terminationHandler = { _ in continuation.resume() }
+            }
+            proc.terminationHandler = nil
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             guard let output = String(data: data, encoding: .utf8),
                   !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
