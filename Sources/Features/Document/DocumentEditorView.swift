@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import GRDB
 
 /// Google Docs-style collaborative document editor for conversations
 struct DocumentEditorView: View {
@@ -175,13 +176,9 @@ class DocumentEditorViewModel: ObservableObject {
     /// Stable UUID per message ID — prevents random UUIDs being generated each
     /// render cycle when msg.id is an integer string (not a UUID string).
     private var stableSectionIds: [String: UUID] = [:]
-    /// Retained reference so the timer can be invalidated on teardown.
-    private var messageObserverTimer: Timer?
+    /// GRDB ValueObservation cancellable — auto-cancels when view model is deallocated.
+    private var messageObservation: AnyDatabaseCancellable?
     weak var parentBranchLayout: BranchLayoutViewModel?
-
-    deinit {
-        messageObserverTimer?.invalidate()
-    }
 
     init(sessionId: String, branchId: String, workingDirectory: String) {
         self.sessionId = sessionId
@@ -199,41 +196,38 @@ class DocumentEditorViewModel: ObservableObject {
     }
 
     func loadDocument() {
-        // Load existing messages from database
-        Task {
-            do {
-                let messages = try MessageStore.shared.getMessages(sessionId: sessionId)
+        // Start GRDB ValueObservation — fires immediately with existing messages,
+        // then re-fires any time the messages table changes for this session.
+        // No timer, no polling, no accumulation.
+        guard messageObservation == nil,
+              let dbPool = DatabaseManager.shared.dbPool else { return }
 
-                await MainActor.run {
-                    document.sections = messages.map { msg in
-                        let author: Author = {
-                            switch msg.role {
-                            case .user: return .user(name: "You")
-                            case .assistant: return .assistant
-                            case .system: return .system
-                            }
-                        }()
+        let sid = sessionId  // capture value type, not self
 
-                        return DocumentSection(
-                            id: stableId(for: msg.id),
-                            content: AttributedString(msg.content),
-                            author: author,
-                            timestamp: msg.createdAt,
-                            branchPoint: true,
-                            isEditable: msg.role == .user
-                        )
-                    }
-
-                    // Track which message IDs we've already shown
-                    self.seenMessageIds = Set(messages.map { $0.id })
-
-                    // Start watching for new messages
-                    startMessageObserver()
-                }
-            } catch {
-                print("Error loading messages: \(error)")
-            }
+        let observation = ValueObservation.tracking { db -> [Message] in
+            let sql = """
+                SELECT m.*,
+                    (SELECT COUNT(*) FROM canvas_branches cb
+                     WHERE cb.fork_from_message_id = m.id) as has_branches
+                FROM messages m
+                WHERE m.session_id = ?
+                ORDER BY m.timestamp ASC
+                LIMIT 500
+                """
+            return try Message.fetchAll(db, sql: sql, arguments: [sid])
         }
+
+        messageObservation = observation.start(
+            in: dbPool,
+            scheduling: .async(onQueue: .main),
+            onError: { [weak self] error in
+                print("[DocumentEditor] Message observation error: \(error)")
+                self?.messageObservation = nil
+            },
+            onChange: { [weak self] messages in
+                self?.applyMessages(messages)
+            }
+        )
     }
 
     /// Returns a stable UUID for a given message ID string.
@@ -246,53 +240,35 @@ class DocumentEditorViewModel: ObservableObject {
         return id
     }
 
-    private func startMessageObserver() {
-        // Guard against duplicate timers (e.g. if loadDocument is called twice)
-        guard messageObserverTimer == nil else { return }
-        messageObserverTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            Task {
-                await self.checkForNewMessages()
-            }
+    /// Applies the latest full message list from ValueObservation.
+    /// Only appends new messages — preserves existing section order and identity.
+    private func applyMessages(_ messages: [Message]) {
+        let newMessages = messages.filter { !seenMessageIds.contains($0.id) }
+
+        for msg in newMessages {
+            let author: Author = {
+                switch msg.role {
+                case .user: return .user(name: "You")
+                case .assistant: return .assistant
+                case .system: return .system
+                }
+            }()
+
+            let section = DocumentSection(
+                id: stableId(for: msg.id),
+                content: AttributedString(msg.content),
+                author: author,
+                timestamp: msg.createdAt,
+                branchPoint: true,
+                isEditable: msg.role == .user
+            )
+            document.sections.append(section)
+            seenMessageIds.insert(msg.id)
         }
-    }
 
-    private func checkForNewMessages() async {
-        do {
-            let messages = try MessageStore.shared.getMessages(sessionId: sessionId)
-
-            await MainActor.run {
-                // Filter using string IDs — message IDs are integers, not UUIDs
-                let newMessages = messages.filter { !seenMessageIds.contains($0.id) }
-
-                for msg in newMessages {
-                    let author: Author = {
-                        switch msg.role {
-                        case .user: return .user(name: "You")
-                        case .assistant: return .assistant
-                        case .system: return .system
-                        }
-                    }()
-
-                    let section = DocumentSection(
-                        id: stableId(for: msg.id),
-                        content: AttributedString(msg.content),
-                        author: author,
-                        timestamp: msg.createdAt,
-                        branchPoint: true,
-                        isEditable: msg.role == .user
-                    )
-                    document.sections.append(section)
-                    seenMessageIds.insert(msg.id)
-                }
-
-                // Stop processing indicator when assistant responds
-                if newMessages.contains(where: { $0.role == .assistant }) {
-                    isProcessing = false
-                }
-            }
-        } catch {
-            print("Error checking for new messages: \(error)")
+        // Stop processing indicator when an assistant message arrives
+        if newMessages.contains(where: { $0.role == .assistant }) {
+            isProcessing = false
         }
     }
 
