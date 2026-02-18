@@ -31,6 +31,15 @@ final class ClaudeCodeProvider: LLMProvider {
     private var cliSessionMap: [String: String] = [:]
     private let mapLock = NSLock()
 
+    /// File-based session map — written synchronously on the parse queue so there
+    /// is no async gap between capturing a session ID and it being durable.
+    /// Supplements the DB-backed load (which has MainActor/Task timing risks).
+    private lazy var sessionMapFileURL: URL = {
+        let cortanaDir = URL(fileURLWithPath: home).appendingPathComponent(".cortana")
+        try? FileManager.default.createDirectory(at: cortanaDir, withIntermediateDirectories: true)
+        return cortanaDir.appendingPathComponent("canvas-sessions.json")
+    }()
+
     /// Serial queue for parser access (readabilityHandler + terminationHandler ordering)
     private let parseQueue = DispatchQueue(label: "com.cortana.canvas.cli-parser")
 
@@ -205,6 +214,8 @@ final class ClaudeCodeProvider: LLMProvider {
                         Task { @MainActor [weak self] in
                             self?.persistSessionMap()
                         }
+                    } else {
+                        canvasLog("[ClaudeCodeProvider] ⚠️ Process exited without a session ID — next --resume will fail")
                     }
 
                     if process.terminationStatus != 0 && !parser.isError {
@@ -273,12 +284,22 @@ final class ClaudeCodeProvider: LLMProvider {
 
     private func setCliSession(_ cliSessionId: String, for canvasSessionId: String) {
         mapLock.lock()
-        defer { mapLock.unlock() }
         cliSessionMap[canvasSessionId] = cliSessionId
+        let snapshot = cliSessionMap
+        mapLock.unlock()
+        // Write to file synchronously — no MainActor/Task timing risk.
+        // This runs on parseQueue, which is fine for file I/O.
+        writeSessionMapFile(snapshot)
+    }
+
+    private func writeSessionMapFile(_ map: [String: String]) {
+        guard let data = try? JSONEncoder().encode(map) else { return }
+        try? data.write(to: sessionMapFileURL, options: .atomic)
     }
 
     @MainActor
     private func loadSessionMap() {
+        // Load from DB first (baseline)
         do {
             let rows = try DatabaseManager.shared.read { db in
                 try Row.fetchAll(
@@ -296,7 +317,19 @@ final class ClaudeCodeProvider: LLMProvider {
             mapLock.unlock()
             canvasLog("[ClaudeCodeProvider] Loaded \(rows.count) session mappings from DB")
         } catch {
-            canvasLog("[ClaudeCodeProvider] Failed to load session map: \(error)")
+            canvasLog("[ClaudeCodeProvider] Failed to load session map from DB: \(error)")
+        }
+
+        // Overlay with file — file is written synchronously on every update so
+        // it's always more current than the DB (which goes via async MainActor task).
+        if let data = try? Data(contentsOf: sessionMapFileURL),
+           let fileMap = try? JSONDecoder().decode([String: String].self, from: data) {
+            mapLock.lock()
+            for (canvasId, cliId) in fileMap {
+                cliSessionMap[canvasId] = cliId  // file wins over DB
+            }
+            mapLock.unlock()
+            canvasLog("[ClaudeCodeProvider] Overlaid \(fileMap.count) session mappings from file")
         }
     }
 

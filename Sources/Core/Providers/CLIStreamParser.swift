@@ -87,6 +87,14 @@ final class CLIStreamParser {
             return nil
         }
 
+        // Capture session ID from ANY event that carries it.
+        // Hook events (hook_started, hook_response) arrive BEFORE system/init and
+        // all contain session_id — grabbing it here means we have the ID on the
+        // very first line received, not waiting for init/assistant/result.
+        if let sid = json["session_id"] as? String, !sid.isEmpty {
+            cliSessionId = sid
+        }
+
         switch type {
         case "system":
             return parseSystem(json)
