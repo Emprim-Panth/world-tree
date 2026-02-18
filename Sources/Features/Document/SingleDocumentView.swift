@@ -186,6 +186,8 @@ class SingleDocumentViewModel: ObservableObject {
 
     func closeBranch(_ branchId: String) {
         activeBranches.removeAll { $0.id == branchId }
+        // Terminate the PTY process so the zsh doesn't accumulate indefinitely
+        BranchTerminalManager.shared.terminate(branchId: branchId)
     }
 
     func addBranch(_ branch: Branch) {

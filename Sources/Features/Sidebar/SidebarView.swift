@@ -92,9 +92,10 @@ struct SidebarView: View {
                     ForEach(viewModel.groupedTrees, id: \.project) { group in
                         // Section header — right-click to rename/delete category
                         HStack {
-                            Text(group.project.uppercased())
+                            Text(group.project)
                                 .font(.caption2)
                                 .fontWeight(.semibold)
+                                .textCase(.uppercase)
                                 .foregroundStyle(.secondary)
                             Spacer()
                             Button {
@@ -216,7 +217,7 @@ struct SidebarView: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(.quaternary)
-                .cornerRadius(4)
+                .cornerRadius(6)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, isBridge ? 7 : 5)

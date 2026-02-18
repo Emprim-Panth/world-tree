@@ -35,19 +35,24 @@ struct CodeBlockView: View {
                         .padding(.vertical, 2)
                     }
                 }
-                .background(Color.black.opacity(0.15))
+                .background(Color(nsColor: .quaternaryLabelColor).opacity(0.3))
             }
 
             // Code content
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code)
                     .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(Color(nsColor: .labelColor))
                     .textSelection(.enabled)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .background(Color(nsColor: .init(white: 0.1, alpha: 1.0)))
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 1)
+        )
         .cornerRadius(6)
         .onHover { isHoveringCode = $0 }
     }

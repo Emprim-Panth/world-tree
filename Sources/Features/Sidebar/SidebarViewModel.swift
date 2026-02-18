@@ -116,6 +116,12 @@ final class SidebarViewModel: ObservableObject {
 
     func archiveTree(_ id: String) {
         do {
+            // Load full tree to get branch IDs before archiving, then terminate any live PTYs
+            if let tree = try? TreeStore.shared.getTree(id) {
+                for branch in tree.branches {
+                    BranchTerminalManager.shared.terminate(branchId: branch.id)
+                }
+            }
             try TreeStore.shared.archiveTree(id)
             if AppState.shared.selectedTreeId == id {
                 AppState.shared.selectedTreeId = nil

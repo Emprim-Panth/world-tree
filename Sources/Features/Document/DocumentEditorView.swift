@@ -619,49 +619,70 @@ struct UserInputArea: View {
     @Binding var text: String
     let isProcessing: Bool
     let onSubmit: () -> Void
-    var onTabKey: (() -> Bool)?  // Return true if handled
+    var onTabKey: (() -> Bool)?
     var onShiftTabKey: (() -> Bool)?
     var onCmdReturnKey: (() -> Bool)?
+
+    @FocusState private var editorFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 12) {
-                // User indicator
+                // Cortana / user avatar — neutral diamond, avoids hardcoded initials
                 Circle()
-                    .fill(Color.blue.gradient)
+                    .fill(Color(nsColor: .controlBackgroundColor))
                     .frame(width: 32, height: 32)
                     .overlay {
-                        Text("E")
+                        Image(systemName: "person.fill")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundStyle(.secondary)
                     }
 
                 // Input field
                 VStack(alignment: .leading, spacing: 4) {
-                    KeyboardHandlingTextEditor(
-                        text: $text,
-                        onTabKey: onTabKey,
-                        onShiftTabKey: onShiftTabKey,
-                        onCmdReturnKey: onCmdReturnKey,
-                        onSubmit: {
-                            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                onSubmit()
-                            }
+                    ZStack(alignment: .topLeading) {
+                        // Placeholder — visible only when text is empty
+                        if text.isEmpty {
+                            Text("Message Cortana…")
+                                .font(.system(.body))
+                                .foregroundStyle(.tertiary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 10)
+                                .allowsHitTesting(false)
                         }
-                    )
+
+                        KeyboardHandlingTextEditor(
+                            text: $text,
+                            onTabKey: onTabKey,
+                            onShiftTabKey: onShiftTabKey,
+                            onCmdReturnKey: onCmdReturnKey,
+                            onSubmit: {
+                                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    onSubmit()
+                                }
+                            }
+                        )
+                        .focused($editorFocused)
+                    }
                     .frame(minHeight: 60)
                     .background(Color(nsColor: .controlBackgroundColor))
                     .cornerRadius(8)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                            .stroke(
+                                editorFocused ? Color.accentColor.opacity(0.5) : Color(nsColor: .separatorColor),
+                                lineWidth: editorFocused ? 2 : 1
+                            )
                     )
 
                     HStack {
                         Spacer()
                         Button(action: onSubmit) {
-                            Label("Send", systemImage: "paperplane.fill")
-                                .font(.caption)
+                            Label(
+                                isProcessing ? "Sending…" : "Send",
+                                systemImage: isProcessing ? "arrow.trianglehead.clockwise" : "paperplane.fill"
+                            )
+                            .font(.caption)
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing)
