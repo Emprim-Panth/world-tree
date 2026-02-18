@@ -405,17 +405,26 @@ class DocumentEditorViewModel: ObservableObject {
             // 3. Route through ClaudeCodeProvider
             let model = UserDefaults.standard.string(forKey: "defaultModel") ?? CortanaConstants.defaultModel
 
-            // Smart context injection: only inject conversation history when the CLI
-            // session might be stale (first send after launch, or >15 min gap).
-            // Active conversations trust --resume and skip the overhead.
+            // Context injection strategy — two tiers to handle both cold starts and
+            // back-to-back --resume failures:
+            //
+            // • Always:  last 2 turns (immediate reminder, ~150 tokens). Covers the case
+            //            where --resume silently fails on a consecutive message — Claude
+            //            always has at minimum the previous exchange.
+            //
+            // • Stale:   last 8 turns injected when first send after launch or >15 min gap.
+            //            Covers session expiry after leaving the app.
             let now = Date()
             let isSessionStale = lastSendTimestamp.map {
                 now.timeIntervalSince($0) > DocumentEditorViewModel.sessionStaleInterval
-            } ?? true  // nil = first send this launch = always inject
+            } ?? true  // nil = first send this launch
             lastSendTimestamp = now
 
-            let recentContext: String? = isSessionStale ? {
-                let contextSections = document.sections.suffix(16)  // last ~8 turns
+            let allSections = document.sections
+            let turnLimit = isSessionStale ? 16 : 4  // 8 turns stale, 2 turns active
+            let contextSections = allSections.suffix(turnLimit)
+
+            let recentContext: String? = {
                 guard !contextSections.isEmpty else { return nil }
                 let lines = contextSections.map { section -> String in
                     let role: String
@@ -427,11 +436,13 @@ class DocumentEditorViewModel: ObservableObject {
                     let text = String(section.content.characters.prefix(500))
                     return "[\(role)]: \(text)"
                 }
-                canvasLog("[DocumentEditor] Injecting \(contextSections.count) turns as stale-session fallback")
+                if isSessionStale {
+                    canvasLog("[DocumentEditor] Stale session — injecting \(contextSections.count) turns")
+                }
                 return "CONVERSATION CONTEXT (recent history — use if session memory is unclear):\n"
                     + lines.joined(separator: "\n\n")
                     + "\nEND CONTEXT"
-            }() : nil
+            }()
 
             let ctx = ProviderSendContext(
                 message: content,
