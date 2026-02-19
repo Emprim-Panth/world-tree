@@ -38,8 +38,8 @@ targets:
         buildPhase: resources
       - path: Resources/vis-network.min.js
         buildPhase: resources
-    resources:
       - path: Resources/Assets.xcassets
+        buildPhase: resources
     dependencies:
       - package: GRDB
       - package: SwiftTerm
@@ -50,3 +50,6 @@ targets:
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_LSUIElement: false
         INFOPLIST_KEY_LSMultipleInstancesProhibited: true
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "2"
