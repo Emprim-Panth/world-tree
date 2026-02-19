@@ -196,6 +196,20 @@ enum MigrationManager {
                 """)
         }
 
+        // Migration 9: Screenshots table
+        migrator.registerMigration("v9_screenshots") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_screenshots (
+                    id TEXT PRIMARY KEY,
+                    branch_id TEXT,
+                    file_path TEXT NOT NULL,
+                    target TEXT NOT NULL DEFAULT 'simulator',
+                    captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_screenshots_branch ON canvas_screenshots(branch_id)")
+        }
+
         try migrator.migrate(dbPool)
     }
 }

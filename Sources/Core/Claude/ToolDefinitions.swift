@@ -7,7 +7,7 @@ enum CanvasTools {
     static func definitions() -> [ToolSchema] {
         var tools = [readFile, writeFile, editFile, bash, glob, grep,
                      buildProject, runTests, checkpointCreate, checkpointRevert, checkpointList,
-                     backgroundRun, listTerminals, terminalOutput]
+                     backgroundRun, listTerminals, terminalOutput, captureScreenshot]
         tools[tools.count - 1].cacheControl = CacheControl(type: "ephemeral")
         return tools
     }
@@ -328,6 +328,28 @@ enum CanvasTools {
                 ),
             ],
             required: ["session"]
+        )
+    )
+
+    static let captureScreenshot = ToolSchema(
+        name: "capture_screenshot",
+        description: """
+            Capture a screenshot from the iOS Simulator or the Mac screen. \
+            Returns the file path of the saved image.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "target": PropertySchema(
+                    type: "string",
+                    description: "What to capture: 'simulator' for booted iOS Simulator, 'screen' for the full Mac display"
+                ),
+                "device_id": PropertySchema(
+                    type: "string",
+                    description: "Optional simulator device UDID. If omitted, uses the booted simulator."
+                ),
+            ],
+            required: []
         )
     )
 }

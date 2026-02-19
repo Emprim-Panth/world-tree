@@ -46,6 +46,7 @@ actor ToolExecutor {
         case "background_run": return await backgroundRun(input)
         case "list_terminals": return await listTerminals(input)
         case "terminal_output": return await terminalOutput(input)
+        case "capture_screenshot": return await captureScreenshot(input)
         default: return ToolResult(content: "Unknown tool: \(name)", isError: true)
         }
     }
@@ -833,6 +834,49 @@ actor ToolExecutor {
 
         return ToolResult(
             content: "Output from tmux pane '\(safePaneTarget)' (last \(lines) lines):\n\(result.content)",
+            isError: false
+        )
+    }
+
+    // MARK: - capture_screenshot
+
+    private func captureScreenshot(_ input: [String: AnyCodable]) async -> ToolResult {
+        let target = input["target"]?.value as? String ?? "simulator"
+        let deviceId = input["device_id"]?.value as? String
+
+        // Ensure output directory exists
+        let screenshotsDir = "\(home)/.cortana/screenshots"
+        try? FileManager.default.createDirectory(atPath: screenshotsDir, withIntermediateDirectories: true)
+
+        let filename = "\(UUID().uuidString).png"
+        let outputPath = "\(screenshotsDir)/\(filename)"
+
+        let command: String
+        if target == "simulator" {
+            if let deviceId {
+                // Sanitize: UDIDs are hex + hyphens only
+                let safeId = deviceId.filter { $0.isHexDigit || $0 == "-" }
+                command = "xcrun simctl io '\(safeId)' screenshot '\(outputPath)' 2>&1"
+            } else {
+                command = "xcrun simctl io booted screenshot '\(outputPath)' 2>&1"
+            }
+        } else {
+            // Full Mac screen capture
+            command = "screencapture -x '\(outputPath)' 2>&1"
+        }
+
+        let result = await bash(["command": AnyCodable(command)])
+        if result.isError {
+            return ToolResult(content: "Failed to capture screenshot: \(result.content)", isError: true)
+        }
+
+        guard FileManager.default.fileExists(atPath: outputPath) else {
+            return ToolResult(content: "Screenshot command ran but file not found at \(outputPath). Output: \(result.content)", isError: true)
+        }
+
+        let targetLabel = target == "simulator" ? "iOS Simulator" : "Mac screen"
+        return ToolResult(
+            content: "Screenshot captured (\(targetLabel)).\nFile: \(outputPath)",
             isError: false
         )
     }

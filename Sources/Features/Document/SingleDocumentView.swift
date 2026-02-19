@@ -7,9 +7,11 @@ struct SingleDocumentView: View {
     @EnvironmentObject private var appState: AppState
     @State private var showTerminal = false
 
-    init(treeId: String) {
+    /// branchId: if provided, loads that specific branch as the main document.
+    /// If nil (or the branch isn't found), falls back to the tree's root branch.
+    init(treeId: String, branchId: String? = nil) {
         self.treeId = treeId
-        _viewModel = StateObject(wrappedValue: SingleDocumentViewModel(treeId: treeId))
+        _viewModel = StateObject(wrappedValue: SingleDocumentViewModel(treeId: treeId, branchId: branchId))
     }
 
     /// The branch whose terminal to show at the bottom.
@@ -152,7 +154,7 @@ class SingleDocumentViewModel: ObservableObject {
     let workingDirectory: String
     var branchLayout: BranchLayoutViewModel
 
-    init(treeId: String) {
+    init(treeId: String, branchId: String? = nil) {
         self.treeId = treeId
 
         // One DB read — reused for both workingDirectory and root branch lookup.
@@ -161,12 +163,19 @@ class SingleDocumentViewModel: ObservableObject {
         let workDir = existingTree?.workingDirectory
             .flatMap { $0.isEmpty ? nil : $0 } ?? cwd
 
-        if let root = existingTree?.rootBranch,
-           let sessionId = root.sessionId {
-            // Reuse the existing root branch and its session
-            self.mainBranchId = root.id
+        // If a specific branchId was requested (e.g., user clicked a branch in sidebar),
+        // try to load that branch first. Fall back to root branch if not found.
+        let targetBranch: Branch? = branchId.flatMap { id in
+            existingTree?.branches.first { $0.id == id }
+        }
+        let activeBranch = targetBranch ?? existingTree?.rootBranch
+
+        if let branch = activeBranch,
+           let sessionId = branch.sessionId {
+            // Use the selected or root branch
+            self.mainBranchId = branch.id
             self.mainBranchSessionId = sessionId
-            self.mainBranchTmuxSession = root.tmuxSessionName
+            self.mainBranchTmuxSession = branch.tmuxSessionName
         } else if let branch = try? TreeStore.shared.createBranch(
             treeId: treeId,
             parentBranch: nil,
@@ -181,7 +190,7 @@ class SingleDocumentViewModel: ObservableObject {
             self.mainBranchTmuxSession = nil
         } else {
             // Last resort fallback
-            let branchId = UUID().uuidString
+            let fallbackBranchId = UUID().uuidString
             let sessionId = UUID().uuidString
             try? DatabaseManager.shared.write { db in
                 try db.execute(
@@ -192,7 +201,7 @@ class SingleDocumentViewModel: ObservableObject {
                     arguments: [sessionId, "canvas", workDir, "Canvas Session"]
                 )
             }
-            self.mainBranchId = branchId
+            self.mainBranchId = fallbackBranchId
             self.mainBranchSessionId = sessionId
             self.mainBranchTmuxSession = nil
         }

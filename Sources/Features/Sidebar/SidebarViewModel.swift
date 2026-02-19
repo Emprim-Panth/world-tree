@@ -50,6 +50,8 @@ final class SidebarViewModel: ObservableObject {
     private var observation: AnyDatabaseCancellable?
     private var projectObserver: Any?
     private var searchTask: Task<Void, Never>?
+    /// Cached branches per tree ID — survives GRDB observation refreshes.
+    private var cachedBranches: [String: [Branch]] = [:]
 
     var filteredTrees: [ConversationTree] {
         guard !searchText.isEmpty else { return trees }
@@ -199,9 +201,27 @@ final class SidebarViewModel: ObservableObject {
             }
         }, onChange: { [weak self] trees in
             Task { @MainActor in
-                self?.trees = trees
+                guard let self else { return }
+                // Restore previously-loaded branches — the observation query doesn't
+                // include branches, so each refresh would wipe them without this.
+                var restored = trees
+                for i in restored.indices {
+                    if let cached = self.cachedBranches[restored[i].id] {
+                        restored[i].branches = cached
+                    }
+                }
+                self.trees = restored
             }
         })
+    }
+
+    /// Cache loaded branches for a tree so they survive GRDB observation refreshes.
+    func cacheBranches(_ branches: [Branch], for treeId: String) {
+        cachedBranches[treeId] = branches
+        // Immediately update the in-memory tree so the sidebar re-renders
+        if let idx = trees.firstIndex(where: { $0.id == treeId }) {
+            trees[idx].branches = branches
+        }
     }
 
     func createTree(name: String, project: String? = nil, workingDirectory: String? = nil, template: WorkflowTemplate? = nil) {

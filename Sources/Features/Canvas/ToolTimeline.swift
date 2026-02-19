@@ -147,22 +147,75 @@ enum ToolPairStatus {
 struct ToolPairRow: View {
     let pair: ToolPair
 
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: pair.status.icon)
-                .foregroundColor(pair.status.color)
-                .font(.system(size: 9))
-
-            Text(pair.name)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundColor(.primary)
-
-            Spacer()
-
-            Text(pair.durationText)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundColor(.secondary)
+    private var screenshotPath: String? {
+        guard pair.name == "capture_screenshot",
+              let result = pair.result,
+              let match = result.range(of: #"(/[^\s]+\.png)"#, options: .regularExpression) else {
+            return nil
         }
-        .padding(.vertical, 2)
+        return String(result[match])
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: pair.status.icon)
+                    .foregroundColor(pair.status.color)
+                    .font(.system(size: 9))
+
+                Text(pair.name)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(.primary)
+
+                Spacer()
+
+                Text(pair.durationText)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 2)
+
+            if let path = screenshotPath {
+                ScreenshotThumbnail(path: path)
+            }
+        }
+    }
+}
+
+// MARK: - Screenshot Thumbnail
+
+struct ScreenshotThumbnail: View {
+    let path: String
+    @State private var image: NSImage?
+    @State private var isExpanded = false
+
+    var body: some View {
+        Group {
+            if let img = image {
+                VStack(alignment: .leading, spacing: 2) {
+                    Image(nsImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: isExpanded ? 500 : 240)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
+                        )
+                        .onTapGesture { isExpanded.toggle() }
+                        .animation(.easeInOut(duration: 0.2), value: isExpanded)
+                    Text(isExpanded ? "Tap to collapse" : "Tap to expand")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary.opacity(0.6))
+                }
+                .padding(.leading, 16)
+            }
+        }
+        .onAppear {
+            Task {
+                let img = NSImage(contentsOfFile: path)
+                await MainActor.run { self.image = img }
+            }
+        }
     }
 }

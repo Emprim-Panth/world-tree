@@ -146,6 +146,14 @@ struct SidebarView: View {
                             ForEach(group.trees) { tree in
                                 treeRow(tree)
                                     .contextMenu { treeContextMenu(tree) }
+
+                                // Show branches under the selected tree
+                                if appState.selectedTreeId == tree.id {
+                                    ForEach(tree.branches) { branch in
+                                        TreeNodeView(branch: branch, treeId: tree.id)
+                                            .padding(.leading, 12)
+                                    }
+                                }
                             }
 
                             Spacer().frame(height: 4)
@@ -404,9 +412,8 @@ struct SidebarView: View {
     private func loadTreeBranches(_ treeId: String) {
         do {
             if let fullTree = try TreeStore.shared.getTree(treeId) {
-                if let idx = viewModel.trees.firstIndex(where: { $0.id == treeId }) {
-                    viewModel.trees[idx].branches = fullTree.branches
-                }
+                // Cache branches so they survive GRDB observation refreshes.
+                viewModel.cacheBranches(fullTree.branches, for: treeId)
                 // Always select root branch when switching trees so the canvas
                 // opens the correct conversation (not a leftover from the previous tree).
                 if let root = fullTree.rootBranch {

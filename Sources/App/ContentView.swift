@@ -10,12 +10,13 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 350)
         } detail: {
             if let treeId = appState.selectedTreeId {
-                // Phase 8: Full-screen document with organic branching
-                // .id(treeId) forces SwiftUI to fully recreate SingleDocumentView — and its
-                // @StateObject viewModel — when the tree changes. Without this, SwiftUI reuses
-                // the same view instance and the old tree's conversation stays on screen.
-                SingleDocumentView(treeId: treeId)
-                    .id(treeId)
+                // .id() keyed on both tree and branch forces SwiftUI to fully recreate
+                // SingleDocumentView (and its @StateObject viewModel) whenever either changes.
+                // Without the branch component, switching branches within the same tree
+                // would leave the old conversation on screen.
+                let selectedBranchId = appState.selectedBranchId ?? ""
+                SingleDocumentView(treeId: treeId, branchId: appState.selectedBranchId)
+                    .id("\(treeId)-\(selectedBranchId)")
             } else {
                 DashboardView()
             }
