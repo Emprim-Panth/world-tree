@@ -1,6 +1,41 @@
+# Xcode
 *.xcodeproj
 xcuserdata/
 DerivedData/
 .build/
 .swiftpm/
 *.xcworkspace
+
+# Build output
+build/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Sensitive / personal data
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Session notes and personal conversations
+CONVERSATIONS/
+
+# Local config overrides
+*.local.*
+.env
+.env.*
+
+# API keys / secrets (never commit these)
+Secrets.swift
+*APIKey*
+*Secret*
+
+# Archives
+*.xcarchive
+
+# Instruments
+*.trace

@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct CortanaCanvasApp: App {
+struct WorldTreeApp: App {
     @StateObject private var appState = AppState.shared
     @Environment(\.scenePhase) private var scenePhase
 
@@ -63,7 +63,7 @@ struct CortanaCanvasApp: App {
             // Surface the failure to the user — the app cannot function without a database.
             DispatchQueue.main.async {
                 let alert = NSAlert()
-                alert.messageText = "Cortana Canvas — Database Error"
+                alert.messageText = "World Tree — Database Error"
                 alert.informativeText = "Failed to open the conversation database.\n\n\(error.localizedDescription)\n\nCheck that the Dropbox path is accessible, or configure a different database path in Settings."
                 alert.alertStyle = .critical
                 alert.addButton(withTitle: "Open Settings")

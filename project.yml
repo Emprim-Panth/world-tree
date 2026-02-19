@@ -1,4 +1,4 @@
-name: CortanaCanvas
+name: WorldTree
 options:
   bundleIdPrefix: com.forgeandcode
   deploymentTarget:
@@ -23,7 +23,7 @@ packages:
     from: 1.2.0
 
 targets:
-  CortanaCanvas:
+  WorldTree:
     type: application
     platform: macOS
     sources:
@@ -45,8 +45,8 @@ targets:
       - package: SwiftTerm
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.forgeandcode.cortana-canvas
-        PRODUCT_NAME: "Cortana Canvas"
+        PRODUCT_BUNDLE_IDENTIFIER: com.forgeandcode.world-tree
+        PRODUCT_NAME: "World Tree"
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_LSUIElement: false
         INFOPLIST_KEY_LSMultipleInstancesProhibited: true

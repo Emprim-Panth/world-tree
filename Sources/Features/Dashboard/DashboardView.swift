@@ -15,7 +15,7 @@ struct DashboardView: View {
                         .font(.system(size: 56))
                         .foregroundStyle(.cyan)
 
-                    Text("Cortana Canvas")
+                    Text("World Tree")
                         .font(.largeTitle)
                         .fontWeight(.bold)
 
