@@ -106,15 +106,6 @@ struct SingleDocumentView: View {
                 Button {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         showTerminal.toggle()
-                        if showTerminal {
-                            // Pre-type "claude" into the terminal so user just hits Enter.
-                            // Task.sleep respects cancellation unlike DispatchQueue.asyncAfter.
-                            let branchId = activeTerminalBranchId
-                            Task {
-                                try? await Task.sleep(nanoseconds: 400_000_000)
-                                BranchTerminalManager.shared.send(to: branchId, text: "claude\n")
-                            }
-                        }
                     }
                 } label: {
                     Label("Claude", systemImage: showTerminal ? "terminal.fill" : "terminal")
@@ -132,6 +123,15 @@ struct SingleDocumentView: View {
                 workingDirectory: viewModel.workingDirectory,
                 knownTmuxSession: viewModel.mainBranchTmuxSession
             )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .canvasServerRequestedTerminalOpen)) { note in
+            guard let branchId = note.object as? String else { return }
+            // Only respond if the notification targets this tree's main branch
+            if branchId == viewModel.mainBranchId || branchId == activeTerminalBranchId {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    showTerminal = true
+                }
+            }
         }
         // NOTE: Terminals are intentionally NOT terminated on disappear.
         // BranchTerminalManager owns the PTY processes for their full lifetime —

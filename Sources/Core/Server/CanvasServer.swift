@@ -325,6 +325,8 @@ final class CanvasServer: ObservableObject {
         let content = (json["content"] as? String ?? "").trimmingCharacters(in: .whitespaces)
         let incomingSessionId = json["session_id"] as? String
         let project = json["project"] as? String
+        let contextSummary = json["context_summary"] as? String
+        let openTerminal = (json["open_terminal"] as? Bool) == true
 
         guard !content.isEmpty else {
             sendResponse(connection, status: 400, body: #"{"error":"content required"}"#)
@@ -340,6 +342,27 @@ final class CanvasServer: ObservableObject {
             sendResponse(connection, status: 500,
                          body: #"{"error":"session error: \#(esc(error.localizedDescription))"}"#)
             return
+        }
+
+        // Inject Telegram context summary as a system message on new sessions
+        // This is the "walk up to the Mac" feature — Evan never has to repeat himself
+        if let summary = contextSummary, resolved.isNew, !summary.isEmpty {
+            do {
+                _ = try MessageStore.shared.sendMessage(
+                    sessionId: resolved.sessionId, role: .system, content: summary)
+                canvasLog("[CanvasServer] Injected Telegram context summary (\(summary.count) chars)")
+            } catch {
+                canvasLog("[CanvasServer] Failed to inject context summary: \(error)")
+            }
+        }
+
+        // Signal the Canvas app to open the terminal for this branch (work requests)
+        if openTerminal {
+            NotificationCenter.default.post(
+                name: .canvasServerRequestedTerminalOpen,
+                object: resolved.branchId
+            )
+            canvasLog("[CanvasServer] Requested terminal open for branch \(resolved.branchId)")
         }
 
         // Persist user message
@@ -529,4 +552,12 @@ final class CanvasServer: ObservableObject {
          .replacingOccurrences(of: "\r", with: "\\r")
          .replacingOccurrences(of: "\t", with: "\\t")
     }
+}
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    /// Posted when a Telegram work request wants a terminal open for a branch.
+    /// object: branchId (String)
+    static let canvasServerRequestedTerminalOpen = Notification.Name("canvasServerRequestedTerminalOpen")
 }
