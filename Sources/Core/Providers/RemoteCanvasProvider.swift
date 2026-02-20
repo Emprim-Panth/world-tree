@@ -2,14 +2,14 @@ import Foundation
 
 // MARK: - RemoteCanvasProvider
 
-/// LLM provider that routes messages to a remote CortanaCanvas server (Studio Mac).
+/// LLM provider that routes messages to a remote World Tree server (Studio Mac).
 ///
 /// When enabled, messages are sent to a remote CanvasServer via HTTP/SSE instead
 /// of being processed locally. Tokens stream back in real time — the UI experience
 /// is identical to local providers.
 ///
 /// Remote URL is the Studio's ngrok URL (or LAN IP). Token is the x-canvas-token
-/// configured in Studio Canvas → Settings → Server.
+/// configured in World Tree → Settings → Server.
 final class RemoteCanvasProvider: LLMProvider {
     let displayName = "Remote Studio"
     let identifier = "remote-canvas"

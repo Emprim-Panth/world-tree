@@ -8,6 +8,9 @@ struct DocumentEditorView: View {
     @FocusState private var isFocused: Bool
     @State private var hoveredSectionId: UUID?
     @State private var selectedSuggestionIndex = 0
+    @State private var forkBranchType: BranchType = .conversation
+    @State private var showSearch = false
+    @State private var searchQuery = ""
 
     var parentBranchLayout: BranchLayoutViewModel?
 
@@ -40,11 +43,19 @@ struct DocumentEditorView: View {
                             DocumentSectionView(
                                 section: section,
                                 isHovered: hoveredSectionId == section.id,
+                                showInferButton: !viewModel.isRootBranch,
                                 onEdit: { newContent in
                                     viewModel.updateSection(section.id, content: newContent)
                                 },
                                 onBranch: {
-                                    viewModel.createBranch(from: section.id)
+                                    viewModel.requestFork(from: section.id)
+                                },
+                                onInfer: {
+                                    viewModel.inferFinding(from: section.id)
+                                },
+                                onNavigateToBranch: { branchId in
+                                    guard let treeId = viewModel.treeId else { return }
+                                    AppState.shared.selectBranch(branchId, in: treeId)
                                 },
                                 onFixError: { failedCall in
                                     viewModel.fixWithClaude(failedCall)
@@ -54,6 +65,9 @@ struct DocumentEditorView: View {
                             .onHover { hovering in
                                 hoveredSectionId = hovering ? section.id : nil
                             }
+                            .opacity(searchQuery.isEmpty ? 1.0 :
+                                (String(section.content.characters)
+                                    .localizedCaseInsensitiveContains(searchQuery) ? 1.0 : 0.3))
                         }
 
                         // Live streaming section — tokens appear as they arrive
@@ -74,22 +88,7 @@ struct DocumentEditorView: View {
                         Divider()
                             .padding(.vertical, 16)
 
-                        VStack(alignment: .leading, spacing: 16) {
-                            // Ghost suggestions (if any)
-                            if let opportunity = viewModel.branchOpportunity {
-                                GhostSuggestionView(
-                                    suggestions: opportunity.suggestions,
-                                    selectedIndex: selectedSuggestionIndex,
-                                    onAccept: { suggestion in
-                                        viewModel.acceptSuggestion(suggestion)
-                                    },
-                                    onAcceptAll: {
-                                        viewModel.spawnParallelBranches()
-                                    }
-                                )
-                                .transition(.opacity.combined(with: .move(edge: .trailing)))
-                            }
-
+                        VStack(alignment: .leading, spacing: 8) {
                             UserInputArea(
                                 text: $viewModel.currentInput,
                                 attachments: $viewModel.pendingAttachments,
@@ -97,15 +96,13 @@ struct DocumentEditorView: View {
                                 onSubmit: { viewModel.submitInput() },
                                 onTabKey: {
                                     if viewModel.branchOpportunity != nil {
-                                        // Tab cycles through suggestions
                                         selectedSuggestionIndex = (selectedSuggestionIndex + 1) % (viewModel.branchOpportunity?.suggestions.count ?? 1)
-                                        return true // handled
+                                        return true
                                     }
                                     return false
                                 },
                                 onShiftTabKey: {
                                     if let opportunity = viewModel.branchOpportunity {
-                                        // Accept selected suggestion
                                         viewModel.acceptSuggestion(opportunity.suggestions[selectedSuggestionIndex])
                                         selectedSuggestionIndex = 0
                                         return true
@@ -114,7 +111,6 @@ struct DocumentEditorView: View {
                                 },
                                 onCmdReturnKey: {
                                     if viewModel.branchOpportunity != nil {
-                                        // Spawn all branches in parallel
                                         viewModel.spawnParallelBranches()
                                         return true
                                     }
@@ -122,17 +118,59 @@ struct DocumentEditorView: View {
                                 }
                             )
                             .focused($isFocused)
+
+                            // Branch suggestions — appear below the input as compact chips
+                            if let opportunity = viewModel.branchOpportunity {
+                                BranchSuggestionChips(
+                                    suggestions: opportunity.suggestions,
+                                    selectedIndex: selectedSuggestionIndex,
+                                    onAccept: { suggestion in
+                                        viewModel.acceptSuggestion(suggestion)
+                                    },
+                                    onAcceptAll: {
+                                        viewModel.spawnParallelBranches()
+                                    },
+                                    onDismiss: {
+                                        viewModel.branchOpportunity = nil
+                                    }
+                                )
+                                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            }
                         }
                         .padding(.bottom, 24)
                     }
                     .padding(.horizontal, max(24, (geometry.size.width - 800) / 2))
                     .padding(.vertical, 24)
                 }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if showSearch {
+                        ConversationSearchBar(query: $searchQuery, onDismiss: {
+                            showSearch = false
+                            searchQuery = ""
+                            isFocused = true
+                        })
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .animation(.easeInOut(duration: 0.2), value: showSearch)
                 .background(Color(nsColor: .textBackgroundColor))
                 .onAppear {
                     isFocused = true
                     viewModel.loadDocument()
                     viewModel.parentBranchLayout = parentBranchLayout
+                }
+                .sheet(item: $viewModel.pendingForkMessage) { message in
+                    ForkMenu(
+                        sourceMessage: message,
+                        branchType: $forkBranchType,
+                        branch: viewModel.currentBranch,
+                        onCreated: { newBranchId in
+                            viewModel.pendingForkMessage = nil
+                            guard !newBranchId.isEmpty,
+                                  let treeId = viewModel.treeId else { return }
+                            AppState.shared.selectBranch(newBranchId, in: treeId)
+                        }
+                    )
                 }
                 // Unified scroll handler — one source of truth, no race conditions.
                 // Priority: streaming > thinking > new section (never fight each other).
@@ -156,6 +194,10 @@ struct DocumentEditorView: View {
                         proxy.scrollTo("thinking", anchor: .bottom)
                     }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .showConversationSearch)) { _ in
+                    withAnimation { showSearch = true }
+                    isFocused = false
+                }
             }
         }
     }
@@ -176,11 +218,17 @@ class DocumentEditorViewModel: ObservableObject {
     /// Nil when not streaming; cleared once the full response is persisted.
     @Published var streamingContent: String?
 
+    @Published var pendingForkMessage: Message?
+
     private let sessionId: String
     private let branchId: String
     private let workingDirectory: String
     private var cachedProject: String?
     private var seenMessageIds: Set<String> = []
+    private(set) var treeId: String?
+    private(set) var parentBranchId: String?
+    private(set) var currentBranch: Branch?
+    var isRootBranch: Bool { parentBranchId == nil }
 
     /// Timestamp of the last successful send — used to detect stale CLI sessions.
     /// nil = no send yet this launch (treat as stale).
@@ -242,21 +290,23 @@ class DocumentEditorViewModel: ObservableObject {
             }
         )
 
-        // Pre-warm provider context so the first message has zero cold-start delay.
+        // Pre-warm provider context + load branch context (treeId, parent, etc.)
         // Runs in background — doesn't block the UI.
         Task { [weak self] in
             guard let self else { return }
-            let project = (try? TreeStore.shared.getBranchBySessionId(self.sessionId))
-                .flatMap { branch -> String? in
-                    (try? TreeStore.shared.getTree(branch.treeId))?.project
-                }
-            self.cachedProject = project
-            await ProviderManager.shared.activeProvider?.warmUp(
-                sessionId: self.sessionId,
-                branchId: self.branchId,
-                project: project,
-                workingDirectory: self.workingDirectory
-            )
+            if let branch = try? TreeStore.shared.getBranchBySessionId(self.sessionId) {
+                self.treeId = branch.treeId
+                self.parentBranchId = branch.parentBranchId
+                self.currentBranch = branch
+                let project = (try? TreeStore.shared.getTree(branch.treeId))?.project
+                self.cachedProject = project
+                await ProviderManager.shared.activeProvider?.warmUp(
+                    sessionId: self.sessionId,
+                    branchId: self.branchId,
+                    project: project,
+                    workingDirectory: self.workingDirectory
+                )
+            }
         }
     }
 
@@ -296,12 +346,14 @@ class DocumentEditorViewModel: ObservableObject {
     }
 
     /// Applies the latest full message list from ValueObservation.
-    /// Only appends new messages — preserves existing section order and identity.
+    /// Appends new messages and keeps hasBranches live on existing sections.
     private func applyMessages(_ messages: [Message]) {
         let newMessages = messages.filter { !seenMessageIds.contains($0.id) }
 
         for msg in newMessages {
+            let isFinding = msg.content.hasPrefix("[Finding from branch")
             let author: Author = {
+                if isFinding { return .system }
                 switch msg.role {
                 case .user: return .user(name: "You")
                 case .assistant: return .assistant
@@ -315,10 +367,23 @@ class DocumentEditorViewModel: ObservableObject {
                 author: author,
                 timestamp: msg.createdAt,
                 branchPoint: true,
-                isEditable: msg.role == .user
+                isEditable: msg.role == .user && !isFinding,
+                messageId: msg.id,
+                hasBranches: msg.hasBranches,
+                isFinding: isFinding
             )
             document.sections.append(section)
             seenMessageIds.insert(msg.id)
+        }
+
+        // Update hasBranches on existing sections when a branch is created
+        // (GRDB observation re-fires touching canvas_branches via the subquery)
+        for msg in messages where seenMessageIds.contains(msg.id) && msg.hasBranches {
+            let stableID = stableId(for: msg.id)
+            if let idx = document.sections.firstIndex(where: { $0.id == stableID }),
+               !document.sections[idx].hasBranches {
+                document.sections[idx].hasBranches = true
+            }
         }
 
         // Stop processing indicator when an assistant message arrives
@@ -341,19 +406,39 @@ class DocumentEditorViewModel: ObservableObject {
         }
     }
 
-    func createBranch(from sectionId: UUID) {
-        guard let index = document.sections.firstIndex(where: { $0.id == sectionId }) else {
-            return
+    /// Open ForkMenu for the message at this section.
+    func requestFork(from sectionId: UUID) {
+        guard let section = document.sections.first(where: { $0.id == sectionId }),
+              let messageId = section.messageId else { return }
+        Task {
+            let messages = (try? MessageStore.shared.getMessages(sessionId: self.sessionId)) ?? []
+            if let message = messages.first(where: { $0.id == messageId }) {
+                self.pendingForkMessage = message
+            }
         }
+    }
 
-        // TODO: Implement branch creation
-        // 1. Take all sections up to this point
-        // 2. Create new branch in database
-        // 3. Navigate to new branch
-        canvasLog("[DocumentEditor] createBranch called at section index \(index)")
+    /// Push a message from this branch up to the parent as a Finding.
+    func inferFinding(from sectionId: UUID) {
+        guard let section = document.sections.first(where: { $0.id == sectionId }),
+              let messageId = section.messageId,
+              let parentId = parentBranchId else { return }
+        Task {
+            try? TreeStore.shared.inferFinding(
+                fromBranchId: self.branchId,
+                messageId: messageId,
+                toParentBranchId: parentId
+            )
+        }
     }
 
     /// One-click error recovery: inject structured error context + auto-submit.
+    private func scanForFindingSignals(_ response: String) -> Bool {
+        let signals = ["i found", "new approach", "this failed", "discovered", "conclusion", "the result is", "found a method", "found that", "turns out"]
+        let lower = response.lowercased()
+        return signals.contains { lower.contains($0) }
+    }
+
     func fixWithClaude(_ failedCall: ToolCall) {
         let output = failedCall.output ?? "(no output)"
         currentInput = """
@@ -417,10 +502,7 @@ class DocumentEditorViewModel: ObservableObject {
                 canvasLog("[DocumentEditor] Failed to persist user message: \(error)")
             }
 
-            // 2. Echo to the branch's terminal (user sees their own message as context)
-            BranchTerminalManager.shared.send(to: branchId, text: "\n\u{001B}[90m# \(content)\u{001B}[0m\n")
-
-            // 3. Route through ClaudeCodeProvider
+            // 2. Route through ClaudeCodeProvider
             let model = UserDefaults.standard.string(forKey: "defaultModel") ?? CortanaConstants.defaultModel
 
             // Context injection strategy — two tiers to handle both cold starts and
@@ -485,12 +567,12 @@ class DocumentEditorViewModel: ObservableObject {
 
             guard let provider else {
                 isProcessing = false
-                BranchTerminalManager.shared.send(to: branchId, text: "\n\u{001B}[31m[error: no provider]\u{001B}[0m\n")
                 return
             }
 
-            // 4. Stream response — mirror every token to the chat and terminal in real time
+            // 4. Stream response into chat
             var fullResponse = ""
+            var hadExplicitError = false
             streamingContent = ""  // Start streaming indicator
 
             for await event in provider.send(context: ctx) {
@@ -498,44 +580,44 @@ class DocumentEditorViewModel: ObservableObject {
                 case .text(let token):
                     fullResponse += token
                     streamingContent = fullResponse  // Live update in chat
-                    BranchTerminalManager.shared.send(to: branchId, text: token)
 
-                case .toolStart(let name, _):
-                    BranchTerminalManager.shared.send(to: branchId, text: "\n\u{001B}[36m[→ \(name)]\u{001B}[0m\n")
-
-                case .toolEnd(let name, _, let isError):
-                    let icon = isError ? "✗" : "✓"
-                    let color = isError ? "\u{001B}[31m" : "\u{001B}[32m"
-                    BranchTerminalManager.shared.send(to: branchId, text: "\(color)[\(icon) \(name)]\u{001B}[0m\n")
-
-                case .done:
+                case .toolStart, .toolEnd, .done:
                     break
 
                 case .error(let msg):
-                    BranchTerminalManager.shared.send(to: branchId, text: "\n\u{001B}[31m[error: \(msg)]\u{001B}[0m\n")
+                    hadExplicitError = true
+                    canvasLog("[DocumentEditor] Provider error: \(msg)")
+                    if fullResponse.isEmpty {
+                        fullResponse = "⚠️ \(msg)"
+                    }
                 }
             }
-            streamingContent = nil  // Stream complete — persisted section takes over
+            // If stream ended with no output and no explicit error, the CLI silently failed.
+            if fullResponse.isEmpty && !hadExplicitError {
+                fullResponse = "⚠️ No response received. The request may have been rate-limited or timed out. Please try again."
+                canvasLog("[DocumentEditor] Stream ended with no output — surfacing silent failure to user")
+            }
 
-            // 5. Persist assistant response — polling observer will surface it in the chat
+            // 5. Persist assistant response, THEN clear streaming so there's never a gap
+            // where neither the stream view nor the persisted section is visible.
             if !fullResponse.isEmpty {
                 do {
                     let msg = try MessageStore.shared.sendMessage(
                         sessionId: sessionId, role: .assistant, content: fullResponse)
                     seenMessageIds.insert(msg.id)
-                    // Add directly to avoid polling delay
                     let assistantSection = DocumentSection(
                         id: stableId(for: msg.id),
                         content: AttributedString(fullResponse),
                         author: .assistant,
                         timestamp: msg.createdAt,
                         branchPoint: true,
-                        isEditable: false
+                        isEditable: false,
+                        messageId: msg.id,
+                        hasFindingSignal: !isRootBranch && scanForFindingSignals(fullResponse)
                     )
                     document.sections.append(assistantSection)
                 } catch {
                     canvasLog("[DocumentEditor] Failed to persist assistant response: \(error)")
-                    // Still display the response — content is not lost from UI even if DB write failed
                     let assistantSection = DocumentSection(
                         content: AttributedString(fullResponse),
                         author: .assistant,
@@ -546,9 +628,16 @@ class DocumentEditorViewModel: ObservableObject {
                     document.sections.append(assistantSection)
                 }
             }
+            streamingContent = nil  // Clear AFTER section is in place — no blank gap
+
+            // Notify if app is backgrounded so the user knows the response arrived
+            if !fullResponse.hasPrefix("⚠️"), !NSApp.isActive {
+                let preview = String(fullResponse.prefix(120))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                Task { await NotificationManager.shared.notify(title: "Cortana", body: preview) }
+            }
 
             isProcessing = false
-            BranchTerminalManager.shared.send(to: branchId, text: "\n")
         }
     }
 
@@ -640,6 +729,54 @@ struct EmptyConversationView: View {
                 .lineSpacing(4)
         }
         .padding()
+    }
+}
+
+// MARK: - Conversation Search Bar
+
+/// Slim search bar that slides in at the top of the conversation when ⌘F is pressed.
+/// Dims non-matching messages; Escape dismisses.
+struct ConversationSearchBar: View {
+    @Binding var query: String
+    let onDismiss: () -> Void
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+
+            TextField("Find in conversation…", text: $query)
+                .textFieldStyle(.plain)
+                .font(.callout)
+                .focused($isFocused)
+                .onSubmit { onDismiss() }
+
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button("Done") { onDismiss() }
+                .buttonStyle(.plain)
+                .font(.callout)
+                .foregroundStyle(.blue)
+                .keyboardShortcut(.cancelAction)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+        .onAppear { isFocused = true }
     }
 }
 

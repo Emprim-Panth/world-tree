@@ -3,10 +3,9 @@ import Foundation
 import SwiftTerm
 
 // MARK: - tmux path resolution
-private let tmuxExecutable: String = {
-    // Homebrew on Apple Silicon: /opt/homebrew/bin/tmux
-    // Homebrew on Intel: /usr/local/bin/tmux
-    // Fallback: let the shell find it via PATH
+
+/// Resolved tmux executable path — shared by BranchTerminalManager and ToolExecutor.
+let tmuxExecutable: String = {
     let candidates = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
     return candidates.first { FileManager.default.fileExists(atPath: $0) } ?? "/opt/homebrew/bin/tmux"
 }()
@@ -156,10 +155,33 @@ final class BranchTerminalManager: ObservableObject {
         }
     }
 
+    // MARK: - Session Name Access
+
+    /// Returns the tmux session name for a branch, or nil if no terminal has been created.
+    /// Used by ToolExecutor to route bash commands through the visible terminal.
+    func sessionName(for branchId: String) -> String? {
+        tmuxNames[branchId]
+    }
+
+    // MARK: - Agent Windows
+
+    /// Open a new named tmux window in the branch's session for an agent task.
+    /// Each agent gets its own tab — Evan can switch between them in the terminal.
+    func openAgentWindow(branchId: String, name: String) {
+        guard let sessionName = tmuxNames[branchId],
+              FileManager.default.fileExists(atPath: tmuxExecutable) else { return }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: tmuxExecutable)
+        proc.arguments = ["new-window", "-t", sessionName, "-n", name]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+        try? proc.run()
+        canvasLog("[BranchTerminalManager] opened agent window '\(name)' in \(sessionName)")
+    }
+
     // MARK: - PTY Input
 
     /// Write text to the branch's PTY stdin — appears exactly as if the user typed it.
-    /// Use this to mirror Claude's tokens and tool events into the terminal in real time.
     func send(to branchId: String, text: String) {
         guard let tv = terminals[branchId] else { return }
         let bytes = ArraySlice(Array(text.utf8))

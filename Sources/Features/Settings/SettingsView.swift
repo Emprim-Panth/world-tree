@@ -152,7 +152,7 @@ struct SettingsView: View {
         Form {
             Section("Default Model") {
                 Picker("Model", selection: $defaultModel) {
-                    Text("Sonnet (Balanced)").tag("claude-sonnet-4-5-20250929")
+                    Text("Sonnet (Balanced)").tag("claude-sonnet-4-6")
                     Text("Opus (Deep)").tag("claude-opus-4-6")
                     Text("Haiku (Fast)").tag("claude-haiku-4-5-20251001")
                 }

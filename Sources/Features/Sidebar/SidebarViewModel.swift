@@ -17,6 +17,39 @@ struct MessageSearchResult: Identifiable {
 
 @MainActor
 final class SidebarViewModel: ObservableObject {
+    // MARK: - Project ordering
+
+    /// User's preferred project order — persisted across sessions.
+    /// Active projects always float above this, but within inactive the user's order wins.
+    private(set) var projectOrder: [String] {
+        get { UserDefaults.standard.stringArray(forKey: "projectOrder") ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: "projectOrder") }
+    }
+
+    /// A project is "active" if it has a tree updated in the last 24 hours.
+    /// Active projects always appear at the top of the sidebar.
+    private static let activeThreshold: TimeInterval = 86_400 // 24h
+
+    func isActive(_ projectName: String, trees: [ConversationTree]) -> Bool {
+        let cutoff = Date().addingTimeInterval(-Self.activeThreshold)
+        return trees.contains { $0.updatedAt > cutoff }
+    }
+
+    /// Move a project from one position to another in the persistent order.
+    /// Only affects the inactive section — active projects are sorted by recency, not manually.
+    func moveProject(from source: IndexSet, to destination: Int, in groups: [(project: String, trees: [ConversationTree])]) {
+        var order = projectOrder
+        // Build the current full order from what's displayed
+        let names = groups.map(\.project)
+        // Ensure all displayed names are in the order array first
+        for name in names where !order.contains(name) {
+            order.append(name)
+        }
+        order.move(fromOffsets: source, toOffset: destination)
+        projectOrder = order
+        rebuildProjectGroups()
+    }
+
     @Published var trees: [ConversationTree] = [] {
         didSet { rebuildProjectGroups() }
     }
@@ -121,29 +154,69 @@ final class SidebarViewModel: ObservableObject {
     }
 
     /// Rebuild allProjectGroups from current source data.
-    /// Called on trees, cachedProjects, or searchText change — not on every render.
+    /// Sort order:
+    ///   1. Active projects (updated in last 24h) — sorted by most recent activity
+    ///   2. Inactive projects — sorted by user's custom order, then alphabetical for new ones
+    ///   3. "General" always last
     private func rebuildProjectGroups() {
         let treesByProject = Dictionary(grouping: filteredTrees) {
             let p = $0.project ?? ""
             return p.isEmpty ? "General" : p
         }
 
+        // Collect all known project names (union of ProjectCache + tree groups)
+        var allNames: [String] = []
         var seen: Set<String> = []
-        var result: [(project: String, trees: [ConversationTree])] = []
 
-        let filtered = searchText.isEmpty
+        let filteredCache = searchText.isEmpty
             ? cachedProjects
             : cachedProjects.filter { $0.name.lowercased().contains(searchText.lowercased()) }
-        for p in filtered.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) {
-            guard p.name != "General" else { continue }
-            seen.insert(p.name)
-            result.append((project: p.name, trees: treesByProject[p.name] ?? []))
+        for p in filteredCache where p.name != "General" {
+            if seen.insert(p.name).inserted { allNames.append(p.name) }
         }
-
         for group in groupedTrees where group.project != "General" && !seen.contains(group.project) {
-            result.append((project: group.project, trees: group.trees))
+            seen.insert(group.project)
+            allNames.append(group.project)
         }
 
+        // Partition into active vs inactive
+        var active: [(name: String, latestActivity: Date)] = []
+        var inactive: [String] = []
+
+        for name in allNames {
+            let projectTrees = treesByProject[name] ?? []
+            if isActive(name, trees: projectTrees) {
+                let latest = projectTrees.map(\.updatedAt).max() ?? .distantPast
+                active.append((name: name, latestActivity: latest))
+            } else {
+                inactive.append(name)
+            }
+        }
+
+        // Active: sort by most recent activity first
+        active.sort { $0.latestActivity > $1.latestActivity }
+
+        // Inactive: sort by user's custom order, new projects appended alphabetically
+        let order = projectOrder
+        inactive.sort { a, b in
+            let ai = order.firstIndex(of: a)
+            let bi = order.firstIndex(of: b)
+            switch (ai, bi) {
+            case let (a?, b?): return a < b
+            case (_?, nil):    return true
+            case (nil, _?):    return false
+            default:           return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+            }
+        }
+
+        // Build result
+        var result: [(project: String, trees: [ConversationTree])] = []
+        for item in active {
+            result.append((project: item.name, trees: treesByProject[item.name] ?? []))
+        }
+        for name in inactive {
+            result.append((project: name, trees: treesByProject[name] ?? []))
+        }
         if let general = treesByProject["General"] {
             result.append((project: "General", trees: general))
         }

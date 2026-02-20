@@ -11,9 +11,9 @@ struct DashboardView: View {
             VStack(spacing: 24) {
                 // Hero
                 VStack(spacing: 8) {
-                    Image(systemName: "diamond.fill")
-                        .font(.system(size: 56))
-                        .foregroundStyle(.cyan)
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: 80, height: 80)
 
                     Text("World Tree")
                         .font(.largeTitle)

@@ -142,18 +142,30 @@ final class TreeStore {
     /// Archive all trees in a project group — removes them from the active sidebar.
     func archiveProject(_ projectName: String) throws {
         try db.write { db in
-            try db.execute(
-                sql: "UPDATE canvas_trees SET archived = 1, updated_at = datetime('now') WHERE project = ?",
-                arguments: [projectName]
-            )
+            if projectName == "General" {
+                // "General" encompasses trees with NULL, empty, or literal 'General' project
+                try db.execute(
+                    sql: "UPDATE canvas_trees SET archived = 1, updated_at = datetime('now') WHERE project IS NULL OR project = '' OR project = 'General'"
+                )
+            } else {
+                try db.execute(
+                    sql: "UPDATE canvas_trees SET archived = 1, updated_at = datetime('now') WHERE project = ?",
+                    arguments: [projectName]
+                )
+            }
         }
     }
 
     /// Delete all trees in a project group (full cascade: messages → sessions → branches → trees).
     func deleteProject(_ projectName: String) throws {
         let treeIds: [String] = try db.read { db in
-            let rows = try Row.fetchAll(db, sql: "SELECT id FROM canvas_trees WHERE project = ?", arguments: [projectName])
-            return rows.map { $0["id"] }
+            if projectName == "General" {
+                let rows = try Row.fetchAll(db, sql: "SELECT id FROM canvas_trees WHERE project IS NULL OR project = '' OR project = 'General'")
+                return rows.map { $0["id"] }
+            } else {
+                let rows = try Row.fetchAll(db, sql: "SELECT id FROM canvas_trees WHERE project = ?", arguments: [projectName])
+                return rows.map { $0["id"] }
+            }
         }
         for id in treeIds {
             try deleteTree(id)
@@ -305,6 +317,35 @@ final class TreeStore {
         try db.read { db in
             try Branch.filter(Column("fork_from_message_id") == messageId).fetchAll(db)
         }
+    }
+
+    /// Push a message from a child branch up to the parent as a Finding.
+    /// The finding is inserted into the parent session with a distinct prefix so
+    /// DocumentEditorView can style it differently (purple border, system author).
+    func inferFinding(fromBranchId: String, messageId: String, toParentBranchId: String) throws {
+        // Load source branch + message
+        guard let sourceBranch = try getBranch(fromBranchId),
+              let sourceSessionId = sourceBranch.sessionId else { return }
+
+        let messages = try MessageStore.shared.getMessages(sessionId: sourceSessionId)
+        guard let message = messages.first(where: { $0.id == messageId }) else { return }
+
+        // Load parent branch session
+        guard let parentBranch = try getBranch(toParentBranchId),
+              let parentSessionId = parentBranch.sessionId else { return }
+
+        let branchLabel = sourceBranch.title ?? sourceBranch.displayTitle
+        let findingContent = """
+            [Finding from branch '\(branchLabel)']
+            \(message.content)
+            [End finding]
+            """
+
+        _ = try MessageStore.shared.sendMessage(
+            sessionId: parentSessionId,
+            role: .assistant,
+            content: findingContent
+        )
     }
 
     /// Find the branch whose associated session_id matches the given ID.

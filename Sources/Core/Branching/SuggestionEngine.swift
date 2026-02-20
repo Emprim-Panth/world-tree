@@ -19,11 +19,12 @@ actor SuggestionEngine {
         "vs": .comparison
     ]
 
-    /// Analyzes input and returns branch suggestions
+    /// Analyzes input and returns branch suggestions.
+    /// Only fires on explicit trigger phrases — implicit detection was too noisy.
     func analyzeBranchOpportunity(_ text: String) async -> BranchOpportunity? {
+        guard text.count > 8 else { return nil }
         let lowercased = text.lowercased()
 
-        // Check for explicit trigger phrases
         for (trigger, type) in branchTriggers {
             if lowercased.contains(trigger) {
                 return BranchOpportunity(
@@ -32,15 +33,6 @@ actor SuggestionEngine {
                     suggestions: await generateSuggestions(for: text, type: type)
                 )
             }
-        }
-
-        // Check for implicit branching (multiple approaches detected)
-        if await hasMultipleApproaches(text) {
-            return BranchOpportunity(
-                trigger: "detected",
-                type: .implicit,
-                suggestions: await generateSuggestions(for: text, type: .implicit)
-            )
         }
 
         return nil
@@ -55,42 +47,32 @@ actor SuggestionEngine {
             return await generateComparisonSuggestions(text)
         case .hypothetical:
             return await generateHypotheticalSuggestions(text)
-        case .alternative:
+        case .alternative, .implicit:
             return await generateAlternativeSuggestions(text)
-        case .implicit:
-            return await generateImplicitSuggestions(text)
         }
     }
 
     private func generateParallelSuggestions(_ text: String, count: Int) async -> [BranchSuggestion] {
-        // Extract the topic being discussed
         let topic = extractTopic(from: text)
-
-        // Generate N different approaches
-        var suggestions: [BranchSuggestion] = []
-
-        for i in 1...count {
-            suggestions.append(BranchSuggestion(
+        let labels = ["First approach", "Second approach", "Third approach"]
+        return (0..<min(count, labels.count)).map { i in
+            BranchSuggestion(
                 id: UUID(),
-                title: "Approach \(i): \(topic)",
-                preview: "Exploring \(topic) from angle \(i)...",
+                title: "\(labels[i]): \(topic)",
+                preview: "Branch and explore this direction independently",
                 confidence: 0.8,
                 branchType: .exploration
-            ))
+            )
         }
-
-        return suggestions
     }
 
     private func generateComparisonSuggestions(_ text: String) async -> [BranchSuggestion] {
-        // Extract the things being compared
         let components = extractComparisonComponents(from: text)
-
-        return components.enumerated().map { index, component in
+        return components.map { component in
             BranchSuggestion(
                 id: UUID(),
                 title: component,
-                preview: "Deep dive into \(component)...",
+                preview: "Explore \(component) in its own branch",
                 confidence: 0.85,
                 branchType: .exploration
             )
@@ -99,12 +81,11 @@ actor SuggestionEngine {
 
     private func generateHypotheticalSuggestions(_ text: String) async -> [BranchSuggestion] {
         let scenario = extractHypothetical(from: text)
-
         return [
             BranchSuggestion(
                 id: UUID(),
-                title: "Explore: \(scenario)",
-                preview: "What if \(scenario)...",
+                title: "What if: \(scenario)",
+                preview: "Explore this hypothetical in a separate branch",
                 confidence: 0.75,
                 branchType: .exploration
             )
@@ -112,78 +93,63 @@ actor SuggestionEngine {
     }
 
     private func generateAlternativeSuggestions(_ text: String) async -> [BranchSuggestion] {
+        let topic = extractTopic(from: text)
         return [
             BranchSuggestion(
                 id: UUID(),
-                title: "Alternative Approach",
-                preview: "Exploring alternative path...",
+                title: "Alternative: \(topic)",
+                preview: "Try a different approach in a new branch",
                 confidence: 0.7,
                 branchType: .exploration
             )
         ]
     }
 
-    private func generateImplicitSuggestions(_ text: String) async -> [BranchSuggestion] {
-        // Detect if there are multiple valid approaches
-        return [
-            BranchSuggestion(
-                id: UUID(),
-                title: "Option A",
-                preview: "Standard approach...",
-                confidence: 0.6,
-                branchType: .exploration
-            ),
-            BranchSuggestion(
-                id: UUID(),
-                title: "Option B",
-                preview: "Alternative approach...",
-                confidence: 0.6,
-                branchType: .exploration
-            )
-        ]
-    }
-
-    // MARK: - Analysis Helpers
-
-    private func hasMultipleApproaches(_ text: String) async -> Bool {
-        // Simple heuristic: check for choice indicators
-        let choiceIndicators = ["or", "either", "could", "might", "perhaps"]
-        let lowercased = text.lowercased()
-
-        let count = choiceIndicators.filter { lowercased.contains($0) }.count
-        return count >= 2
-    }
+    // MARK: - Extraction Helpers
 
     private func extractTopic(from text: String) -> String {
-        // Simple extraction - take the main subject
-        // TODO: Use NLP for better topic extraction
-        let words = text.split(separator: " ")
-        if words.count > 3 {
-            return words.suffix(3).joined(separator: " ")
+        // Strip trigger phrases, take the meaningful remainder
+        let triggers = ["try both", "both approaches", "compare", "what if", "or we could",
+                        "alternatively", "two ways", "three options", "vs"]
+        var cleaned = text
+        for t in triggers {
+            cleaned = cleaned.replacingOccurrences(of: t, with: "", options: .caseInsensitive)
         }
-        return "this topic"
+        let words = cleaned.split(separator: " ").filter { $0.count > 2 }.map(String.init)
+        let meaningful = words.suffix(4).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return meaningful.isEmpty ? "this approach" : meaningful
     }
 
     private func extractComparisonComponents(from text: String) -> [String] {
-        // Extract items being compared (e.g., "JWT vs OAuth" -> ["JWT", "OAuth"])
         let lowercased = text.lowercased()
-
+        // "X vs Y" pattern
         if let vsRange = lowercased.range(of: " vs ") {
             let before = String(text[..<vsRange.lowerBound]).trimmingCharacters(in: .whitespaces)
             let after = String(text[vsRange.upperBound...]).trimmingCharacters(in: .whitespaces)
-            return [before, after].map { $0.components(separatedBy: " ").last ?? $0 }
+            let a = before.components(separatedBy: " ").suffix(2).joined(separator: " ")
+            let b = after.components(separatedBy: " ").prefix(2).joined(separator: " ")
+            if !a.isEmpty && !b.isEmpty { return [a, b] }
         }
-
-        return ["Option A", "Option B"]
+        // "compare X and Y" pattern
+        if let compareRange = lowercased.range(of: "compare ") {
+            let remainder = String(text[compareRange.upperBound...])
+            let parts = remainder.components(separatedBy: " and ")
+            if parts.count >= 2 {
+                return [parts[0].trimmingCharacters(in: .whitespaces),
+                        parts[1].trimmingCharacters(in: .whitespaces)]
+            }
+        }
+        let topic = extractTopic(from: text)
+        return [topic, "Alternative to \(topic)"]
     }
 
     private func extractHypothetical(from text: String) -> String {
-        // Extract the hypothetical scenario after "what if"
         let lowercased = text.lowercased()
         if let whatIfRange = lowercased.range(of: "what if ") {
-            return String(text[whatIfRange.upperBound...])
+            let scenario = String(text[whatIfRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+            return scenario.isEmpty ? "this scenario" : scenario
         }
-        return "alternative scenario"
+        return extractTopic(from: text)
     }
 }
 

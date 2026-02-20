@@ -46,12 +46,41 @@ struct WorldTreeApp: App {
                 Button("Forward") { appState.navigateForward() }
                     .keyboardShortcut("]", modifiers: .command)
                     .disabled(!appState.canGoForward)
+
+                Divider()
+
+                Button("Find in Conversation") {
+                    NotificationCenter.default.post(name: .showConversationSearch, object: nil)
+                }
+                .keyboardShortcut("f", modifiers: .command)
             }
         }
 
         Settings {
             SettingsView()
         }
+
+        MenuBarExtra {
+            Button("Open World Tree") {
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            Divider()
+            Button("New Tree") {
+                NSApp.activate(ignoringOtherApps: true)
+                NotificationCenter.default.post(name: .createNewTree, object: nil)
+            }
+            Button("New Branch") {
+                NSApp.activate(ignoringOtherApps: true)
+                NotificationCenter.default.post(name: .createNewBranch, object: nil)
+            }
+            Divider()
+            Button("Quit World Tree") {
+                NSApp.terminate(nil)
+            }
+        } label: {
+            Image(systemName: "tree.fill")
+        }
+        .menuBarExtraStyle(.menu)
     }
 
     private func setupDatabase() {
@@ -112,4 +141,5 @@ struct WorldTreeApp: App {
 extension Notification.Name {
     static let createNewTree = Notification.Name("createNewTree")
     static let createNewBranch = Notification.Name("createNewBranch")
+    static let showConversationSearch = Notification.Name("showConversationSearch")
 }

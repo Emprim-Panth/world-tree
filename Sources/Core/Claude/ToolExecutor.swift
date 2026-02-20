@@ -26,8 +26,13 @@ actor ToolExecutor {
         options: .anchorsMatchLines
     )
 
-    init(workingDirectory: URL) {
+    /// tmux session name for the active branch — when set, bash tool calls route through
+    /// the visible terminal so Evan can watch execution live and interact if needed.
+    let tmuxSessionName: String?
+
+    init(workingDirectory: URL, tmuxSessionName: String? = nil) {
         self.workingDirectory = workingDirectory
+        self.tmuxSessionName = tmuxSessionName
     }
 
     func execute(name: String, input: [String: AnyCodable]) async -> ToolResult {
@@ -35,7 +40,12 @@ actor ToolExecutor {
         case "read_file": return readFile(input)
         case "write_file": return await writeFile(input)
         case "edit_file": return await editFile(input)
-        case "bash": return await bash(input)
+        case "bash":
+            // Route through tmux when a session is available — Evan watches live
+            if let session = tmuxSessionName {
+                return await bashViaTmux(input, sessionName: session)
+            }
+            return await bash(input)
         case "glob": return await globFiles(input)
         case "grep": return await grepFiles(input)
         case "build_project": return await buildProject(input)
@@ -263,6 +273,88 @@ actor ToolExecutor {
             output = String(output.prefix(maxOutputSize)) + "\n[Output truncated at \(maxOutputSize) bytes]"
         }
 
+        if exitCode != 0 {
+            output += "\n[exit code: \(exitCode)]"
+        }
+
+        return ToolResult(content: output, isError: exitCode != 0)
+    }
+
+    // MARK: - bash via tmux
+
+    /// Run a bash command inside the branch's live tmux session.
+    /// The command is visible in the terminal — Evan can watch it execute and interact.
+    /// Output is captured via a temp file so the result is returned to Cortana as normal.
+    private func bashViaTmux(_ input: [String: AnyCodable], sessionName: String) async -> ToolResult {
+        guard let command = input["command"]?.value as? String else {
+            return ToolResult(content: "Missing required parameter: command", isError: true)
+        }
+
+        // Security gate — same as direct bash
+        let plainInput = input.mapValues { $0.value as Any }
+        let assessment = ToolGuard.assess(toolName: "bash", input: plainInput)
+        if assessment.requiresApproval {
+            canvasLog("[ToolGuard] BLOCKED: \(assessment.reason) — command: \(command.prefix(100))")
+            return ToolResult(
+                content: "[Security Gate] Operation blocked: \(assessment.reason). Command requires human approval.",
+                isError: true
+            )
+        }
+
+        let timeoutSecs = min((input["timeout"]?.value as? Int) ?? 120, 600)
+        let uuid = UUID().uuidString
+        let scriptPath = "/tmp/canvas-\(uuid).sh"
+        let outputPath = "/tmp/canvas-\(uuid).out"
+        let exitPath   = "/tmp/canvas-\(uuid).exit"
+
+        // Write a self-contained script that captures output and exit code
+        let script = """
+            #!/bin/bash
+            export PATH="\(home)/.local/bin:\(home)/.cortana/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+            export HOME="\(home)"
+            cd '\(workingDirectory.path.replacingOccurrences(of: "'", with: "'\\''"))'
+            (\(command)) > '\(outputPath)' 2>&1
+            echo $? > '\(exitPath)'
+            """
+        do {
+            try script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755 as NSNumber], ofItemAtPath: scriptPath)
+        } catch {
+            canvasLog("[ToolExecutor] bashViaTmux: failed to write script — \(error)")
+            return await bash(input) // fallback to direct execution
+        }
+
+        // Run the script inside the tmux session
+        let sendProc = Process()
+        sendProc.executableURL = URL(fileURLWithPath: tmuxExecutable)
+        sendProc.arguments = ["send-keys", "-t", sessionName, "bash '\(scriptPath)'", "Enter"]
+        sendProc.standardOutput = FileHandle.nullDevice
+        sendProc.standardError = FileHandle.nullDevice
+        try? sendProc.run()
+        sendProc.waitUntilExit()
+
+        // Poll for completion (200ms intervals, up to timeout)
+        let deadline = Date().addingTimeInterval(Double(timeoutSecs))
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            if FileManager.default.fileExists(atPath: exitPath) { break }
+        }
+
+        // Read results
+        var output = (try? String(contentsOfFile: outputPath, encoding: .utf8)) ?? ""
+        let exitStr = (try? String(contentsOfFile: exitPath, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "1"
+        let exitCode = Int32(exitStr) ?? 1
+
+        // Clean up temp files
+        try? FileManager.default.removeItem(atPath: scriptPath)
+        try? FileManager.default.removeItem(atPath: outputPath)
+        try? FileManager.default.removeItem(atPath: exitPath)
+
+        if output.count > maxOutputSize {
+            output = String(output.prefix(maxOutputSize)) + "\n[Output truncated at \(maxOutputSize) bytes]"
+        }
         if exitCode != 0 {
             output += "\n[exit code: \(exitCode)]"
         }

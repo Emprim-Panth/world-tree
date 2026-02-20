@@ -69,7 +69,14 @@ final class AnthropicAPIProvider: LLMProvider {
 
                     let selectedModel = context.model ?? CortanaConstants.defaultModel
                     let cwd = self.resolveWorkingDirectory(context.workingDirectory, project: context.project)
-                    let executor = ToolExecutor(workingDirectory: URL(fileURLWithPath: cwd))
+                    // Pass the branch's tmux session name so bash tool calls run visibly in the terminal
+                    let tmuxSession = await MainActor.run {
+                        BranchTerminalManager.shared.sessionName(for: context.branchId)
+                    }
+                    let executor = ToolExecutor(
+                        workingDirectory: URL(fileURLWithPath: cwd),
+                        tmuxSessionName: tmuxSession
+                    )
                     var cumulativeUsage = TokenUsage.zero
 
                     // Tool loop

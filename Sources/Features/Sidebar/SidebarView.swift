@@ -31,6 +31,10 @@ struct SidebarView: View {
     @State private var deleteProjectTarget: String?
     @State private var showDeleteProjectConfirm = false
 
+    // Error display
+    @State private var showErrorAlert = false
+    @State private var errorMessage = ""
+
     // Rename category
     @State private var renamingCategory: String?
     @State private var renameCategoryText = ""
@@ -38,6 +42,10 @@ struct SidebarView: View {
 
     // New tree pre-filled for a specific category
     @State private var quickNewTreeProject = ""
+
+    // Drag-to-reorder state for project groups
+    @State private var draggingProject: String?
+    @State private var dragOverProject: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -111,37 +119,86 @@ struct SidebarView: View {
                     // Normal tree list (hidden when content search is active)
                     if viewModel.searchScope != .content || viewModel.searchText.isEmpty {
                         ForEach(viewModel.allProjectGroups, id: \.project) { group in
-                            // Project header row (replaces old plain text label)
-                            ProjectGroupHeader(
-                                projectName: group.project,
-                                resolvedPath: viewModel.resolvedPath(for: group.project),
-                                gitInfo: viewModel.gitInfo(for: group.project),
-                                typeIcon: viewModel.typeIcon(for: group.project),
-                                treeCount: group.trees.count,
-                                onNewTree: {
-                                    quickNewTreeProject = group.project
-                                    newTreeProject = group.project
-                                    if let path = viewModel.resolvedPath(for: group.project) {
-                                        newTreeWorkingDir = path
-                                    }
-                                    showNewTreeSheet = true
-                                },
-                                onRename: {
-                                    renamingCategory = group.project
-                                    renameCategoryText = group.project
-                                    showRenameCategorySheet = true
-                                },
-                                onPathChanged: { newPath in
-                                    viewModel.updateProjectPath(projectName: group.project, path: newPath)
-                                },
-                                onArchive: {
-                                    viewModel.archiveProject(group.project)
-                                },
-                                onDelete: {
-                                    deleteProjectTarget = group.project
-                                    showDeleteProjectConfirm = true
+                            let isActiveProject = viewModel.isActive(group.project, trees: group.trees)
+                            let isDragTarget = dragOverProject == group.project && draggingProject != group.project
+
+                            VStack(spacing: 0) {
+                                // Drop target indicator
+                                if isDragTarget {
+                                    Rectangle()
+                                        .fill(Color.accentColor.opacity(0.5))
+                                        .frame(height: 2)
+                                        .padding(.horizontal, 8)
                                 }
-                            )
+
+                                HStack(spacing: 0) {
+                                    // Active indicator dot
+                                    if isActiveProject {
+                                        Circle()
+                                            .fill(Color.green)
+                                            .frame(width: 6, height: 6)
+                                            .padding(.leading, 8)
+                                            .padding(.trailing, 2)
+                                    }
+
+                                    ProjectGroupHeader(
+                                        projectName: group.project,
+                                        resolvedPath: viewModel.resolvedPath(for: group.project),
+                                        gitInfo: viewModel.gitInfo(for: group.project),
+                                        typeIcon: viewModel.typeIcon(for: group.project),
+                                        treeCount: group.trees.count,
+                                        onNewTree: {
+                                            quickNewTreeProject = group.project
+                                            newTreeProject = group.project
+                                            if let path = viewModel.resolvedPath(for: group.project) {
+                                                newTreeWorkingDir = path
+                                            }
+                                            showNewTreeSheet = true
+                                        },
+                                        onRename: {
+                                            renamingCategory = group.project
+                                            renameCategoryText = group.project
+                                            showRenameCategorySheet = true
+                                        },
+                                        onPathChanged: { newPath in
+                                            viewModel.updateProjectPath(projectName: group.project, path: newPath)
+                                        },
+                                        onArchive: {
+                                            viewModel.archiveProject(group.project)
+                                        },
+                                        onDelete: {
+                                            deleteProjectTarget = group.project
+                                            showDeleteProjectConfirm = true
+                                        }
+                                    )
+                                }
+                                .opacity(draggingProject == group.project ? 0.4 : 1.0)
+                                .onDrag {
+                                    draggingProject = group.project
+                                    return NSItemProvider(object: group.project as NSString)
+                                }
+                                .onDrop(of: [.text], isTargeted: Binding(
+                                    get: { dragOverProject == group.project },
+                                    set: { if $0 { dragOverProject = group.project } else if dragOverProject == group.project { dragOverProject = nil } }
+                                )) { providers in
+                                    guard let source = draggingProject,
+                                          source != group.project else {
+                                        draggingProject = nil; dragOverProject = nil
+                                        return false
+                                    }
+                                    let groups = viewModel.allProjectGroups
+                                    if let fromIdx = groups.firstIndex(where: { $0.project == source }),
+                                       let toIdx   = groups.firstIndex(where: { $0.project == group.project }) {
+                                        viewModel.moveProject(
+                                            from: IndexSet(integer: fromIdx),
+                                            to: fromIdx < toIdx ? toIdx + 1 : toIdx,
+                                            in: groups
+                                        )
+                                    }
+                                    draggingProject = nil; dragOverProject = nil
+                                    return true
+                                }
+                            }
 
                             ForEach(group.trees) { tree in
                                 treeRow(tree)
@@ -225,7 +282,7 @@ struct SidebarView: View {
                 .help("Create a new project and tree")
             }
         }
-        .navigationTitle("Canvas")
+        .navigationTitle("World Tree")
         .onAppear {
             viewModel.loadTrees()
             viewModel.startObserving()
@@ -271,6 +328,20 @@ struct SidebarView: View {
             Button("Cancel", role: .cancel) { deleteProjectTarget = nil }
         } message: {
             Text("This permanently deletes all trees and messages in \"\(deleteProjectTarget ?? "")\".\nThis cannot be undone.")
+        }
+        // Error alert — surfaces silent failures (delete errors, DB errors, etc.)
+        .alert("Error", isPresented: $showErrorAlert) {
+            Button("OK", role: .cancel) {
+                viewModel.error = nil
+            }
+        } message: {
+            Text(errorMessage)
+        }
+        .onChange(of: viewModel.error) { _, newError in
+            if let msg = newError, !msg.isEmpty {
+                errorMessage = msg
+                showErrorAlert = true
+            }
         }
     }
 

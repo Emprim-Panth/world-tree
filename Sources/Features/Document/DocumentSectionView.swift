@@ -4,8 +4,11 @@ import SwiftUI
 struct DocumentSectionView: View {
     let section: DocumentSection
     let isHovered: Bool
+    var showInferButton: Bool = false
     let onEdit: (AttributedString) -> Void
     let onBranch: () -> Void
+    var onInfer: (() -> Void)?
+    var onNavigateToBranch: ((String) -> Void)?
     var onFixError: ((ToolCall) -> Void)?
 
     @State private var isEditing = false
@@ -14,20 +17,26 @@ struct DocumentSectionView: View {
     init(
         section: DocumentSection,
         isHovered: Bool,
+        showInferButton: Bool = false,
         onEdit: @escaping (AttributedString) -> Void,
         onBranch: @escaping () -> Void,
+        onInfer: (() -> Void)? = nil,
+        onNavigateToBranch: ((String) -> Void)? = nil,
         onFixError: ((ToolCall) -> Void)? = nil
     ) {
         self.section = section
         self.isHovered = isHovered
+        self.showInferButton = showInferButton
         self.onEdit = onEdit
         self.onBranch = onBranch
+        self.onInfer = onInfer
+        self.onNavigateToBranch = onNavigateToBranch
         self.onFixError = onFixError
         _editedContent = State(initialValue: section.content)
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        let rowContent = HStack(alignment: .top, spacing: 12) {
             // Author indicator (subtle, left margin)
             AuthorIndicator(author: section.author)
                 .frame(width: 32, height: 32)
@@ -74,7 +83,7 @@ struct DocumentSectionView: View {
                     FlowAttachmentRow(attachments: attachments)
                 }
 
-                // Timestamp and tokens (subtle)
+                // Timestamp + token count + finding signal dot
                 HStack(spacing: 8) {
                     Text(section.timestamp, style: .time)
                         .font(.caption2)
@@ -85,24 +94,54 @@ struct DocumentSectionView: View {
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
+
+                    // Subtle purple dot when scanner detected a finding signal
+                    if section.hasFindingSignal {
+                        Circle()
+                            .fill(Color.purple)
+                            .frame(width: 6, height: 6)
+                            .help("This response may contain a finding — consider inferring to parent branch")
+                    }
                 }
                 .padding(.top, 4)
+
+                // Inline fork badge — shows when child branches exist
+                if section.hasBranches, let messageId = section.messageId {
+                    BranchBadgeView(messageId: messageId, onTap: onNavigateToBranch)
+                        .padding(.top, 2)
+                }
             }
             .padding(.vertical, 8)
 
             Spacer()
 
-            // Branch button (appears on hover)
+            // Action buttons (appear on hover)
             if isHovered && section.branchPoint {
-                Button(action: onBranch) {
-                    Image(systemName: "arrow.turn.up.right")
-                        .font(.system(size: 12))
-                        .foregroundColor(.blue)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
+                VStack(spacing: 4) {
+                    // Fork: create a new branch from this message
+                    Button(action: onBranch) {
+                        Image(systemName: "arrow.turn.up.right")
+                            .font(.system(size: 12))
+                            .foregroundColor(.blue)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Branch from here")
+
+                    // Infer: push this message to parent branch as a finding
+                    if showInferButton {
+                        Button(action: { onInfer?() }) {
+                            Image(systemName: "arrow.up.to.line")
+                                .font(.system(size: 12))
+                                .foregroundColor(.purple)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Infer finding to parent branch")
+                    }
                 }
-                .buttonStyle(.plain)
-                .help("Branch from here")
             }
         }
         .padding(.horizontal, 0)
@@ -110,6 +149,97 @@ struct DocumentSectionView: View {
             isHovered ? Color.blue.opacity(0.05) : Color.clear
         )
         .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .contextMenu {
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(String(section.content.characters), forType: .string)
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+
+            if section.branchPoint {
+                Divider()
+                Button {
+                    onBranch()
+                } label: {
+                    Label("Branch from here", systemImage: "arrow.triangle.branch")
+                }
+            }
+
+            if showInferButton {
+                Button {
+                    onInfer?()
+                } label: {
+                    Label("Infer to parent", systemImage: "arrow.up.to.line")
+                }
+            }
+        }
+
+        // Finding messages get a purple left border + tinted background
+        if section.isFinding {
+            return AnyView(
+                HStack(spacing: 0) {
+                    Rectangle()
+                        .fill(Color.purple.opacity(0.5))
+                        .frame(width: 3)
+                    rowContent
+                        .padding(.leading, 8)
+                }
+                .background(Color.purple.opacity(0.05))
+                .cornerRadius(6)
+                .padding(.vertical, 2)
+            )
+        } else {
+            return AnyView(rowContent)
+        }
+    }
+}
+
+// MARK: - Branch Badge
+
+/// Compact inline indicator shown below messages that have child branches.
+/// Tapping navigates to the branch.
+struct BranchBadgeView: View {
+    let messageId: String
+    var onTap: ((String) -> Void)?
+
+    @State private var branches: [Branch] = []
+
+    var body: some View {
+        Group {
+            if !branches.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 10))
+                    if branches.count == 1 {
+                        Text(branches[0].displayTitle)
+                            .lineLimit(1)
+                    } else {
+                        Text("\(branches.count) branches")
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.blue)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.blue.opacity(0.1))
+                .cornerRadius(10)
+                .onTapGesture {
+                    if let first = branches.first {
+                        onTap?(first.id)
+                    }
+                }
+            }
+        }
+        .onAppear { loadBranches() }
+    }
+
+    private func loadBranches() {
+        Task { @MainActor in
+            if let intId = Int(messageId) {
+                branches = (try? TreeStore.shared.branchesFromMessage(intId)) ?? []
+            }
+        }
     }
 }
 
