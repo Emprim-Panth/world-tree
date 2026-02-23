@@ -756,7 +756,7 @@ class DocumentEditorViewModel: ObservableObject {
                     let role: String
                     switch section.author {
                     case .user: role = "You"
-                    case .assistant: role = "Cortana"
+                    case .assistant: role = LocalAgentIdentity.name
                     case .system: role = "System"
                     }
                     let text = String(section.content.characters.prefix(500))
@@ -910,7 +910,7 @@ class DocumentEditorViewModel: ObservableObject {
             if !fullResponse.hasPrefix("⚠️"), !NSApp.isActive {
                 let preview = String(fullResponse.prefix(120))
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                Task { await NotificationManager.shared.notify(title: "Cortana", body: preview) }
+                Task { await NotificationManager.shared.notify(title: LocalAgentIdentity.name, body: preview) }
             }
 
             // Auto-speak the response if enabled
@@ -1021,7 +1021,7 @@ struct EmptyConversationView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
 
-            Text("Ask anything — Cortana has full access to your project files,\nterminal, and knowledge base.")
+            Text("Ask anything — \(LocalAgentIdentity.name) has full access to your project files,\nterminal, and knowledge base.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -1281,7 +1281,7 @@ struct UserInputArea: View {
 
                     ZStack(alignment: .topLeading) {
                         if text.isEmpty && attachments.isEmpty {
-                            Text("Message Cortana… or drop images/files here")
+                            Text("Message \(LocalAgentIdentity.name)… or drop images/files here")
                                 .font(.system(.body))
                                 .foregroundStyle(.tertiary)
                                 .padding(.horizontal, 8)

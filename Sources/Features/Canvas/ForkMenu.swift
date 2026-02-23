@@ -33,7 +33,7 @@ struct ForkMenu: View {
 
             // Source message preview
             VStack(alignment: .leading, spacing: 4) {
-                Text(sourceMessage.role == .user ? "You" : "Cortana")
+                Text(sourceMessage.role == .user ? "You" : LocalAgentIdentity.name)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(sourceMessage.content)

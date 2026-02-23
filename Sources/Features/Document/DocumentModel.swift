@@ -59,7 +59,7 @@ enum Author: Equatable {
     var displayName: String {
         switch self {
         case .user(let name): return name
-        case .assistant: return "Cortana"
+        case .assistant: return LocalAgentIdentity.name
         case .system: return "System"
         }
     }
@@ -67,7 +67,7 @@ enum Author: Equatable {
     var color: Color {
         switch self {
         case .user: return .blue
-        case .assistant: return .purple
+        case .assistant: return .teal
         case .system: return .gray
         }
     }

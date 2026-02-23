@@ -664,7 +664,7 @@ struct SettingsView: View {
             Section("Text-to-Speech") {
                 Toggle("Auto-speak responses", isOn: $voiceAutoSpeak)
 
-                Text("When enabled, Cortana reads responses aloud using system TTS. You can also right-click any response and choose \"Read Aloud\".")
+                Text("When enabled, \(LocalAgentIdentity.name) reads responses aloud using system TTS. You can also right-click any response and choose \"Read Aloud\".")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -701,7 +701,7 @@ struct SettingsView: View {
                     Task {
                         let options = SpeechOptions(speed: voiceSpeed, pitch: voicePitch)
                         try? await VoiceService.shared.speak(
-                            "I'm Cortana. Systems are nominal.",
+                            "I'm \(LocalAgentIdentity.name). Systems are nominal.",
                             options: options
                         )
                     }

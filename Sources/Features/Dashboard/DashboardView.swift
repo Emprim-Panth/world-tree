@@ -76,7 +76,7 @@ struct DashboardView: View {
                         Text("No conversations yet")
                             .font(.headline)
                             .foregroundStyle(.secondary)
-                        Text("Create a tree to start branching conversations with Cortana.")
+                        Text("Create a tree to start branching conversations with \(LocalAgentIdentity.name).")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                             .multilineTextAlignment(.center)

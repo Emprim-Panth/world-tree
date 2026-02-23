@@ -191,7 +191,7 @@ class ContextInspectorViewModel: ObservableObject {
                 var i = 0
                 while i < messages.count {
                     let msg = messages[i]
-                    let role = msg.role == "user" ? "You" : "Cortana"
+                    let role = msg.role == "user" ? "You" : LocalAgentIdentity.name
                     let textContent = msg.content.compactMap { block -> String? in
                         if case .text(let t) = block { return t }
                         return nil
@@ -249,8 +249,8 @@ class ContextInspectorViewModel: ObservableObject {
 
     /// Derive a human-readable title from the content of a system block.
     private func systemBlockTitle(for text: String, index: Int) -> String {
-        if text.contains("You are Cortana") || text.contains("First Officer") {
-            return "Cortana Identity"
+        if text.contains("You are Cortana") || text.contains("You are Friday") || text.contains("First Officer") {
+            return "\(LocalAgentIdentity.name) Identity"
         } else if text.contains("CLAUDE.md") || text.contains("Operating Principles") {
             return "CLAUDE.md Instructions"
         } else if text.contains("Active Project:") || text.contains("# Active Project") {

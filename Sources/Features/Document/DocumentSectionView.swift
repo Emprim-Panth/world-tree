@@ -303,7 +303,7 @@ struct AuthorIndicator: View {
         case .user(let name):
             return String(name.prefix(1).uppercased())
         case .assistant:
-            return "💠"
+            return LocalAgentIdentity.initial
         case .system:
             return "⚙︎"
         }
