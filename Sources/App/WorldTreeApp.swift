@@ -133,7 +133,11 @@ struct WorldTreeApp: App {
     }
 
     private func startCanvasServerIfEnabled() {
-        guard UserDefaults.standard.bool(forKey: CanvasServer.enabledKey) else { return }
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: CanvasServer.enabledKey) == nil {
+            defaults.set(true, forKey: CanvasServer.enabledKey) // default on
+        }
+        guard defaults.bool(forKey: CanvasServer.enabledKey) else { return }
         CanvasServer.shared.start()
     }
 
