@@ -177,6 +177,9 @@ final class ClaudeCodeProvider: LLMProvider {
             self.stateLock.unlock()
 
             let parser = CLIStreamParser()
+            // Track whether any content event was yielded during this run.
+            var yieldedContent = false
+            var resumeFailedSilently = false
 
             // Read stdout on serial parse queue for ordered access
             stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -186,6 +189,8 @@ final class ClaudeCodeProvider: LLMProvider {
                 self?.parseQueue.async {
                     let events = parser.feed(data)
                     for event in events {
+                        // Track content yield so termination handler can detect silent empty runs.
+                        if case .text = event { yieldedContent = true }
                         continuation.yield(event)
                     }
                     if let sid = parser.cliSessionId, let self {
@@ -193,6 +198,7 @@ final class ClaudeCodeProvider: LLMProvider {
                         // but got back a different session ID, the CLI started fresh.
                         if let expected = self.getCliSession(for: context.sessionId), expected != sid {
                             canvasLog("[ClaudeCodeProvider] ⚠️ Resume failed silently — new session. Expected: \(expected.prefix(8))…, Got: \(sid.prefix(8))…")
+                            resumeFailedSilently = true
                         }
                         self.setCliSession(sid, for: context.sessionId)
                     }
@@ -206,6 +212,7 @@ final class ClaudeCodeProvider: LLMProvider {
 
                     let remaining = parser.flush()
                     for event in remaining {
+                        if case .text = event { yieldedContent = true }
                         continuation.yield(event)
                     }
 
@@ -220,6 +227,11 @@ final class ClaudeCodeProvider: LLMProvider {
 
                     if process.terminationStatus != 0 && !parser.isError {
                         continuation.yield(.error("CLI exited with status \(process.terminationStatus)"))
+                    } else if !yieldedContent && resumeFailedSilently {
+                        // Resume silently started a new session but produced no content.
+                        // Surface as an error so the caller can retry or surface to the user.
+                        canvasLog("[ClaudeCodeProvider] ⚠️ Resume fallback produced no content — surfacing error")
+                        continuation.yield(.error("Session resume failed and retry produced no response. Please try again."))
                     }
 
                     let usage = SessionTokenUsage()
