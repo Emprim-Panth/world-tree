@@ -1,7 +1,8 @@
 import SwiftUI
 import AVFoundation
 
-/// Floating voice control panel - always accessible
+/// Floating voice control panel — shows listening state and live transcription.
+/// TTS settings live in Settings > Voice (cortana soul additions). This handles input only.
 struct VoiceControlView: View {
     @StateObject private var viewModel = VoiceControlViewModel()
     @State private var isExpanded = false
@@ -21,11 +22,17 @@ struct VoiceControlView: View {
     }
 
     private var compactView: some View {
-        Button(action: { isExpanded.toggle() }) {
+        Button(action: {
+            if viewModel.isListening {
+                viewModel.toggleListening()
+            } else {
+                isExpanded.toggle()
+            }
+        }) {
             HStack(spacing: 8) {
                 Image(systemName: viewModel.isListening ? "waveform" : "mic.fill")
                     .font(.system(size: 16))
-                    .foregroundColor(viewModel.isListening ? .red : .blue)
+                    .foregroundColor(viewModel.isListening ? .red : .accentColor)
                     .symbolEffect(.variableColor.iterative, isActive: viewModel.isListening)
 
                 if viewModel.isListening {
@@ -44,7 +51,7 @@ struct VoiceControlView: View {
         VStack(spacing: 16) {
             // Header
             HStack {
-                Text("Voice Control")
+                Text("Voice Input")
                     .font(.headline)
 
                 Spacer()
@@ -61,11 +68,11 @@ struct VoiceControlView: View {
                 .frame(height: 60)
 
             // Status
-            Text(statusText)
+            Text(viewModel.statusText)
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(viewModel.errorMessage != nil ? .red : .secondary)
 
-            // Transcription
+            // Live transcription
             if !viewModel.currentTranscription.isEmpty {
                 ScrollView {
                     Text(viewModel.currentTranscription)
@@ -78,158 +85,97 @@ struct VoiceControlView: View {
                 .frame(maxHeight: 100)
             }
 
-            // Controls
-            HStack(spacing: 12) {
-                // Push-to-talk / Continuous toggle
-                Button(action: { viewModel.toggleListening() }) {
-                    VStack(spacing: 4) {
-                        Image(systemName: viewModel.isListening ? "mic.fill" : "mic.slash.fill")
-                            .font(.system(size: 32))
-                            .foregroundColor(viewModel.isListening ? .red : .blue)
+            // Mic button
+            Button(action: { viewModel.toggleListening() }) {
+                VStack(spacing: 4) {
+                    Image(systemName: viewModel.isListening ? "mic.fill" : "mic.slash.fill")
+                        .font(.system(size: 32))
+                        .foregroundColor(viewModel.isListening ? .red : .accentColor)
 
-                        Text(viewModel.isListening ? "Stop" : "Start")
-                            .font(.caption2)
-                    }
-                }
-                .buttonStyle(.plain)
-                .frame(width: 80, height: 80)
-                .background(viewModel.isListening ? Color.red.opacity(0.1) : Color.blue.opacity(0.1))
-                .cornerRadius(12)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("Continuous Mode", isOn: $viewModel.continuousMode)
-                        .toggleStyle(.switch)
-                        .font(.caption)
-
-                    Toggle("Commands Only", isOn: $viewModel.commandsOnly)
-                        .toggleStyle(.switch)
-                        .font(.caption)
-
-                    Picker("Provider", selection: $viewModel.selectedProvider) {
-                        Text("Whisper").tag(0)
-                        Text("Elevenlabs").tag(1)
-                        Text("System").tag(2)
-                    }
-                    .pickerStyle(.segmented)
-                    .font(.caption2)
+                    Text(viewModel.isListening ? "Stop" : "Start")
+                        .font(.caption2)
                 }
             }
-
-            // Recent commands
-            if !viewModel.recentCommands.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Recent Commands")
-                        .font(.caption2.bold())
-                        .foregroundColor(.secondary)
-
-                    ForEach(viewModel.recentCommands.prefix(3), id: \.self) { command in
-                        HStack {
-                            Image(systemName: "command")
-                                .font(.system(size: 10))
-                                .foregroundColor(.blue)
-
-                            Text(command)
-                                .font(.caption2)
-                                .lineLimit(1)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            .buttonStyle(.plain)
+            .frame(width: 80, height: 80)
+            .background(viewModel.isListening ? Color.red.opacity(0.1) : Color.accentColor.opacity(0.1))
+            .cornerRadius(12)
         }
         .padding(16)
-        .frame(width: 300)
-    }
-
-    private var statusText: String {
-        if viewModel.isListening {
-            return viewModel.continuousMode ? "Continuous conversation..." : "Listening for input..."
-        } else if viewModel.isProcessing {
-            return "Processing..."
-        } else {
-            return "Ready to listen"
-        }
+        .frame(width: 280)
     }
 }
 
 @MainActor
 class VoiceControlViewModel: ObservableObject {
     @Published var isListening = false
-    @Published var isProcessing = false
     @Published var audioLevel: Double = 0.0
     @Published var currentTranscription = ""
-    @Published var continuousMode = false
-    @Published var commandsOnly = false
-    @Published var selectedProvider = 0
-    @Published var recentCommands: [String] = []
+    @Published var errorMessage: String?
 
     private var levelTimer: Timer?
 
-    init() {
-        setupVoiceService()
+    var statusText: String {
+        if let error = errorMessage { return error }
+        if isListening { return "Listening — speak now..." }
+        return "Tap to start voice input"
     }
 
-    private func setupVoiceService() {
-        Task {
-            // Listen for transcriptions
-            await VoiceService.shared.onTranscription { [weak self] text in
-                Task { @MainActor in
-                    self?.currentTranscription = text
-                }
-            }
+    init() {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleTranscription),
+            name: VoiceService.transcriptionUpdated, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleListeningState),
+            name: VoiceService.listeningStateChanged, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleVoiceError),
+            name: VoiceService.voiceError, object: nil)
+    }
 
-            // Listen for commands
-            await VoiceService.shared.onCommand { [weak self] command, text in
-                Task { @MainActor in
-                    self?.recentCommands.insert(text, at: 0)
-                    if self?.recentCommands.count ?? 0 > 10 {
-                        self?.recentCommands.removeLast()
-                    }
-                }
-            }
+    @objc private func handleTranscription(_ notification: Notification) {
+        currentTranscription = notification.userInfo?["text"] as? String ?? ""
+    }
+
+    @objc private func handleListeningState(_ notification: Notification) {
+        isListening = notification.userInfo?["isListening"] as? Bool ?? false
+        if !isListening {
+            stopAudioLevelMonitoring()
+        }
+    }
+
+    @objc private func handleVoiceError(_ notification: Notification) {
+        errorMessage = notification.userInfo?["error"] as? String
+        // Clear error after 5 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.errorMessage = nil
         }
     }
 
     func toggleListening() {
         if isListening {
-            stopListening()
+            Task { await VoiceService.shared.stopListening() }
         } else {
-            startListening()
-        }
-    }
-
-    private func startListening() {
-        isListening = true
-
-        Task {
-            do {
-                let mode: ListeningMode = commandsOnly ? .command : (continuousMode ? .continuous : .pushToTalk)
-                try await VoiceService.shared.startListening(mode: mode)
-
-                // Start audio level monitoring
-                startAudioLevelMonitoring()
-            } catch {
-                print("Failed to start listening: \(error)")
-                isListening = false
+            errorMessage = nil
+            Task {
+                let granted = await VoiceService.shared.requestPermissions()
+                guard granted else { return }
+                do {
+                    try await VoiceService.shared.startListening()
+                    startAudioLevelMonitoring()
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
             }
-        }
-    }
-
-    private func stopListening() {
-        isListening = false
-
-        Task {
-            await VoiceService.shared.stopListening()
-            stopAudioLevelMonitoring()
         }
     }
 
     private func startAudioLevelMonitoring() {
         levelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            // Timer fires on RunLoop.main — hop to MainActor to satisfy Swift concurrency checker.
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.audioLevel = Double.random(in: 0...1) * (self.isListening ? 1.0 : 0.1)
+                guard let self, self.isListening else { return }
+                // Simulate audio level — real levels come from the audio engine
+                self.audioLevel = Double.random(in: 0.1...0.8)
             }
         }
     }
@@ -255,7 +201,7 @@ struct WaveformView: View {
                 context.stroke(
                     path,
                     with: .linearGradient(
-                        Gradient(colors: [.blue, .purple]),
+                        Gradient(colors: [.cyan, .blue]),
                         startPoint: .zero,
                         endPoint: CGPoint(x: size.width, y: 0)
                     ),

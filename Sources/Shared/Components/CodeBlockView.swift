@@ -7,9 +7,12 @@ struct CodeBlockView: View {
     let code: String
     let language: String?
 
+    @Environment(\.conversationHPad) private var conversationHPad
+
     @State private var isHoveringCode = false
+    @State private var justCopied = false
     @State private var syntaxHeight: CGFloat = 80
-    @State private var previewHeight: CGFloat = 300
+    @State private var previewHeight: CGFloat = 500
 
     // Mermaid/HTML/SVG default to preview-on; source code defaults to source-on
     @State private var showPreview: Bool
@@ -53,20 +56,25 @@ struct CodeBlockView: View {
                     .padding(.vertical, 2)
                 }
 
-                // Copy button (shown on hover)
-                if isHoveringCode {
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(code, forType: .string)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                // Copy button — always in layout to prevent shift, opacity-controlled
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(code, forType: .string)
+                    withAnimation(.easeInOut(duration: 0.15)) { justCopied = true }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        withAnimation(.easeInOut(duration: 0.15)) { justCopied = false }
                     }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, 8)
-                    .padding(.vertical, 2)
+                } label: {
+                    Image(systemName: justCopied ? "checkmark" : "doc.on.doc")
+                        .font(.caption2)
+                        .foregroundStyle(justCopied ? .green : .secondary)
+                        .contentTransition(.symbolEffect(.replace))
                 }
+                .buttonStyle(.plain)
+                .padding(.trailing, 8)
+                .padding(.vertical, 2)
+                .opacity(isHoveringCode || justCopied ? 1 : 0)
+                .animation(.easeInOut(duration: 0.15), value: isHoveringCode)
             }
             .background(Color(nsColor: .quaternaryLabelColor).opacity(0.3))
 
@@ -91,6 +99,9 @@ struct CodeBlockView: View {
                     renderedHeight: $previewHeight
                 )
                 .frame(height: previewHeight)
+                // Mermaid breaks out of the conversation's horizontal padding
+                // so it spans the full detail pane width — left edge to right edge.
+                .padding(.horizontal, { if case .mermaid = renderMode { return -conversationHPad }; return 0 }())
                 .transition(.opacity)
             }
         }

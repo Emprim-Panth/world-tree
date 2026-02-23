@@ -43,6 +43,8 @@ targets:
     dependencies:
       - package: GRDB
       - package: SwiftTerm
+    entitlements:
+      path: WorldTree.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.forgeandcode.world-tree
@@ -50,6 +52,8 @@ targets:
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_LSUIElement: false
         INFOPLIST_KEY_LSMultipleInstancesProhibited: true
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "World Tree needs microphone access for voice input so you can talk to Cortana instead of typing."
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "World Tree uses on-device speech recognition to transcribe your voice into text."
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "2"
+        CURRENT_PROJECT_VERSION: "3"

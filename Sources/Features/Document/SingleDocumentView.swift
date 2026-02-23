@@ -138,6 +138,7 @@ struct SingleDocumentView: View {
         // they survive branch switching, sidebar navigation, and view recreation.
         // Terminals are only killed by explicit user action (closeBranch, archive, delete)
         // or at app quit via NSApplication.willTerminateNotification.
+
     }
 }
 

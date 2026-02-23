@@ -2,6 +2,18 @@ import SwiftUI
 import Foundation
 import GRDB
 
+// Environment key so child views (e.g. Mermaid blocks) can cancel the
+// conversation's horizontal padding and span the full detail pane width.
+private struct ConversationHPadKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 24
+}
+extension EnvironmentValues {
+    var conversationHPad: CGFloat {
+        get { self[ConversationHPadKey.self] }
+        set { self[ConversationHPadKey.self] = newValue }
+    }
+}
+
 /// Google Docs-style collaborative document editor for conversations
 struct DocumentEditorView: View {
     @StateObject private var viewModel: DocumentEditorViewModel
@@ -11,6 +23,8 @@ struct DocumentEditorView: View {
     @State private var forkBranchType: BranchType = .conversation
     @State private var showSearch = false
     @State private var searchQuery = ""
+    @State private var isAtBottom = true
+    @State private var hasNewMessages = false
 
     var parentBranchLayout: BranchLayoutViewModel?
 
@@ -76,9 +90,9 @@ struct DocumentEditorView: View {
                                 .id("streaming")
                         }
 
-                        // Thinking indicator — shows between submit and first token
-                        if viewModel.isProcessing && viewModel.streamingContent == nil {
-                            ThinkingIndicatorView()
+                        // Thinking indicator — shows until first token arrives
+                        if viewModel.isProcessing && (viewModel.streamingContent == nil || viewModel.streamingContent == "") {
+                            ThinkingIndicatorView(toolDescription: viewModel.currentTool)
                                 .id("thinking")
                                 .padding(.horizontal, 0)
                                 .padding(.vertical, 8)
@@ -138,9 +152,15 @@ struct DocumentEditorView: View {
                             }
                         }
                         .padding(.bottom, 24)
+
+                        // Scroll anchor — tracks whether user is near bottom
+                        Color.clear.frame(height: 1).id("scroll-bottom")
+                            .onAppear { isAtBottom = true; hasNewMessages = false }
+                            .onDisappear { isAtBottom = false }
                     }
                     .padding(.horizontal, max(24, (geometry.size.width - 800) / 2))
                     .padding(.vertical, 24)
+                    .environment(\.conversationHPad, max(24, (geometry.size.width - 800) / 2))
                 }
                 .safeAreaInset(edge: .top, spacing: 0) {
                     if showSearch {
@@ -153,6 +173,39 @@ struct DocumentEditorView: View {
                     }
                 }
                 .animation(.easeInOut(duration: 0.2), value: showSearch)
+                .overlay(alignment: .bottom) {
+                    // Floating scroll-to-bottom — appears when user scrolls up
+                    if !isAtBottom {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                proxy.scrollTo("scroll-bottom", anchor: .bottom)
+                            }
+                            hasNewMessages = false
+                        } label: {
+                            HStack(spacing: 6) {
+                                if hasNewMessages {
+                                    Circle()
+                                        .fill(Color.cyan)
+                                        .frame(width: 8, height: 8)
+                                    Text("New messages")
+                                        .font(.caption)
+                                }
+                                Image(systemName: "arrow.down")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, hasNewMessages ? 14 : 10)
+                            .padding(.vertical, 8)
+                            .background(.ultraThinMaterial)
+                            .clipShape(Capsule())
+                            .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.bottom, 12)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                }
+                .animation(.easeInOut(duration: 0.2), value: isAtBottom)
                 .background(Color(nsColor: .textBackgroundColor))
                 .onAppear {
                     isFocused = true
@@ -172,31 +225,40 @@ struct DocumentEditorView: View {
                         }
                     )
                 }
-                // Unified scroll handler — one source of truth, no race conditions.
-                // Priority: streaming > thinking > new section (never fight each other).
+                // Unified scroll handler — only auto-scrolls when user is at the bottom.
+                // If the user scrolled up to read, we show a "new messages" indicator instead.
                 .onChange(of: viewModel.document.sections.count) { _, _ in
-                    // Only scroll to new section when not streaming — streaming handler owns the anchor then.
                     guard viewModel.streamingContent == nil, !viewModel.isProcessing else { return }
-                    if let lastSection = viewModel.document.sections.last {
+                    if isAtBottom, let lastSection = viewModel.document.sections.last {
                         proxy.scrollTo(lastSection.id, anchor: .bottom)
+                    } else {
+                        hasNewMessages = true
                     }
                 }
                 .onChange(of: viewModel.streamingContent) { _, content in
-                    if content != nil {
-                        proxy.scrollTo("streaming", anchor: .bottom)
-                    } else if let lastSection = viewModel.document.sections.last {
-                        // Streaming ended — snap to the persisted section that replaced it
-                        proxy.scrollTo(lastSection.id, anchor: .bottom)
+                    if isAtBottom {
+                        if content != nil {
+                            proxy.scrollTo("streaming", anchor: .bottom)
+                        } else if let lastSection = viewModel.document.sections.last {
+                            proxy.scrollTo(lastSection.id, anchor: .bottom)
+                        }
+                    } else if content != nil {
+                        hasNewMessages = true
                     }
                 }
                 .onChange(of: viewModel.isProcessing) { _, processing in
-                    if processing && viewModel.streamingContent == nil {
+                    if processing && viewModel.streamingContent == nil && isAtBottom {
                         proxy.scrollTo("thinking", anchor: .bottom)
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .showConversationSearch)) { _ in
                     withAnimation { showSearch = true }
                     isFocused = false
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .choiceSelected)) { notification in
+                    guard let choice = notification.userInfo?["choice"] as? String else { return }
+                    viewModel.currentInput = choice
+                    viewModel.submitInput()
                 }
             }
         }
@@ -217,8 +279,14 @@ class DocumentEditorViewModel: ObservableObject {
     /// Live token stream content — shown in the chat as Cortana types.
     /// Nil when not streaming; cleared once the full response is persisted.
     @Published var streamingContent: String?
+    /// Currently running tool name — shown in the thinking indicator so Evan knows I'm working, not frozen.
+    @Published var currentTool: String?
 
     @Published var pendingForkMessage: Message?
+
+    /// Message IDs from external sources (e.g. Telegram) — shown with 📱 indicator
+    private var externalSourceMessages: Set<String> = []
+    private var externalSourceObserver: NSObjectProtocol?
 
     private let sessionId: String
     private let branchId: String
@@ -239,7 +307,15 @@ class DocumentEditorViewModel: ObservableObject {
     private var stableSectionIds: [String: UUID] = [:]
     /// GRDB ValueObservation cancellable — auto-cancels when view model is deallocated.
     private var messageObservation: AnyDatabaseCancellable?
+    /// Reference to the active streaming task — allows cancellation when user interrupts.
+    private var streamTask: Task<Void, Never>?
     weak var parentBranchLayout: BranchLayoutViewModel?
+
+    deinit {
+        if let observer = externalSourceObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
 
     init(sessionId: String, branchId: String, workingDirectory: String) {
         self.sessionId = sessionId
@@ -260,8 +336,15 @@ class DocumentEditorViewModel: ObservableObject {
         // Start GRDB ValueObservation — fires immediately with existing messages,
         // then re-fires any time the messages table changes for this session.
         // No timer, no polling, no accumulation.
-        guard messageObservation == nil,
-              let dbPool = DatabaseManager.shared.dbPool else { return }
+        guard messageObservation == nil else { return }
+        guard let dbPool = DatabaseManager.shared.dbPool else {
+            // Database not ready yet (app cold start — child .onAppear fires before
+            // WorldTreeApp.onAppear calls setupDatabase). Retry shortly.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.loadDocument()
+            }
+            return
+        }
 
         let sid = sessionId  // capture value type, not self
 
@@ -289,6 +372,31 @@ class DocumentEditorViewModel: ObservableObject {
                 self?.applyMessages(messages)
             }
         )
+
+        // Listen for external message sources (e.g. Telegram → 📱 indicator)
+        if externalSourceObserver == nil {
+            let sid = sessionId
+            externalSourceObserver = NotificationCenter.default.addObserver(
+                forName: .canvasServerExternalMessage,
+                object: nil,
+                queue: .main
+            ) { [weak self] note in
+                guard let info = note.userInfo,
+                      let source = info["source"] as? String,
+                      let noteSessionId = info["sessionId"] as? String,
+                      noteSessionId == sid,
+                      source == "telegram"
+                else { return }
+
+                // Mark the last user section as telegram-sourced
+                if let idx = self?.document.sections.lastIndex(where: {
+                    if case .user = $0.author { return true }
+                    return false
+                }) {
+                    self?.document.sections[idx].source = "telegram"
+                }
+            }
+        }
 
         // Pre-warm provider context + load branch context (treeId, parent, etc.)
         // Runs in background — doesn't block the UI.
@@ -481,10 +589,59 @@ class DocumentEditorViewModel: ObservableObject {
     }
 
     private func processUserInput(_ section: DocumentSection, sectionUUID: UUID? = nil, messageText: String? = nil, attachments: [Attachment] = []) {
+        // If we're mid-stream, persist the partial response before starting the new one.
+        // This prevents the streaming text from vanishing when the user interrupts.
+        if let partialContent = streamingContent, !partialContent.isEmpty {
+            streamTask?.cancel()
+            streamTask = nil
+
+            let partial = partialContent
+            streamingContent = nil
+            currentTool = nil
+
+            // Persist the interrupted response as a completed section
+            do {
+                let msg = try MessageStore.shared.sendMessage(
+                    sessionId: sessionId, role: .assistant, content: partial)
+                seenMessageIds.insert(msg.id)
+                let interruptedSection = DocumentSection(
+                    id: stableId(for: msg.id),
+                    content: AttributedString(partial),
+                    author: .assistant,
+                    timestamp: msg.createdAt,
+                    branchPoint: true,
+                    isEditable: false,
+                    messageId: msg.id
+                )
+                document.sections.append(interruptedSection)
+            } catch {
+                canvasLog("[DocumentEditor] Failed to persist interrupted response: \(error)")
+                let interruptedSection = DocumentSection(
+                    content: AttributedString(partial),
+                    author: .assistant,
+                    timestamp: Date(),
+                    branchPoint: true,
+                    isEditable: false
+                )
+                document.sections.append(interruptedSection)
+            }
+
+            // Close the crash-recovery stream file for the interrupted response
+            Task { await StreamCacheManager.shared.closeStream(sessionId: sessionId) }
+
+            canvasLog("[DocumentEditor] Interrupted mid-stream — preserved partial response (\(partial.count) chars)")
+        } else if streamTask != nil {
+            // Processing but no content yet (thinking state) — just cancel
+            streamTask?.cancel()
+            streamTask = nil
+            streamingContent = nil
+            currentTool = nil
+        }
+
         isProcessing = true
         let content = messageText ?? String(section.content.characters)
 
-        Task {
+        streamTask = Task {
             // 1. Persist user message to DB
             // Evaluate isNew BEFORE inserting — it must reflect whether the session had
             // prior messages, not whether the message we're about to insert exists yet.
@@ -575,13 +732,31 @@ class DocumentEditorViewModel: ObservableObject {
             var hadExplicitError = false
             streamingContent = ""  // Start streaming indicator
 
+            // Open SSD crash-recovery file — survives SIGTERM, auto-deleted on clean completion
+            await StreamCacheManager.shared.openStreamFile(sessionId: sessionId)
+
             for await event in provider.send(context: ctx) {
+                // Bail out cleanly if this task was cancelled (user interrupted)
+                if Task.isCancelled {
+                    canvasLog("[DocumentEditor] Stream task cancelled — stopping token consumption")
+                    break
+                }
+
                 switch event {
                 case .text(let token):
                     fullResponse += token
                     streamingContent = fullResponse  // Live update in chat
+                    // Fire-and-forget — actor serialises writes, never blocks the stream
+                    Task { await StreamCacheManager.shared.appendToStream(sessionId: self.sessionId, chunk: token) }
 
-                case .toolStart, .toolEnd, .done:
+                case .toolStart(let name, let input):
+                    let activity = ToolActivity(name: name, input: input, status: .running)
+                    currentTool = activity.displayDescription
+
+                case .toolEnd:
+                    currentTool = nil
+
+                case .done:
                     break
 
                 case .error(let msg):
@@ -592,6 +767,9 @@ class DocumentEditorViewModel: ObservableObject {
                     }
                 }
             }
+
+            // If cancelled, skip persist — the interruption handler already saved the partial
+            guard !Task.isCancelled else { return }
             // If stream ended with no output and no explicit error, the CLI silently failed.
             if fullResponse.isEmpty && !hadExplicitError {
                 fullResponse = "⚠️ No response received. The request may have been rate-limited or timed out. Please try again."
@@ -628,7 +806,29 @@ class DocumentEditorViewModel: ObservableObject {
                     document.sections.append(assistantSection)
                 }
             }
+            // Clean completion — delete the temp file (nothing to recover)
+            // Actor serialises this after any pending appendToStream calls finish
+            await StreamCacheManager.shared.closeStream(sessionId: sessionId)
+
+            // Update local context cache so next request builds context from SSD, not Dropbox
+            let cacheLimit = await StreamCacheManager.shared.contextMessageLimit
+            let cachedMsgs: [StreamCacheManager.CachedMessage] = document.sections.suffix(cacheLimit).map { section in
+                let role: String
+                switch section.author {
+                case .user:      role = "user"
+                case .assistant: role = "assistant"
+                case .system:    role = "system"
+                }
+                return StreamCacheManager.CachedMessage(
+                    role: role,
+                    content: String(section.content.characters),
+                    timestamp: section.timestamp
+                )
+            }
+            await StreamCacheManager.shared.updateContextCache(sessionId: sessionId, messages: cachedMsgs)
+
             streamingContent = nil  // Clear AFTER section is in place — no blank gap
+            currentTool = nil
 
             // Notify if app is backgrounded so the user knows the response arrived
             if !fullResponse.hasPrefix("⚠️"), !NSApp.isActive {
@@ -637,7 +837,30 @@ class DocumentEditorViewModel: ObservableObject {
                 Task { await NotificationManager.shared.notify(title: "Cortana", body: preview) }
             }
 
+            // Auto-speak the response if enabled
+            if UserDefaults.standard.bool(forKey: "voiceAutoSpeak"),
+               !fullResponse.hasPrefix("⚠️") {
+                let speakText = fullResponse.count > 500
+                    ? String(fullResponse.prefix(500)) + "..."
+                    : fullResponse
+                // Strip markdown for cleaner speech
+                let cleanText = speakText
+                    .replacingOccurrences(of: "```[\\s\\S]*?```", with: " code block ", options: .regularExpression)
+                    .replacingOccurrences(of: "`[^`]+`", with: "", options: .regularExpression)
+                    .replacingOccurrences(of: "#+ ", with: "", options: .regularExpression)
+                    .replacingOccurrences(of: "**", with: "")
+                    .replacingOccurrences(of: "💠", with: "")
+                let rawSpeed = UserDefaults.standard.double(forKey: "voiceSpeed")
+                let rawPitch = UserDefaults.standard.double(forKey: "voicePitch")
+                let voiceOptions = SpeechOptions(
+                    speed: rawSpeed > 0 ? min(max(rawSpeed, 0.5), 2.0) : 1.0,
+                    pitch: rawPitch > 0 ? min(max(rawPitch, 0.5), 2.0) : 1.0
+                )
+                Task { try? await VoiceService.shared.speak(cleanText, options: voiceOptions) }
+            }
+
             isProcessing = false
+            streamTask = nil
         }
     }
 
@@ -783,12 +1006,15 @@ struct ConversationSearchBar: View {
 // MARK: - Thinking Indicator (3-dot animation)
 
 struct ThinkingIndicatorView: View {
+    var toolDescription: String? = nil
+
     @State private var phase = 0
     @State private var dotTimer: Timer?
 
+    private let dots = [".", "..", "..."]
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            // Cortana avatar
             Circle()
                 .fill(Color.cyan.gradient)
                 .frame(width: 32, height: 32)
@@ -797,22 +1023,25 @@ struct ThinkingIndicatorView: View {
                         .font(.system(size: 14))
                 }
 
-            HStack(spacing: 4) {
-                ForEach(0..<3, id: \.self) { i in
-                    Circle()
-                        .fill(Color.secondary.opacity(phase == i ? 1.0 : 0.3))
-                        .frame(width: 7, height: 7)
-                        .animation(.easeInOut(duration: 0.5).repeatForever().delay(Double(i) * 0.2), value: phase)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(dots[phase])
+                    .font(.system(size: 18, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color.cyan.opacity(0.8))
+                    .frame(width: 28, alignment: .leading)
+                    .animation(.none, value: phase)
+
+                if let description = toolDescription {
+                    Text(description)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Color.cyan.opacity(0.5))
+                        .transition(.opacity)
                 }
             }
-            .padding(.vertical, 12)
+            .padding(.vertical, 10)
         }
         .onAppear {
-            phase = 1
-            dotTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-                withAnimation {
-                    phase = (phase + 1) % 3
-                }
+            dotTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
+                phase = (phase + 1) % 3
             }
         }
         .onDisappear {
@@ -884,6 +1113,8 @@ struct UserInputArea: View {
 
     @FocusState private var editorFocused: Bool
     @State private var isDragTargeted = false
+    @State private var isListening = false
+    @State private var liveTranscription = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -968,6 +1199,24 @@ struct UserInputArea: View {
                         }
                     )
 
+                    // Live transcription preview while listening
+                    if isListening && !liveTranscription.isEmpty {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 6, height: 6)
+                            Text(liveTranscription)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.red.opacity(0.05))
+                        .cornerRadius(4)
+                        .transition(.opacity)
+                    }
+
                     HStack {
                         if !text.isEmpty {
                             Text("\(text.count)")
@@ -984,6 +1233,16 @@ struct UserInputArea: View {
                         .buttonStyle(.plain)
                         .help("Attach file or image (⌘V to paste image)")
 
+                        // Mic button — tap to dictate into the text field
+                        Button { toggleVoiceInput() } label: {
+                            Image(systemName: isListening ? "mic.fill" : "mic")
+                                .font(.caption)
+                                .foregroundStyle(isListening ? .red : .secondary)
+                                .symbolEffect(.variableColor.iterative, isActive: isListening)
+                        }
+                        .buttonStyle(.plain)
+                        .help(isListening ? "Stop listening" : "Voice input")
+
                         Spacer()
 
                         Button(action: onSubmit) {
@@ -999,6 +1258,40 @@ struct UserInputArea: View {
                             || isProcessing
                         )
                     }
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: VoiceService.transcriptionUpdated)) { notification in
+            guard let transcribedText = notification.userInfo?["text"] as? String else { return }
+            let isFinal = notification.userInfo?["isFinal"] as? Bool ?? false
+            liveTranscription = transcribedText
+            if isFinal {
+                // Append final transcription to input field
+                if text.isEmpty {
+                    text = transcribedText
+                } else {
+                    text += " " + transcribedText
+                }
+                liveTranscription = ""
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: VoiceService.listeningStateChanged)) { notification in
+            isListening = notification.userInfo?["isListening"] as? Bool ?? false
+        }
+    }
+
+    private func toggleVoiceInput() {
+        if isListening {
+            Task { await VoiceService.shared.stopListening() }
+        } else {
+            liveTranscription = ""
+            Task {
+                let granted = await VoiceService.shared.requestPermissions()
+                guard granted else { return }
+                do {
+                    try await VoiceService.shared.startListening()
+                } catch {
+                    canvasLog("[VoiceInput] Failed to start: \(error)")
                 }
             }
         }

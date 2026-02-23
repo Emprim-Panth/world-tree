@@ -20,6 +20,7 @@ struct DocumentSection: Identifiable {
     var hasBranches: Bool       // True when child branches fork from this message
     var isFinding: Bool         // Content starts with "[Finding from branch"
     var hasFindingSignal: Bool  // Scanner detected signal words post-response
+    var source: String?         // Message origin — "telegram" for mobile-sourced messages
 
     init(
         id: UUID = UUID(),
@@ -32,7 +33,8 @@ struct DocumentSection: Identifiable {
         messageId: String? = nil,
         hasBranches: Bool = false,
         isFinding: Bool = false,
-        hasFindingSignal: Bool = false
+        hasFindingSignal: Bool = false,
+        source: String? = nil
     ) {
         self.id = id
         self.content = content
@@ -45,6 +47,7 @@ struct DocumentSection: Identifiable {
         self.hasBranches = hasBranches
         self.isFinding = isFinding
         self.hasFindingSignal = hasFindingSignal
+        self.source = source
     }
 }
 

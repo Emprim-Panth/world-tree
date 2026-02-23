@@ -6,6 +6,8 @@ struct TreeNodeView: View {
     let treeId: String
     @EnvironmentObject var appState: AppState
 
+    @State private var isHovering = false
+
     private var isSelected: Bool {
         appState.selectedBranchId == branch.id
     }
@@ -51,10 +53,19 @@ struct TreeNodeView: View {
         .padding(.vertical, 2)
         .padding(.horizontal, 4)
         .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
         .onTapGesture {
             appState.selectBranch(branch.id, in: treeId)
         }
-        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+        .background {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(
+                    isSelected ? Color.accentColor.opacity(0.15) :
+                    isHovering ? Color.accentColor.opacity(0.07) : Color.clear
+                )
+                .animation(.easeInOut(duration: 0.12), value: isSelected)
+                .animation(.easeInOut(duration: 0.12), value: isHovering)
+        }
         .cornerRadius(4)
     }
 

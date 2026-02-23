@@ -327,6 +327,7 @@ final class CanvasServer: ObservableObject {
         let project = json["project"] as? String
         let contextSummary = json["context_summary"] as? String
         let openTerminal = (json["open_terminal"] as? Bool) == true
+        let source = json["source"] as? String
 
         guard !content.isEmpty else {
             sendResponse(connection, status: 400, body: #"{"error":"content required"}"#)
@@ -371,6 +372,17 @@ final class CanvasServer: ObservableObject {
                 sessionId: resolved.sessionId, role: .user, content: content)
         } catch {
             canvasLog("[CanvasServer] Failed to persist user message: \(error)")
+        }
+
+        // Notify UI about external message source (e.g. Telegram)
+        if let source, !source.isEmpty {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .canvasServerExternalMessage,
+                    object: nil,
+                    userInfo: ["source": source, "sessionId": resolved.sessionId]
+                )
+            }
         }
 
         // Open SSE stream
@@ -560,4 +572,8 @@ extension Notification.Name {
     /// Posted when a Telegram work request wants a terminal open for a branch.
     /// object: branchId (String)
     static let canvasServerRequestedTerminalOpen = Notification.Name("canvasServerRequestedTerminalOpen")
+
+    /// Posted when a message arrives from an external source (e.g. Telegram).
+    /// userInfo: ["source": "telegram", "sessionId": String]
+    static let canvasServerExternalMessage = Notification.Name("canvasServerExternalMessage")
 }
