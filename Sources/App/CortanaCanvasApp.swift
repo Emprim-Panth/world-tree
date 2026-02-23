@@ -16,6 +16,7 @@ struct WorldTreeApp: App {
                     startProjectRefresh()
                     requestNotificationPermission()
                     startCanvasServerIfEnabled()
+                    startPluginServerIfEnabled()
                     Task { await VoiceService.shared.configure() }
                 }
                 .onChange(of: scenePhase) { _, phase in
@@ -104,6 +105,17 @@ struct WorldTreeApp: App {
     private func startCanvasServerIfEnabled() {
         guard UserDefaults.standard.bool(forKey: CanvasServer.enabledKey) else { return }
         CanvasServer.shared.start()
+    }
+
+    /// Plugin server is enabled by default (daemon-local, loopback only).
+    /// Users can disable via Settings → Plugin Server, or set cortana.pluginEnabled = false.
+    private func startPluginServerIfEnabled() {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: CortanaConstants.pluginServerEnabledKey) == nil {
+            defaults.set(true, forKey: CortanaConstants.pluginServerEnabledKey) // default on
+        }
+        guard defaults.bool(forKey: CortanaConstants.pluginServerEnabledKey) else { return }
+        PluginServer.shared.start()
     }
 }
 

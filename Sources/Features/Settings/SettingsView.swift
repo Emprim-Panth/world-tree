@@ -234,11 +234,39 @@ struct SettingsView: View {
 
     @AppStorage(CanvasServer.enabledKey) private var serverEnabled = false
     @AppStorage(CanvasServer.tokenKey) private var serverToken = ""
+    @AppStorage(PluginServer.enabledKey) private var pluginEnabled = true
+    @ObservedObject private var pluginServer = PluginServer.shared
     @State private var tokenInput = ""
     @State private var showToken = false
 
     private var serverTab: some View {
         Form {
+            Section("Plugin Server (openClaude)") {
+                Toggle("Enable plugin server (port \(PluginServer.port))", isOn: $pluginEnabled)
+                    .onChange(of: pluginEnabled) { _, enabled in
+                        if enabled { pluginServer.start() } else { pluginServer.stop() }
+                    }
+
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(pluginServer.isRunning ? Color.green : Color.red)
+                        .frame(width: 8, height: 8)
+                    Text(pluginServer.isRunning
+                         ? "Running — MCP tools exposed to Friday"
+                         : (pluginServer.lastError ?? "Stopped"))
+                        .font(.caption)
+                        .foregroundStyle(pluginServer.isRunning ? .primary : .secondary)
+                }
+
+                if pluginServer.isRunning {
+                    Text("~/.openclaude/state/plugins/world-tree.json")
+                        .font(.caption2)
+                        .monospaced()
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+
             Section("Canvas Hub Server") {
                 Toggle("Enable server (port \(CanvasServer.port))", isOn: $serverEnabled)
                     .onChange(of: serverEnabled) { _, enabled in
@@ -490,8 +518,32 @@ struct SettingsView: View {
 
     // MARK: - Connection
 
+    @AppStorage(CortanaConstants.fridayChannelEnabledKey) private var fridayEnabled = true
+    @ObservedObject private var daemonService = DaemonService.shared
+
     private var connectionTab: some View {
         Form {
+            Section("Friday (openClaude Daemon)") {
+                Toggle("Route messages through Friday", isOn: $fridayEnabled)
+
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(daemonService.isConnected ? Color.green : Color.secondary.opacity(0.4))
+                        .frame(width: 8, height: 8)
+                    Text(daemonService.isConnected
+                         ? "Connected — \(CortanaConstants.daemonAPIURL)"
+                         : "Not connected — daemon not running")
+                        .font(.caption)
+                        .foregroundStyle(daemonService.isConnected ? .primary : .secondary)
+                }
+
+                Text(fridayEnabled && daemonService.isConnected
+                     ? "Canvas → Friday → Claude (memory + identity)"
+                     : "Direct to provider (no Friday context)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Database") {
                 HStack {
                     TextField("Path", text: $databasePath)

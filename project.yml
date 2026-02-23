@@ -23,6 +23,19 @@ packages:
     from: 1.2.0
 
 targets:
+  WorldTreeTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: WorldTree
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.forgeandcode.world-tree-tests
+        SWIFT_VERSION: "5.9"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+
   WorldTree:
     type: application
     platform: macOS

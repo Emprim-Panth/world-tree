@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import CryptoKit
 
 // MARK: - CanvasServer
 
@@ -18,14 +19,18 @@ final class CanvasServer: ObservableObject {
     static let tokenKey = "cortana.serverToken"
     static let enabledKey = "cortana.serverEnabled"
 
+    static let maxWebSocketConnections = 10
+
     @Published private(set) var isRunning = false
     @Published private(set) var requestCount = 0
     @Published private(set) var startedAt: Date?
     @Published private(set) var lastError: String?
     @Published private(set) var ngrokPublicURL: String?
+    @Published private(set) var webSocketClients: [String: WebSocketClient] = [:]
 
     private var listener: NWListener?
     private let networkQueue = DispatchQueue(label: "cortana.canvas-server", qos: .userInitiated)
+    private var pingTask: Task<Void, Never>?
 
     var configuredToken: String {
         UserDefaults.standard.string(forKey: Self.tokenKey) ?? ""
@@ -89,6 +94,16 @@ final class CanvasServer: ObservableObject {
     }
 
     func stop() {
+        // Stop WebSocket ping timer
+        pingTask?.cancel()
+        pingTask = nil
+
+        // Close all WebSocket connections
+        for client in webSocketClients.values {
+            client.wsConnection?.sendCloseAndDisconnect(code: 1001, reason: "Server shutting down")
+        }
+        webSocketClients.removeAll()
+
         listener?.cancel()
         listener = nil
         isRunning = false
@@ -244,6 +259,20 @@ final class CanvasServer: ObservableObject {
 
         let req = parseHTTP(raw)
 
+        // Detect WebSocket upgrade before normal auth — WS uses token from query param or header
+        if req.path == "/ws",
+           req.headers["upgrade"]?.lowercased() == "websocket",
+           req.headers["connection"]?.lowercased().contains("upgrade") == true {
+            // Auth: accept token from query parameter or header
+            let token = req.queryParam("token") ?? req.headers["x-canvas-token"] ?? ""
+            guard token == expectedToken else {
+                sendResponse(connection, status: 401, body: #"{"error":"unauthorized"}"#)
+                return
+            }
+            await handleWebSocketUpgrade(connection, request: req)
+            return
+        }
+
         if req.path != "/health" {
             guard (req.headers["x-canvas-token"] ?? "") == expectedToken else {
                 sendResponse(connection, status: 401, body: #"{"error":"unauthorized"}"#)
@@ -389,20 +418,32 @@ final class CanvasServer: ObservableObject {
 
         var fullResponse = ""
 
-        // Prefer AnthropicAPIProvider for server-routed messages —
-        // ClaudeCodeProvider requires an active desktop Claude session.
-        let provider = ProviderManager.shared.providers.first { $0.identifier == "claude-code" }
-            ?? ProviderManager.shared.activeProvider
+        // Prefer Friday daemon for server-routed messages (full identity + memory context).
+        // Falls back to direct ProviderManager if daemon is unavailable.
+        let fridayEnabled = UserDefaults.standard.bool(forKey: CortanaConstants.fridayChannelEnabledKey)
+        let daemonConnected = DaemonService.shared.isConnected
 
-        guard let provider else {
-            sendSSEChunk(connection, #"{"error":"No LLM provider available"}"#)
-            sendSSEClose(connection)
-            return
+        let eventStream: AsyncStream<BridgeEvent>
+        if fridayEnabled && daemonConnected {
+            canvasLog("[CanvasServer] Routing through Friday daemon")
+            eventStream = await FridayChannel.shared.send(
+                text: content,
+                project: project,
+                branchId: resolved.branchId,
+                sessionId: resolved.sessionId
+            )
+        } else {
+            let provider = ProviderManager.shared.activeProvider
+            guard let provider else {
+                sendSSEChunk(connection, #"{"error":"No LLM provider available"}"#)
+                sendSSEClose(connection)
+                return
+            }
+            canvasLog("[CanvasServer] Using provider: \(provider.identifier)")
+            eventStream = provider.send(context: ctx)
         }
 
-        canvasLog("[CanvasServer] Using provider: \(provider.identifier)")
-
-        for await event in provider.send(context: ctx) {
+        for await event in eventStream {
             switch event {
             case .text(let token):
                 fullResponse += token
@@ -468,11 +509,25 @@ final class CanvasServer: ObservableObject {
 
     // MARK: - HTTP Parser
 
-    private struct ParsedRequest {
+    struct ParsedRequest {
         let method: String
         let path: String
+        let rawPath: String  // Includes query string
         let headers: [String: String]
         let body: String
+
+        /// Extract a query parameter value by key.
+        func queryParam(_ key: String) -> String? {
+            guard let queryStart = rawPath.firstIndex(of: "?") else { return nil }
+            let query = String(rawPath[rawPath.index(after: queryStart)...])
+            for pair in query.components(separatedBy: "&") {
+                let parts = pair.components(separatedBy: "=")
+                if parts.count == 2, parts[0] == key {
+                    return parts[1].removingPercentEncoding ?? parts[1]
+                }
+            }
+            return nil
+        }
     }
 
     private func parseHTTP(_ raw: String) -> ParsedRequest {
@@ -496,7 +551,7 @@ final class CanvasServer: ObservableObject {
             }
         }
 
-        return ParsedRequest(method: method, path: path, headers: headers, body: body)
+        return ParsedRequest(method: method, path: path, rawPath: rawPath, headers: headers, body: body)
     }
 
     // MARK: - Response Helpers
@@ -541,8 +596,8 @@ final class CanvasServer: ObservableObject {
     }
 
     private func statusText(_ code: Int) -> String {
-        [200: "OK", 400: "Bad Request", 401: "Unauthorized",
-         404: "Not Found", 500: "Internal Server Error"][code] ?? "Unknown"
+        [101: "Switching Protocols", 200: "OK", 400: "Bad Request", 401: "Unauthorized",
+         404: "Not Found", 500: "Internal Server Error", 503: "Service Unavailable"][code] ?? "Unknown"
     }
 
     private func esc(_ s: String) -> String {
@@ -551,6 +606,453 @@ final class CanvasServer: ObservableObject {
          .replacingOccurrences(of: "\n", with: "\\n")
          .replacingOccurrences(of: "\r", with: "\\r")
          .replacingOccurrences(of: "\t", with: "\\t")
+    }
+}
+
+// MARK: - WebSocket Client
+
+/// Tracked state for one connected WebSocket client.
+struct WebSocketClient {
+    let id: String                          // UUID
+    let connection: NWConnection
+    let wsConnection: WebSocketConnection?
+    let connectedAt: Date
+    var clientName: String?
+    var subscribedTreeId: String?
+    var subscribedBranchId: String?
+    var lastPongAt: Date
+}
+
+// MARK: - WebSocket Upgrade & Management
+
+extension CanvasServer {
+
+    /// Handle the WebSocket upgrade handshake (called from handleRawRequest).
+    func handleWebSocketUpgrade(_ connection: NWConnection, request: ParsedRequest) async {
+        // Enforce max connections
+        guard webSocketClients.count < Self.maxWebSocketConnections else {
+            sendResponse(connection, status: 503, body: #"{"error":"too many WebSocket connections"}"#)
+            return
+        }
+
+        // Validate required WebSocket headers
+        guard let wsKey = request.headers["sec-websocket-key"], !wsKey.isEmpty else {
+            sendResponse(connection, status: 400, body: #"{"error":"missing Sec-WebSocket-Key"}"#)
+            return
+        }
+
+        guard request.headers["sec-websocket-version"] == "13" else {
+            sendResponse(connection, status: 400, body: #"{"error":"unsupported WebSocket version"}"#)
+            return
+        }
+
+        // Send 101 Switching Protocols
+        let upgradeData = WebSocketCodec.upgradeResponse(for: wsKey)
+        connection.send(content: upgradeData, completion: .contentProcessed { [weak self] error in
+            if let error {
+                canvasLog("[CanvasServer] WebSocket upgrade send failed: \(error)")
+                connection.cancel()
+                return
+            }
+            // Transition to WebSocket frame mode on MainActor
+            Task { @MainActor [weak self] in
+                self?.registerWebSocketClient(connection)
+            }
+        })
+
+        requestCount += 1
+        canvasLog("[CanvasServer] WebSocket upgrade → /ws")
+    }
+
+    /// Register a new WebSocket client after successful upgrade.
+    private func registerWebSocketClient(_ connection: NWConnection) {
+        let clientId = UUID().uuidString
+        let wsConn = WebSocketConnection(id: clientId, connection: connection)
+
+        let client = WebSocketClient(
+            id: clientId,
+            connection: connection,
+            wsConnection: wsConn,
+            connectedAt: Date(),
+            lastPongAt: Date()
+        )
+
+        webSocketClients[clientId] = client
+        canvasLog("[CanvasServer] WebSocket client connected: \(clientId) (total: \(webSocketClients.count))")
+
+        // Set up callbacks
+        wsConn.onMessage = { [weak self] text in
+            Task { @MainActor [weak self] in
+                self?.handleWebSocketMessage(clientId: clientId, text: text)
+            }
+        }
+
+        wsConn.onClose = { [weak self] code, reason in
+            Task { @MainActor [weak self] in
+                self?.removeWebSocketClient(clientId, code: code, reason: reason)
+            }
+        }
+
+        wsConn.onPong = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.webSocketClients[clientId]?.lastPongAt = Date()
+            }
+        }
+
+        // Start reading frames
+        wsConn.startReading()
+
+        // Start ping timer if not already running
+        startPingTimerIfNeeded()
+    }
+
+    /// Remove a WebSocket client (disconnect or close).
+    private func removeWebSocketClient(_ clientId: String, code: UInt16, reason: String?) {
+        guard webSocketClients.removeValue(forKey: clientId) != nil else { return }
+        canvasLog("[CanvasServer] WebSocket client disconnected: \(clientId) (code: \(code), remaining: \(webSocketClients.count))")
+
+        // Stop ping timer if no clients remain
+        if webSocketClients.isEmpty {
+            pingTask?.cancel()
+            pingTask = nil
+        }
+    }
+
+    /// Handle an incoming text message from a WebSocket client.
+    private func handleWebSocketMessage(clientId: String, text: String) {
+        guard let client = webSocketClients[clientId] else { return }
+
+        guard let msg = WSMessage.fromJSON(text) else {
+            let errMsg = WSMessage.error(code: "invalid_message", message: "Could not parse JSON message")
+            if let json = errMsg.toJSON() {
+                client.wsConnection?.send(text: json)
+            }
+            return
+        }
+
+        canvasLog("[CanvasServer] WS[\(clientId.prefix(8))] → \(msg.type)")
+
+        // Route by message type (protocol handling will be implemented in FRD-003 phase)
+        // For now, acknowledge the message types and respond with appropriate structures
+        guard let msgType = WSClientMessageType(rawValue: msg.type) else {
+            let errMsg = WSMessage.error(code: "unknown_type", message: "Unknown message type: \(msg.type)", id: msg.id)
+            if let json = errMsg.toJSON() {
+                client.wsConnection?.send(text: json)
+            }
+            return
+        }
+
+        switch msgType {
+        case .subscribe:
+            handleWSSubscribe(clientId: clientId, message: msg)
+        case .unsubscribe:
+            handleWSUnsubscribe(clientId: clientId, message: msg)
+        case .listTrees:
+            handleWSListTrees(clientId: clientId, message: msg)
+        case .listBranches:
+            handleWSListBranches(clientId: clientId, message: msg)
+        case .getMessages:
+            handleWSGetMessages(clientId: clientId, message: msg)
+        case .sendMessage:
+            handleWSSendMessage(clientId: clientId, message: msg)
+        case .cancelStream:
+            handleWSCancelStream(clientId: clientId, message: msg)
+        }
+    }
+
+    // MARK: - WebSocket Message Handlers
+
+    private func handleWSSubscribe(clientId: String, message: WSMessage) {
+        guard var client = webSocketClients[clientId] else { return }
+
+        guard let payload = message.payload,
+              let sub = try? payload.decode(as: WSSubscribePayload.self) else {
+            sendWSError(to: clientId, code: "invalid_payload", message: "subscribe requires treeId and branchId", id: message.id)
+            return
+        }
+
+        // Unsubscribe from previous (if any) — BR-002: one subscription at a time
+        client.subscribedTreeId = sub.treeId
+        client.subscribedBranchId = sub.branchId
+        webSocketClients[clientId] = client
+
+        canvasLog("[CanvasServer] WS[\(clientId.prefix(8))] subscribed to tree:\(sub.treeId.prefix(8)) branch:\(sub.branchId.prefix(8))")
+
+        // Acknowledge
+        let ack = WSMessage(type: "subscribed", id: message.id)
+        if let json = ack.toJSON() {
+            client.wsConnection?.send(text: json)
+        }
+    }
+
+    private func handleWSUnsubscribe(clientId: String, message: WSMessage) {
+        guard var client = webSocketClients[clientId] else { return }
+
+        client.subscribedTreeId = nil
+        client.subscribedBranchId = nil
+        webSocketClients[clientId] = client
+
+        let ack = WSMessage(type: "unsubscribed", id: message.id)
+        if let json = ack.toJSON() {
+            client.wsConnection?.send(text: json)
+        }
+    }
+
+    private func handleWSListTrees(clientId: String, message: WSMessage) {
+        guard let client = webSocketClients[clientId] else { return }
+
+        do {
+            let trees = try TreeStore.shared.listTrees()
+            let iso = ISO8601DateFormatter()
+            let treeInfos = trees.map { t in
+                WSTreeInfo(
+                    id: t.id,
+                    name: t.name,
+                    project: t.project,
+                    updatedAt: iso.string(from: t.updatedAt),
+                    messageCount: t.messageCount
+                )
+            }
+            let response = WSMessage.treesList(trees: treeInfos, id: message.id)
+            if let json = response.toJSON() {
+                client.wsConnection?.send(text: json)
+            }
+        } catch {
+            sendWSError(to: clientId, code: "internal_error", message: error.localizedDescription, id: message.id)
+        }
+    }
+
+    private func handleWSListBranches(clientId: String, message: WSMessage) {
+        guard let client = webSocketClients[clientId] else { return }
+
+        guard let payload = message.payload,
+              let req = try? payload.decode(as: WSListBranchesPayload.self) else {
+            sendWSError(to: clientId, code: "invalid_payload", message: "list_branches requires treeId", id: message.id)
+            return
+        }
+
+        do {
+            let tree = try TreeStore.shared.getTree(req.treeId)
+            guard let tree else {
+                sendWSError(to: clientId, code: "not_found", message: "Tree not found", id: message.id)
+                return
+            }
+            let iso = ISO8601DateFormatter()
+            let branchInfos = tree.branches.map { b in
+                WSBranchInfo(
+                    id: b.id,
+                    treeId: b.treeId,
+                    title: b.title,
+                    status: b.status.rawValue,
+                    branchType: b.branchType.rawValue,
+                    createdAt: iso.string(from: b.createdAt),
+                    updatedAt: iso.string(from: b.updatedAt)
+                )
+            }
+            let response = WSMessage.branchesList(branches: branchInfos, id: message.id)
+            if let json = response.toJSON() {
+                client.wsConnection?.send(text: json)
+            }
+        } catch {
+            sendWSError(to: clientId, code: "internal_error", message: error.localizedDescription, id: message.id)
+        }
+    }
+
+    private func handleWSGetMessages(clientId: String, message: WSMessage) {
+        guard let client = webSocketClients[clientId] else { return }
+
+        guard let payload = message.payload,
+              let req = try? payload.decode(as: WSGetMessagesPayload.self) else {
+            sendWSError(to: clientId, code: "invalid_payload", message: "get_messages requires branchId", id: message.id)
+            return
+        }
+
+        do {
+            // Resolve branchId to sessionId
+            guard let branch = try TreeStore.shared.getBranch(req.branchId),
+                  let sessionId = branch.sessionId else {
+                sendWSError(to: clientId, code: "not_found", message: "Branch not found or has no session", id: message.id)
+                return
+            }
+
+            let limit = req.limit ?? 50
+            let msgs = try MessageStore.shared.getMessages(sessionId: sessionId, limit: limit)
+            let iso = ISO8601DateFormatter()
+            let msgInfos = msgs.map { m in
+                WSMessageInfo(
+                    id: m.id,
+                    role: m.role.rawValue,
+                    content: m.content,
+                    createdAt: iso.string(from: m.createdAt)
+                )
+            }
+            let response = WSMessage.messagesList(messages: msgInfos, id: message.id)
+            if let json = response.toJSON() {
+                client.wsConnection?.send(text: json)
+            }
+        } catch {
+            sendWSError(to: clientId, code: "internal_error", message: error.localizedDescription, id: message.id)
+        }
+    }
+
+    private func handleWSSendMessage(clientId: String, message: WSMessage) {
+        guard let client = webSocketClients[clientId] else { return }
+
+        guard let payload = message.payload,
+              let req = try? payload.decode(as: WSSendMessagePayload.self) else {
+            sendWSError(to: clientId, code: "invalid_payload", message: "send_message requires branchId and content", id: message.id)
+            return
+        }
+
+        // BR-003: Must be subscribed to the target branch
+        guard client.subscribedBranchId == req.branchId else {
+            sendWSError(to: clientId, code: "not_subscribed", message: "Subscribe to the branch before sending messages", id: message.id)
+            return
+        }
+
+        // Resolve branch → session
+        guard let branch = try? TreeStore.shared.getBranch(req.branchId),
+              let sessionId = branch.sessionId else {
+            sendWSError(to: clientId, code: "not_found", message: "Branch not found or has no session", id: message.id)
+            return
+        }
+
+        canvasLog("[CanvasServer] WS[\(clientId.prefix(8))] send_message to branch:\(req.branchId.prefix(8))")
+
+        // Persist user message
+        _ = try? MessageStore.shared.sendMessage(sessionId: sessionId, role: .user, content: req.content)
+
+        // Acknowledge receipt immediately so the client knows the message was accepted
+        let ack = WSMessage(type: "message_received", id: message.id)
+        if let json = ack.toJSON() {
+            client.wsConnection?.send(text: json)
+        }
+
+        // Dispatch to LLM and stream tokens to all subscribed WebSocket clients via TokenBroadcaster
+        let isNew = (try? MessageStore.shared.getMessages(sessionId: sessionId, limit: 2))?.count == 1
+        let ctx = ProviderSendContext(
+            message: req.content,
+            sessionId: sessionId,
+            branchId: req.branchId,
+            model: CortanaConstants.defaultModel,
+            workingDirectory: nil,
+            project: branch.title,
+            parentSessionId: nil,
+            isNewSession: isNew
+        )
+
+        let fridayEnabled = UserDefaults.standard.bool(forKey: CortanaConstants.fridayChannelEnabledKey)
+        let daemonConnected = DaemonService.shared.isConnected
+
+        Task { @MainActor [weak self] in
+            guard self != nil else { return }
+
+            let eventStream: AsyncStream<BridgeEvent>
+            if fridayEnabled && daemonConnected {
+                eventStream = await FridayChannel.shared.send(
+                    text: req.content,
+                    project: branch.title,
+                    branchId: req.branchId,
+                    sessionId: sessionId
+                )
+            } else {
+                guard let provider = ProviderManager.shared.activeProvider else {
+                    let errMsg = WSMessage.error(code: "no_provider", message: "No LLM provider available")
+                    CanvasServer.shared.broadcastToSubscribers(branchId: req.branchId, message: errMsg)
+                    return
+                }
+                eventStream = provider.send(context: ctx)
+            }
+
+            TokenBroadcaster.shared.broadcast(
+                stream: eventStream,
+                branchId: req.branchId,
+                sessionId: sessionId
+            )
+        }
+    }
+
+    private func handleWSCancelStream(clientId: String, message: WSMessage) {
+        // Resolve branchId from subscription or payload
+        let branchId: String?
+        if let payload = message.payload,
+           let req = try? payload.decode(as: WSCancelStreamPayload.self) {
+            branchId = req.branchId
+        } else {
+            branchId = webSocketClients[clientId]?.subscribedBranchId
+        }
+
+        if let branchId {
+            TokenBroadcaster.shared.cancel(branchId: branchId)
+            canvasLog("[CanvasServer] WS[\(clientId.prefix(8))] stream cancelled for branch:\(branchId.prefix(8))")
+        }
+
+        let ack = WSMessage(type: "stream_cancelled", id: message.id)
+        if let json = ack.toJSON() {
+            webSocketClients[clientId]?.wsConnection?.send(text: json)
+        }
+    }
+
+    // MARK: - WebSocket Helpers
+
+    /// Send an error message to a specific WebSocket client.
+    private func sendWSError(to clientId: String, code: String, message: String?, id: String?) {
+        guard let client = webSocketClients[clientId] else { return }
+        let errMsg = WSMessage.error(code: code, message: message, id: id)
+        if let json = errMsg.toJSON() {
+            client.wsConnection?.send(text: json)
+        }
+    }
+
+    /// Send a message to all WebSocket clients subscribed to a specific branch.
+    func broadcastToSubscribers(branchId: String, message: WSMessage) {
+        guard let json = message.toJSON() else { return }
+        for client in webSocketClients.values {
+            if client.subscribedBranchId == branchId {
+                client.wsConnection?.send(text: json)
+            }
+        }
+    }
+
+    // MARK: - Ping/Pong Timer
+
+    /// Start the ping timer (sends ping every 30s, closes connections that don't pong within 10s).
+    private func startPingTimerIfNeeded() {
+        guard pingTask == nil else { return }
+
+        pingTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30_000_000_000) // 30s
+                guard !Task.isCancelled else { break }
+                self?.pingAllClients()
+            }
+        }
+    }
+
+    /// Send ping to all clients and close those that haven't ponged recently.
+    private func pingAllClients() {
+        let now = Date()
+        var toRemove: [String] = []
+
+        for (id, client) in webSocketClients {
+            // If last pong was more than 40s ago (30s ping interval + 10s grace), connection is dead
+            if now.timeIntervalSince(client.lastPongAt) > 40 {
+                canvasLog("[CanvasServer] WebSocket client \(id.prefix(8)) pong timeout — closing")
+                client.wsConnection?.sendCloseAndDisconnect(code: 1001, reason: "Pong timeout")
+                toRemove.append(id)
+            } else {
+                client.wsConnection?.sendPing()
+            }
+        }
+
+        for id in toRemove {
+            webSocketClients.removeValue(forKey: id)
+        }
+
+        if webSocketClients.isEmpty {
+            pingTask?.cancel()
+            pingTask = nil
+        }
     }
 }
 
