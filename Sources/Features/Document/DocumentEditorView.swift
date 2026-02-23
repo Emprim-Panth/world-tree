@@ -145,12 +145,39 @@ struct DocumentEditorView: View {
                 }
                 .onChange(of: viewModel.streamingContent) { _, content in
                     if content != nil {
-                        proxy.scrollTo("streaming", anchor: .bottom)
+                        // Only auto-scroll while streaming if user hasn't scrolled up
+                        if viewModel.isScrolledToBottom {
+                            proxy.scrollTo("streaming", anchor: .bottom)
+                        }
                     } else if let lastSection = viewModel.document.sections.last {
-                        // Streaming ended — snap to the persisted section that replaced it
+                        // Streaming ended — always snap to the finalised section
                         proxy.scrollTo(lastSection.id, anchor: .bottom)
+                        viewModel.hasNewStreamContent = false
                     }
                 }
+                // Track scroll position — inhibit auto-scroll when user scrolled up
+                // onScrollGeometryChange requires macOS 15.0+
+                .modifier(ScrollBottomTracker(isScrolledToBottom: $viewModel.isScrolledToBottom,
+                                             hasNewStreamContent: $viewModel.hasNewStreamContent))
+                // "Scroll to bottom" FAB — appears when streaming with user scrolled up
+                .overlay(alignment: .bottomTrailing) {
+                    if viewModel.hasNewStreamContent && !viewModel.isScrolledToBottom {
+                        ScrollToBottomFAB {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                if viewModel.streamingContent != nil {
+                                    proxy.scrollTo("streaming", anchor: .bottom)
+                                } else if let last = viewModel.document.sections.last {
+                                    proxy.scrollTo(last.id, anchor: .bottom)
+                                }
+                            }
+                            viewModel.hasNewStreamContent = false
+                        }
+                        .padding(20)
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
+                    }
+                }
+                .animation(.easeInOut(duration: 0.2),
+                           value: viewModel.hasNewStreamContent && !viewModel.isScrolledToBottom)
                 .onChange(of: viewModel.isProcessing) { _, processing in
                     if processing && viewModel.streamingContent == nil {
                         proxy.scrollTo("thinking", anchor: .bottom)
@@ -175,6 +202,48 @@ class DocumentEditorViewModel: ObservableObject {
     /// Live token stream content — shown in the chat as Cortana types.
     /// Nil when not streaming; cleared once the full response is persisted.
     @Published var streamingContent: String?
+
+    /// Whether the conversation scroll view is at (or near) the bottom.
+    /// False when the user has manually scrolled up — suppresses auto-scroll.
+    @Published var isScrolledToBottom = true
+
+    /// True when new streaming tokens arrived while the user was scrolled up.
+    /// Drives the "scroll to bottom" FAB visibility.
+    @Published var hasNewStreamContent = false
+
+    // MARK: - 60fps Token Batching (CADisplayLink-equivalent via main-RunLoop Timer)
+
+    /// Accumulated tokens since the last frame flush.
+    /// Written per-token; flushed to streamingContent at ~60fps by streamFlushTimer.
+    private var pendingTokenBuffer = ""
+
+    /// Fires at 60fps on the main RunLoop to flush pendingTokenBuffer → streamingContent.
+    /// Using a Timer keyed to .common run-loop mode ensures it fires even during scroll tracking.
+    private var streamFlushTimer: Timer?
+
+    private func startStreamBatching() {
+        guard streamFlushTimer == nil else { return }
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            self?.flushPendingTokens()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        streamFlushTimer = timer
+    }
+
+    private func stopStreamBatching() {
+        streamFlushTimer?.invalidate()
+        streamFlushTimer = nil
+        flushPendingTokens()  // drain any remaining tokens
+    }
+
+    /// Drain accumulated tokens to streamingContent — called at 60fps.
+    private func flushPendingTokens() {
+        guard !pendingTokenBuffer.isEmpty else { return }
+        let chunk = pendingTokenBuffer
+        pendingTokenBuffer = ""
+        streamingContent = (streamingContent ?? "") + chunk
+        if !isScrolledToBottom { hasNewStreamContent = true }
+    }
 
     private let sessionId: String
     private let branchId: String
@@ -489,15 +558,18 @@ class DocumentEditorViewModel: ObservableObject {
                 return
             }
 
-            // 4. Stream response — mirror every token to the chat and terminal in real time
+            // 4. Stream response — mirror every token to the chat and terminal in real time.
+            //    Token batching: accumulate into pendingTokenBuffer; a 60fps Timer flushes
+            //    to streamingContent once per frame — prevents per-token SwiftUI re-renders.
             var fullResponse = ""
             streamingContent = ""  // Start streaming indicator
+            startStreamBatching()
 
             for await event in provider.send(context: ctx) {
                 switch event {
                 case .text(let token):
                     fullResponse += token
-                    streamingContent = fullResponse  // Live update in chat
+                    pendingTokenBuffer += token  // batched — Timer flushes at 60fps
                     BranchTerminalManager.shared.send(to: branchId, text: token)
 
                 case .toolStart(let name, _):
@@ -515,7 +587,9 @@ class DocumentEditorViewModel: ObservableObject {
                     BranchTerminalManager.shared.send(to: branchId, text: "\n\u{001B}[31m[error: \(msg)]\u{001B}[0m\n")
                 }
             }
-            streamingContent = nil  // Stream complete — persisted section takes over
+            stopStreamBatching()       // flush remaining tokens, stop timer
+            streamingContent = nil     // Stream complete — persisted section takes over
+            hasNewStreamContent = false
 
             // 5. Persist assistant response — polling observer will surface it in the chat
             if !fullResponse.isEmpty {
@@ -701,14 +775,12 @@ struct StreamingSectionView: View {
                 }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text(content.isEmpty ? " " : content)
+                markdownContent
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Blinking cursor
-                HStack(spacing: 0) {
-                    BlinkingCursor()
-                }
+                // Pulsing cursor — scale + glow animation signals active generation
+                PulsingCursor()
             }
             .padding(.vertical, 8)
 
@@ -716,21 +788,81 @@ struct StreamingSectionView: View {
         }
         .padding(.horizontal, 0)
     }
+
+    @ViewBuilder
+    private var markdownContent: some View {
+        if content.isEmpty {
+            Text(" ")
+        } else {
+            let rendered = (try? AttributedString(
+                markdown: content,
+                options: AttributedString.MarkdownParsingOptions(
+                    interpretedSyntax: .inlineOnlyPreservingWhitespace
+                )
+            )) ?? AttributedString(content)
+            MarkdownCodeFenceView(raw: content, rendered: rendered)
+        }
+    }
 }
 
-struct BlinkingCursor: View {
-    @State private var visible = true
+/// Pulsing vertical bar cursor — scales and glows in sync to signal live generation.
+struct PulsingCursor: View {
+    @State private var scaleY: CGFloat = 1.0
+    @State private var opacity: Double = 1.0
+    @State private var glowRadius: CGFloat = 0
 
     var body: some View {
-        Rectangle()
+        RoundedRectangle(cornerRadius: 1.5)
             .fill(Color.cyan)
-            .frame(width: 2, height: 14)
-            .opacity(visible ? 1 : 0)
+            .frame(width: 2.5, height: 16)
+            .scaleEffect(y: scaleY, anchor: .bottom)
+            .opacity(opacity)
+            .shadow(color: Color.cyan.opacity(0.7), radius: glowRadius)
             .onAppear {
-                withAnimation(.easeInOut(duration: 0.5).repeatForever()) {
-                    visible.toggle()
+                withAnimation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true)) {
+                    scaleY = 0.65
+                    opacity = 0.35
+                    glowRadius = 5
                 }
             }
+    }
+}
+
+/// Legacy alias kept so nothing else breaks if it referenced BlinkingCursor.
+typealias BlinkingCursor = PulsingCursor
+
+// MARK: - Scroll To Bottom FAB
+
+/// Floating action button shown when the user has scrolled up while new tokens are streaming.
+struct ScrollToBottomFAB: View {
+    let action: () -> Void
+    @State private var pulseScale: CGFloat = 1.0
+    @State private var pulseOpacity: Double = 0.0
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                // Pulsing ring behind the button
+                Circle()
+                    .strokeBorder(Color.cyan.opacity(0.6), lineWidth: 1.5)
+                    .frame(width: 42, height: 42)
+                    .scaleEffect(pulseScale)
+                    .opacity(pulseOpacity)
+
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.title2)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, Color.cyan)
+                    .shadow(color: Color.cyan.opacity(0.5), radius: 6)
+            }
+        }
+        .buttonStyle(.plain)
+        .onAppear {
+            withAnimation(.easeOut(duration: 1.1).repeatForever(autoreverses: false)) {
+                pulseScale = 1.7
+                pulseOpacity = 0
+            }
+        }
     }
 }
 
@@ -982,5 +1114,32 @@ final class PasteListenerView: NSView {
             }
         }
         super.keyDown(with: event)
+    }
+}
+
+// MARK: - Scroll Bottom Tracker
+
+/// ViewModifier that tracks whether the scroll view is near the bottom.
+/// Uses `onScrollGeometryChange` on macOS 15+ and a no-op on earlier versions.
+private struct ScrollBottomTracker: ViewModifier {
+    @Binding var isScrolledToBottom: Bool
+    @Binding var hasNewStreamContent: Bool
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content
+                .onScrollGeometryChange(for: Bool.self, of: { geo in
+                    let distanceFromBottom = geo.contentSize.height
+                        - geo.contentOffset.y
+                        - geo.containerSize.height
+                    return distanceFromBottom < 80
+                }) { _, atBottom in
+                    isScrolledToBottom = atBottom
+                    if atBottom { hasNewStreamContent = false }
+                }
+        } else {
+            // macOS 14: no scroll geometry API — always report scrolled to bottom.
+            content.onAppear { isScrolledToBottom = true }
+        }
     }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import Security
 
 struct SettingsView: View {
     @AppStorage("databasePath") private var databasePath = CortanaConstants.dropboxDatabasePath
@@ -234,10 +235,12 @@ struct SettingsView: View {
 
     @AppStorage(CanvasServer.enabledKey) private var serverEnabled = false
     @AppStorage(CanvasServer.tokenKey) private var serverToken = ""
+    @AppStorage(CanvasServer.bonjourEnabledKey) private var bonjourEnabled = true
     @AppStorage(PluginServer.enabledKey) private var pluginEnabled = true
     @ObservedObject private var pluginServer = PluginServer.shared
     @State private var tokenInput = ""
     @State private var showToken = false
+    @State private var showRegenConfirm = false
 
     private var serverTab: some View {
         Form {
@@ -283,6 +286,22 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(server.isRunning ? .primary : .secondary)
                 }
+
+                Toggle("Advertise via Bonjour (_worldtree._tcp.)", isOn: $bonjourEnabled)
+                    .font(.callout)
+
+                if let serviceName = server.bonjourServiceName {
+                    HStack(spacing: 6) {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                            .foregroundStyle(.green)
+                            .font(.caption)
+                        Text(serviceName)
+                            .font(.caption)
+                            .monospaced()
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
             }
 
             Section("Auth Token") {
@@ -327,6 +346,36 @@ struct SettingsView: View {
                         Label("No token set", systemImage: "xmark.circle")
                             .font(.caption)
                             .foregroundStyle(.orange)
+                    }
+                }
+
+                // TASK-027: Regenerate token button.
+                Divider()
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Regenerate Token")
+                            .font(.callout)
+                        Text("Generates a new random 32-char hex token and disconnects all mobile clients.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Regenerate…") {
+                        showRegenConfirm = true
+                    }
+                    .foregroundStyle(.orange)
+                    .confirmationDialog(
+                        "Regenerate Server Token?",
+                        isPresented: $showRegenConfirm,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Regenerate Token", role: .destructive) {
+                            regenerateToken()
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("This will disconnect all active mobile clients immediately. They will need the new token to reconnect.")
                     }
                 }
             }
@@ -480,6 +529,26 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    // MARK: - Token Regeneration (TASK-027)
+
+    /// Generate a new cryptographically-random 32-char hex token, persist it, and
+    /// disconnect all active WebSocket clients so they must re-authenticate.
+    private func regenerateToken() {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let newToken = bytes.map { String(format: "%02x", $0) }.joined()
+
+        // Persist — CanvasServer reads this on every auth check via configuredToken.
+        UserDefaults.standard.set(newToken, forKey: CanvasServer.tokenKey)
+
+        // Disconnect all active WebSocket clients immediately.
+        for client in server.webSocketClients.values {
+            client.wsConnection?.sendCloseAndDisconnect(code: 1008, reason: "Token regenerated — reconnect with new token")
+        }
+
+        canvasLog("[Settings] Server token regenerated — \(server.webSocketClients.count) client(s) disconnected")
     }
 
     private func applyRemoteToggle(_ enabled: Bool) {

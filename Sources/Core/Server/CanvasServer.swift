@@ -18,6 +18,7 @@ final class CanvasServer: ObservableObject {
     static let port: UInt16 = 5865
     static let tokenKey = "cortana.serverToken"
     static let enabledKey = "cortana.serverEnabled"
+    static let bonjourEnabledKey = "cortana.bonjourEnabled"
 
     static let maxWebSocketConnections = 10
 
@@ -27,10 +28,13 @@ final class CanvasServer: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var ngrokPublicURL: String?
     @Published private(set) var webSocketClients: [String: WebSocketClient] = [:]
+    /// Service name currently advertised via Bonjour, or `nil` when not advertising.
+    @Published private(set) var bonjourServiceName: String?
 
     private var listener: NWListener?
     private let networkQueue = DispatchQueue(label: "cortana.canvas-server", qos: .userInitiated)
     private var pingTask: Task<Void, Never>?
+    private let rateLimiter = AuthRateLimiter()
 
     var configuredToken: String {
         UserDefaults.standard.string(forKey: Self.tokenKey) ?? ""
@@ -52,6 +56,8 @@ final class CanvasServer: ObservableObject {
             let listener = try NWListener(
                 using: .tcp, on: NWEndpoint.Port(rawValue: Self.port)!)
             self.listener = listener
+
+            configureBonjour(on: listener)
 
             listener.newConnectionHandler = { [weak self] connection in
                 // NWListener delivers on networkQueue; hop to MainActor for start()
@@ -108,7 +114,47 @@ final class CanvasServer: ObservableObject {
         listener = nil
         isRunning = false
         ngrokPublicURL = nil
+        bonjourServiceName = nil
         removeStateFile()
+    }
+
+    // MARK: - Bonjour
+
+    /// Whether Bonjour advertising is enabled. Defaults to `true` when the key has never been set.
+    var isBonjourEnabled: Bool {
+        guard UserDefaults.standard.object(forKey: Self.bonjourEnabledKey) != nil else { return true }
+        return UserDefaults.standard.bool(forKey: Self.bonjourEnabledKey)
+    }
+
+    /// The short hostname component (e.g. "Ryans-Mac-Studio" from a fully-qualified name).
+    var shortHostname: String {
+        ProcessInfo.processInfo.hostName.components(separatedBy: ".").first
+            ?? ProcessInfo.processInfo.hostName
+    }
+
+    /// Attaches a `_worldtree._tcp.` Bonjour advertisement to `listener` when enabled.
+    /// Must be called before `listener.start()`.
+    /// Sets `bonjourServiceName` so callers can confirm advertising is active.
+    func configureBonjour(on listener: NWListener) {
+        guard isBonjourEnabled else {
+            canvasLog("[CanvasServer] Bonjour disabled — skipping advertisement")
+            return
+        }
+
+        let name = "\(shortHostname):\(Self.port)"
+        var txt = NWTXTRecord()
+        txt["version"] = "1"
+        txt["name"]    = "World Tree"
+        txt["wsPath"]  = "/ws"
+
+        listener.service = NWListener.Service(
+            name: name,
+            type: "_worldtree._tcp.",
+            domain: nil,
+            txtRecord: txt
+        )
+        bonjourServiceName = name
+        canvasLog("[CanvasServer] Bonjour advertising as '\(name)' (_worldtree._tcp.)")
     }
 
     // MARK: - State File (for external clients like Telegram bot)
@@ -197,15 +243,36 @@ final class CanvasServer: ObservableObject {
     private func beginConnection(_ connection: NWConnection) {
         // Start the connection delivering callbacks on networkQueue
         connection.start(queue: networkQueue)
+        // Extract remote IP for rate limiting (best-effort — may be nil for Unix sockets)
+        let remoteIP = Self.remoteIP(from: connection)
         // Hand off to nonisolated receive loop
-        Self.receiveData(from: connection, token: configuredToken, accumulated: Data())
+        Self.receiveData(from: connection, token: configuredToken, remoteIP: remoteIP, accumulated: Data())
+    }
+
+    /// Extract the dotted-decimal (or colon-delimited) IP from an NWConnection endpoint.
+    private nonisolated static func remoteIP(from connection: NWConnection) -> String {
+        switch connection.endpoint {
+        case .hostPort(let host, _):
+            switch host {
+            case .ipv4(let addr): return "\(addr)"
+            case .ipv6(let addr): return "\(addr)"
+            default:              return host.debugDescription
+            }
+        default:
+            return "unknown"
+        }
     }
 
     // MARK: - Receive Loop (nonisolated)
 
     /// Accumulates raw TCP bytes until a complete HTTP/1.1 request arrives, then dispatches.
     /// Runs on NWConnection's callback queue — no MainActor access here.
-    private nonisolated static func receiveData(from connection: NWConnection, token: String, accumulated: Data) {
+    private nonisolated static func receiveData(
+        from connection: NWConnection,
+        token: String,
+        remoteIP: String,
+        accumulated: Data
+    ) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { chunk, _, isComplete, error in
             if let error {
                 canvasLog("[CanvasServer] Receive error: \(error)")
@@ -220,7 +287,7 @@ final class CanvasServer: ObservableObject {
             let terminator = Data("\r\n\r\n".utf8)
             guard let headerEnd = buffer.range(of: terminator) else {
                 if isComplete { connection.cancel() }
-                else { receiveData(from: connection, token: token, accumulated: buffer) }
+                else { receiveData(from: connection, token: token, remoteIP: remoteIP, accumulated: buffer) }
                 return
             }
 
@@ -231,10 +298,11 @@ final class CanvasServer: ObservableObject {
 
             if bodyReceived >= contentLength {
                 Task { @MainActor in
-                    await CanvasServer.shared.handleRawRequest(buffer, connection: connection, expectedToken: token)
+                    await CanvasServer.shared.handleRawRequest(
+                        buffer, connection: connection, expectedToken: token, remoteIP: remoteIP)
                 }
             } else {
-                receiveData(from: connection, token: token, accumulated: buffer)
+                receiveData(from: connection, token: token, remoteIP: remoteIP, accumulated: buffer)
             }
         }
     }
@@ -251,13 +319,28 @@ final class CanvasServer: ObservableObject {
 
     // MARK: - Request Processing (MainActor)
 
-    func handleRawRequest(_ data: Data, connection: NWConnection, expectedToken: String) async {
+    func handleRawRequest(
+        _ data: Data,
+        connection: NWConnection,
+        expectedToken: String,
+        remoteIP: String = "unknown"
+    ) async {
         guard let raw = String(data: data, encoding: .utf8) else {
             sendResponse(connection, status: 400, body: #"{"error":"bad request"}"#)
             return
         }
 
         let req = parseHTTP(raw)
+
+        // Purge stale windows opportunistically (no separate timer needed at low traffic).
+        rateLimiter.purgeAllExpired()
+
+        // Check if this IP is already rate-limited before attempting auth.
+        if req.path != "/health" && rateLimiter.isBlocked(ip: remoteIP) {
+            canvasLog("[CanvasServer] Rate-limited request from \(remoteIP)")
+            sendResponse(connection, status: 429, body: #"{"error":"too many failed auth attempts — try again later"}"#)
+            return
+        }
 
         // Detect WebSocket upgrade before normal auth — WS uses token from query param or header
         if req.path == "/ws",
@@ -266,7 +349,12 @@ final class CanvasServer: ObservableObject {
             // Auth: accept token from query parameter or header
             let token = req.queryParam("token") ?? req.headers["x-canvas-token"] ?? ""
             guard token == expectedToken else {
-                sendResponse(connection, status: 401, body: #"{"error":"unauthorized"}"#)
+                let nowBlocked = rateLimiter.recordFailure(ip: remoteIP)
+                let status = nowBlocked ? 429 : 401
+                let body = nowBlocked
+                    ? #"{"error":"too many failed auth attempts — try again later"}"#
+                    : #"{"error":"unauthorized"}"#
+                sendResponse(connection, status: status, body: body)
                 return
             }
             await handleWebSocketUpgrade(connection, request: req)
@@ -275,7 +363,12 @@ final class CanvasServer: ObservableObject {
 
         if req.path != "/health" {
             guard (req.headers["x-canvas-token"] ?? "") == expectedToken else {
-                sendResponse(connection, status: 401, body: #"{"error":"unauthorized"}"#)
+                let nowBlocked = rateLimiter.recordFailure(ip: remoteIP)
+                let status = nowBlocked ? 429 : 401
+                let body = nowBlocked
+                    ? #"{"error":"too many failed auth attempts — try again later"}"#
+                    : #"{"error":"unauthorized"}"#
+                sendResponse(connection, status: status, body: body)
                 return
             }
         }
@@ -597,7 +690,8 @@ final class CanvasServer: ObservableObject {
 
     private func statusText(_ code: Int) -> String {
         [101: "Switching Protocols", 200: "OK", 400: "Bad Request", 401: "Unauthorized",
-         404: "Not Found", 500: "Internal Server Error", 503: "Service Unavailable"][code] ?? "Unknown"
+         404: "Not Found", 429: "Too Many Requests", 500: "Internal Server Error",
+         503: "Service Unavailable"][code] ?? "Unknown"
     }
 
     private func esc(_ s: String) -> String {
