@@ -17,6 +17,9 @@ final class WorldTreeStore {
     /// When true, the next branches_list response will auto-select the best branch
     /// instead of restoring the last-viewed one. Set when the user taps a project row.
     var pendingAutoSelectBranch = false
+    /// When true, the next branches_list response will navigate to the newest branch.
+    /// Set immediately before sending create_branch.
+    var pendingNavigateToNewBranch = false
     /// Active and recently-completed tool chips shown inline during streaming.
     var activeToolChips: [ToolChip] = []
     /// Per-branch draft text. Key = branchId. Binding-compatible via draftText(for:).
@@ -56,7 +59,16 @@ final class WorldTreeStore {
         case "branches_list":
             if let payload = event.branches {
                 branches = payload
-                if pendingAutoSelectBranch {
+                if pendingNavigateToNewBranch {
+                    pendingNavigateToNewBranch = false
+                    // Navigate to the newest branch that isn't the current one.
+                    let iso = ISO8601DateFormatter()
+                    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                    let newest = payload
+                        .filter { $0.id != currentBranch?.id }
+                        .max { (iso.date(from: $0.createdAt) ?? .distantPast) < (iso.date(from: $1.createdAt) ?? .distantPast) }
+                    if let newest { selectBranch(newest) }
+                } else if pendingAutoSelectBranch {
                     pendingAutoSelectBranch = false
                     // Prefer the main branch; fall back to the first available.
                     let best = payload.first(where: { $0.branchType == "main" }) ?? payload.first
@@ -143,6 +155,17 @@ extension WorldTreeStore {
     func selectTree(_ tree: TreeSummary) {
         currentTree = tree
         persistedTreeId = tree.id
+    }
+
+    /// Immediately append a user message so the UI shows it before the server echoes it back.
+    func addOptimisticMessage(content: String) {
+        let msg = Message(
+            id: "optimistic-\(UUID().uuidString)",
+            role: "user",
+            content: content,
+            createdAt: ISO8601DateFormatter().string(from: Date())
+        )
+        messages.append(msg)
     }
 
     func selectBranch(_ branch: BranchSummary) {

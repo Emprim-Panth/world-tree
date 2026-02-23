@@ -1147,7 +1147,12 @@ extension CanvasServer {
         }
 
         do {
-            _ = try TreeStore.shared.createBranch(treeId: req.treeId, title: req.title)
+            _ = try TreeStore.shared.createBranch(
+                treeId: req.treeId,
+                parentBranch: req.parentBranchId,
+                forkFromMessage: req.fromMessageId,
+                title: req.title
+            )
             guard let tree = try TreeStore.shared.getTree(req.treeId) else {
                 sendWSError(to: clientId, code: "not_found", message: "Tree not found", id: message.id)
                 return

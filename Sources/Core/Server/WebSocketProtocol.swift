@@ -86,6 +86,10 @@ struct WSCreateTreePayload: Codable {
 struct WSCreateBranchPayload: Codable {
     let treeId: String
     let title: String?
+    /// Message ID to fork from (context snapshot up to this message).
+    let fromMessageId: String?
+    /// Parent branch ID — used to preserve the lineage for UI rendering.
+    let parentBranchId: String?
 }
 
 // MARK: - Server → Client Message Types

@@ -1,13 +1,13 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct BranchView: View {
     @Environment(WorldTreeStore.self) private var store
     @Environment(ConnectionManager.self) private var connectionManager
     @AppStorage(Constants.UserDefaultsKeys.messageFontSize) private var messageFontSize = Constants.Defaults.messageFontSize
 
-    // TASK-023: draft text is keyed by branchId in the store, not local @State.
-    // We mirror it through a local @State so the TextField binding works efficiently,
-    // and sync back to the store on every change.
     @State private var messageText = ""
     private var currentBranchId: String? { store.currentBranch?.id }
 
@@ -27,7 +27,6 @@ struct BranchView: View {
             .onAppear {
                 if let id = currentBranchId {
                     messageText = store.draft(for: id)
-                    // Load history when messages are absent (session restore path).
                     if store.messages.isEmpty, let tree = store.currentTree {
                         Task {
                             await connectionManager.send(.subscribe(treeId: tree.id, branchId: id))
@@ -37,15 +36,27 @@ struct BranchView: View {
                 }
             }
             .onChange(of: store.currentBranch?.id) { oldId, newId in
-                // Save draft for the branch we're leaving.
                 if let old = oldId {
                     store.saveDraft(messageText, for: old)
                 }
-                // Restore draft for the branch we're entering.
                 messageText = newId.map { store.draft(for: $0) } ?? ""
+                // Subscribe and load history when switching to a new branch while BranchView is on screen.
+                if let newId, let tree = store.currentTree {
+                    Task {
+                        await connectionManager.send(.subscribe(treeId: tree.id, branchId: newId))
+                        await connectionManager.send(.loadHistory(branchId: newId))
+                    }
+                }
+            }
+            .onChange(of: connectionManager.state) { _, newState in
+                // Re-subscribe after reconnect — the server loses subscriptions on disconnect.
+                if case .connected = newState,
+                   let tree = store.currentTree,
+                   let branch = store.currentBranch {
+                    Task { await connectionManager.send(.subscribe(treeId: tree.id, branchId: branch.id)) }
+                }
             }
             .onChange(of: messageText) { _, newText in
-                // Keep the store draft in sync as the user types.
                 if let id = currentBranchId {
                     store.saveDraft(newText, for: id)
                 }
@@ -57,8 +68,19 @@ struct BranchView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(store.messages) { message in
-                        MessageBubble(message: message, fontSize: messageFontSize)
-                            .id(message.id)
+                        MessageBubble(
+                            message: message,
+                            fontSize: messageFontSize,
+                            onCopy: {
+                                #if canImport(UIKit)
+                                UIPasteboard.general.string = message.content
+                                #endif
+                            },
+                            onBranch: message.id.hasPrefix("optimistic-") ? nil : {
+                                branchFromMessage(message)
+                            }
+                        )
+                        .id(message.id)
                     }
                     if store.isStreaming {
                         // Tool chips appear above the streaming bubble
@@ -98,8 +120,9 @@ struct BranchView: View {
               !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let content = messageText
         messageText = ""
-        // Clear the persisted draft — message was sent.
         store.saveDraft("", for: branch.id)
+        // Show the user's own message immediately — don't wait for the server to echo it back.
+        store.addOptimisticMessage(content: content)
         Task { await connectionManager.send(.sendMessage(branchId: branch.id, content: content)) }
     }
 
@@ -107,11 +130,28 @@ struct BranchView: View {
         guard let branch = store.currentBranch else { return }
         Task { await connectionManager.send(.cancelStream(branchId: branch.id)) }
     }
+
+    private func branchFromMessage(_ message: Message) {
+        guard let tree = store.currentTree, let branch = store.currentBranch else { return }
+        let title = String(message.content.prefix(60)).trimmingCharacters(in: .whitespacesAndNewlines)
+        store.pendingNavigateToNewBranch = true
+        Task {
+            await connectionManager.send(.createBranch(
+                treeId: tree.id,
+                fromMessageId: message.id,
+                parentBranchId: branch.id,
+                title: title.isEmpty ? nil : title
+            ))
+        }
+    }
 }
 
 private struct MessageBubble: View {
     let message: Message
     let fontSize: Double
+    let onCopy: () -> Void
+    /// nil = disable branch option (e.g. optimistic messages that have no server-side ID yet)
+    let onBranch: (() -> Void)?
 
     var isUser: Bool { message.role == "user" }
 
@@ -124,6 +164,16 @@ private struct MessageBubble: View {
                 .padding(.vertical, 8)
                 .background(isUser ? Color.blue : Color.secondarySystemBackground, in: RoundedRectangle(cornerRadius: 16))
                 .foregroundStyle(isUser ? .white : .primary)
+                .contextMenu {
+                    Button(action: onCopy) {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                    if let onBranch {
+                        Button(action: onBranch) {
+                            Label("Branch from here", systemImage: "arrow.triangle.branch")
+                        }
+                    }
+                }
             if !isUser { Spacer(minLength: 60) }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)

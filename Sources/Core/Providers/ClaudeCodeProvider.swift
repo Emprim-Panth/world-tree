@@ -233,8 +233,11 @@ final class ClaudeCodeProvider: LLMProvider {
                 }
             }
 
-            continuation.onTermination = { [weak self] _ in
-                self?.cancel()
+            // Capture proc directly so cancelling this stream only terminates *this* CLI
+            // process. Using self?.cancel() was a bug: concurrent sends overwrote
+            // _currentProcess, so cancelling stream-1 would kill stream-2's process.
+            continuation.onTermination = { _ in
+                proc.terminate()
             }
 
             do {

@@ -183,9 +183,16 @@ struct ClientCommand {
         return ClientCommand(type: "create_tree", payload: payload)
     }
 
-    static func createBranch(treeId: String, title: String? = nil) -> ClientCommand {
+    static func createBranch(
+        treeId: String,
+        fromMessageId: String? = nil,
+        parentBranchId: String? = nil,
+        title: String? = nil
+    ) -> ClientCommand {
         var payload: [String: Any] = ["treeId": treeId]
         if let title { payload["title"] = title }
+        if let fromMessageId { payload["fromMessageId"] = fromMessageId }
+        if let parentBranchId { payload["parentBranchId"] = parentBranchId }
         return ClientCommand(type: "create_branch", payload: payload)
     }
 }
