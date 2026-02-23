@@ -131,6 +131,19 @@ final class WorldTreeStore {
             }
             isStreaming = false
             activeToolChips = []
+        case "error":
+            // Surface daemon/pipeline errors as an assistant message instead of silently dropping.
+            let errText = event.errorMessage ?? "An error occurred."
+            let msg = Message(
+                id: "error-\(UUID().uuidString)",
+                role: "assistant",
+                content: "⚠️ \(errText)",
+                createdAt: ISO8601DateFormatter().string(from: Date())
+            )
+            messages.append(msg)
+            isStreaming = false
+            activeToolChips = []
+            isLoadingHistory = false
         default:
             break
         }
