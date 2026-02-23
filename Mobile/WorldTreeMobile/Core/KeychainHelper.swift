@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 enum KeychainHelper {
-    private static let service = "heiloprojects.world-tree-mobile"
+    private static let service = "com.heiloprojects.world-tree-mobile"
 
     static func save(token: String, forServerId id: String) {
         let key = "server.\(id).token"
