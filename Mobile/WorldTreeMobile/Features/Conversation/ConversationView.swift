@@ -5,7 +5,6 @@ struct ConversationView: View {
     @Environment(WorldTreeStore.self) private var store
 
     @State private var showNewTreeSheet = false
-    @State private var showNewBranchSheet = false
 
     var body: some View {
         NavigationStack {
@@ -19,7 +18,9 @@ struct ConversationView: View {
                     if store.currentBranch != nil {
                         BranchView()
                     } else if store.currentTree != nil {
-                        BranchesListView()
+                        // Branches are loading; auto-select will switch to BranchView shortly.
+                        ProgressView("Loading…")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         TreeListView()
                     }
@@ -35,18 +36,11 @@ struct ConversationView: View {
             .sheet(isPresented: $showNewTreeSheet) {
                 NewTreeSheet()
             }
-            .sheet(isPresented: $showNewBranchSheet) {
-                if let tree = store.currentTree {
-                    NewBranchSheet(treeId: tree.id)
-                }
-            }
         }
     }
 
     private var navigationTitle: String {
-        if let branch = store.currentBranch {
-            return branch.displayName
-        } else if let tree = store.currentTree {
+        if let tree = store.currentTree {
             return tree.name
         }
         return connectionManager.currentServer?.name ?? "World Tree"
@@ -91,17 +85,10 @@ struct ConversationView: View {
 
     @ToolbarContentBuilder
     private var backToolbarItem: some ToolbarContent {
-        if store.currentBranch != nil {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(action: { store.clearBranch() }) {
-                    Label("Branches", systemImage: "chevron.left")
-                        .labelStyle(.titleAndIcon)
-                }
-            }
-        } else if store.currentTree != nil {
+        if store.currentBranch != nil || store.currentTree != nil {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(action: { store.clearTree() }) {
-                    Label("Trees", systemImage: "chevron.left")
+                    Label("Projects", systemImage: "chevron.left")
                         .labelStyle(.titleAndIcon)
                 }
             }
@@ -110,16 +97,9 @@ struct ConversationView: View {
 
     @ToolbarContentBuilder
     private var createToolbarItem: some ToolbarContent {
-        // Show "+" only in list views, not while in a conversation.
-        if case .connected = connectionManager.state, store.currentBranch == nil {
+        if case .connected = connectionManager.state, store.currentBranch == nil, store.currentTree == nil {
             ToolbarItem(placement: .topBarTrailing) {
-                Button(action: {
-                    if store.currentTree != nil {
-                        showNewBranchSheet = true
-                    } else {
-                        showNewTreeSheet = true
-                    }
-                }) {
+                Button(action: { showNewTreeSheet = true }) {
                     Image(systemName: "plus")
                 }
             }

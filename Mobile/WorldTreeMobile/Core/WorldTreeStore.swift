@@ -14,6 +14,9 @@ final class WorldTreeStore {
     var messages: [Message] = []
     var streamingText: String = ""
     var isStreaming: Bool = false
+    /// When true, the next branches_list response will auto-select the best branch
+    /// instead of restoring the last-viewed one. Set when the user taps a project row.
+    var pendingAutoSelectBranch = false
     /// Active and recently-completed tool chips shown inline during streaming.
     var activeToolChips: [ToolChip] = []
     /// Per-branch draft text. Key = branchId. Binding-compatible via draftText(for:).
@@ -53,8 +56,15 @@ final class WorldTreeStore {
         case "branches_list":
             if let payload = event.branches {
                 branches = payload
-                // TASK-028: auto-navigate to last-viewed branch after branches load.
-                restoreLastBranch()
+                if pendingAutoSelectBranch {
+                    pendingAutoSelectBranch = false
+                    // Prefer the main branch; fall back to the first available.
+                    let best = payload.first(where: { $0.branchType == "main" }) ?? payload.first
+                    if let best { selectBranch(best) }
+                } else {
+                    // TASK-028: auto-navigate to last-viewed branch after branches load.
+                    restoreLastBranch()
+                }
             }
         case "messages_list":
             if let payload = event.messages {
