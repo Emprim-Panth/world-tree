@@ -87,6 +87,11 @@ final class ConnectionManager {
     private var connectionGeneration = 0
     private var reconnectAttempts = 0
     private let maxReconnectAttempts = 10
+    /// Timestamp when the current WebSocket was opened.
+    private var lastConnectTime: Date?
+    /// Consecutive closes that happened within 3 s of connecting (auth failure signal).
+    private var rapidDisconnectCount = 0
+    private let maxRapidDisconnects = 3
     private var reconnectTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var backgroundTimer: Task<Void, Never>?
@@ -112,6 +117,7 @@ final class ConnectionManager {
     /// Resets the reconnect counter and cancels any pending reconnect first.
     func connect(to server: SavedServer, token: String) async {
         suppressAutoConnect = false
+        rapidDisconnectCount = 0
         currentServer = server
         currentToken = token
         reconnectAttempts = 0
@@ -156,6 +162,7 @@ final class ConnectionManager {
         let generation = connectionGeneration
         let task = taskFactory(url)
         webSocketTask = task
+        lastConnectTime = Date()
         task.resume()
         state = .connected
         startReceiveLoop(task: task, generation: generation, server: server, token: token)
@@ -197,6 +204,23 @@ final class ConnectionManager {
     private func handleDisconnect(server: SavedServer, token: String) async {
         webSocketTask = nil
         cancelPing()
+
+        // Detect rapid connect → close (< 3 s alive) as a likely auth failure.
+        // After maxRapidDisconnects consecutive rapid closes, bail to server picker
+        // so the user can enter the correct token instead of looping forever.
+        let isRapid = lastConnectTime.map { Date().timeIntervalSince($0) < 3.0 } ?? false
+        if isRapid {
+            rapidDisconnectCount += 1
+            if rapidDisconnectCount >= maxRapidDisconnects {
+                rapidDisconnectCount = 0
+                suppressAutoConnect = true
+                currentServer = nil
+                state = .disconnected
+                return
+            }
+        } else {
+            rapidDisconnectCount = 0
+        }
 
         guard reconnectAttempts < maxReconnectAttempts else {
             state = .disconnected
