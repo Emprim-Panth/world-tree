@@ -115,14 +115,29 @@ private struct ConnectionStatusBadge: View {
     @Environment(ConnectionManager.self) private var connectionManager
 
     var body: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 8, height: 8)
-            Text(statusLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        Button(action: changeServer) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 10, height: 10)
+                Text(statusLabel)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(.regularMaterial, in: Capsule())
         }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+    }
+
+    private func changeServer() {
+        connectionManager.suppressAutoConnect = true
+        connectionManager.disconnect()
+        connectionManager.currentServer = nil
     }
 
     private var statusColor: Color {
@@ -135,9 +150,9 @@ private struct ConnectionStatusBadge: View {
 
     private var statusLabel: String {
         switch connectionManager.state {
-        case .connected: return "Connected"
-        case .connecting: return "Connecting"
-        case .reconnecting: return "Reconnecting"
+        case .connected: return connectionManager.currentServer?.name ?? "Connected"
+        case .connecting: return "Connecting…"
+        case .reconnecting: return "Reconnecting…"
         case .disconnected: return "Disconnected"
         }
     }
