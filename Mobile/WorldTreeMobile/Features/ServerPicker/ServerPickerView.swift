@@ -10,6 +10,7 @@ struct ServerPickerView: View {
     @State private var bonjourBrowser = BonjourBrowser()
     @State private var showAddServer = false
     @State private var addServerPrefill: AddServerPrefill? = nil
+    @State private var showSettings = false
     @State private var isOnWifi = true
     @State private var didAutoConnect = false
     private let pathMonitor = NWPathMonitor()
@@ -22,11 +23,19 @@ struct ServerPickerView: View {
             }
             .navigationTitle("World Tree")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: { showSettings = true }) {
+                        Image(systemName: "gearshape")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: { addServerPrefill = AddServerPrefill() }) {
                         Image(systemName: "plus")
                     }
                 }
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
             }
             .sheet(item: $addServerPrefill) { prefill in
                 AddServerView(
