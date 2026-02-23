@@ -1,5 +1,6 @@
 import SwiftUI
 import Security
+import CryptoKit
 
 struct SettingsView: View {
     @AppStorage("databasePath") private var databasePath = CortanaConstants.dropboxDatabasePath
@@ -264,6 +265,7 @@ struct SettingsView: View {
     @State private var tokenInput = ""
     @State private var showToken = false
     @State private var showRegenConfirm = false
+    @State private var tokenCopied = false
 
     private var serverTab: some View {
         Form {
@@ -328,67 +330,83 @@ struct SettingsView: View {
             }
 
             Section("Auth Token") {
-                Text("Clients must send this token in the x-canvas-token header.")
+                Text("Clients must send this token to authenticate. Enter a passphrase to generate a deterministic token, or regenerate a random one.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                HStack {
-                    if showToken {
-                        TextField("Enter token", text: $tokenInput)
-                            .textFieldStyle(.roundedBorder)
-                            .monospaced()
-                            .font(.caption)
-                    } else {
-                        SecureField("Enter token", text: $tokenInput)
-                            .textFieldStyle(.roundedBorder)
-                            .monospaced()
-                            .font(.caption)
+                // Current token display
+                HStack(spacing: 8) {
+                    Group {
+                        if showToken {
+                            Text(serverToken.isEmpty ? "No token set" : serverToken)
+                                .monospaced()
+                                .font(.caption)
+                                .foregroundStyle(serverToken.isEmpty ? .secondary : .primary)
+                                .textSelection(.enabled)
+                        } else {
+                            Text(serverToken.isEmpty ? "No token set" : String(repeating: "•", count: min(serverToken.count, 32)))
+                                .monospaced()
+                                .font(.caption)
+                                .foregroundStyle(serverToken.isEmpty ? .secondary : .primary)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                     Button(action: { showToken.toggle() }) {
                         Image(systemName: showToken ? "eye.slash" : "eye")
                     }
                     .buttonStyle(.plain)
-                }
-
-                HStack {
-                    Button("Save Token") {
-                        let trimmed = tokenInput.trimmingCharacters(in: .whitespaces)
-                        guard !trimmed.isEmpty else { return }
-                        UserDefaults.standard.set(trimmed, forKey: CanvasServer.tokenKey)
-                        tokenInput = ""
-                    }
-                    .disabled(tokenInput.trimmingCharacters(in: .whitespaces).isEmpty)
 
                     if !serverToken.isEmpty {
-                        Button("Copy") {
+                        Button(tokenCopied ? "Copied!" : "Copy") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(serverToken, forType: .string)
+                            tokenCopied = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { tokenCopied = false }
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                    }
-
-                    Spacer()
-
-                    if !serverToken.isEmpty {
-                        Label("Token configured", systemImage: "checkmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                    } else {
-                        Label("No token set", systemImage: "xmark.circle")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
+                        .foregroundStyle(tokenCopied ? .green : .primary)
                     }
                 }
+                .padding(.vertical, 2)
 
-                // TASK-027: Regenerate token button.
+                Divider()
+
+                // Generate from passphrase
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Set from passphrase")
+                        .font(.callout)
+                    HStack {
+                        if showToken {
+                            TextField("Passphrase", text: $tokenInput)
+                                .textFieldStyle(.roundedBorder)
+                                .monospaced()
+                                .font(.caption)
+                        } else {
+                            SecureField("Passphrase", text: $tokenInput)
+                                .textFieldStyle(.roundedBorder)
+                                .monospaced()
+                                .font(.caption)
+                        }
+                        Button("Generate") {
+                            generateFromPhrase()
+                        }
+                        .disabled(tokenInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .help("SHA-256 hash passphrase into a 32-char hex token")
+                    }
+                    Text("Derives a reproducible hex token from your phrase — same phrase always gives the same token.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
                 Divider()
 
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Regenerate Token")
+                        Text("Random Token")
                             .font(.callout)
-                        Text("Generates a new random 32-char hex token and disconnects all mobile clients.")
+                        Text("Generates a new cryptographic random token and disconnects all mobile clients.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -565,15 +583,23 @@ struct SettingsView: View {
 
     // MARK: - Token Regeneration (TASK-027)
 
+    /// Derive a 32-char hex token by SHA-256 hashing the user's passphrase.
+    private func generateFromPhrase() {
+        let phrase = tokenInput.trimmingCharacters(in: .whitespaces)
+        guard !phrase.isEmpty else { return }
+        let digest = SHA256.hash(data: Data(phrase.utf8))
+        let hex = digest.compactMap { String(format: "%02x", $0) }.joined()
+        applyToken(hex)
+        tokenInput = ""
+    }
+
     /// Generate a new cryptographically-random 32-char hex token, persist it, and
     /// disconnect all active WebSocket clients so they must re-authenticate.
     private func regenerateToken() {
         var bytes = [UInt8](repeating: 0, count: 16)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         let newToken = bytes.map { String(format: "%02x", $0) }.joined()
-
-        // Persist — CanvasServer reads this on every auth check via configuredToken.
-        UserDefaults.standard.set(newToken, forKey: CanvasServer.tokenKey)
+        applyToken(newToken)
 
         // Disconnect all active WebSocket clients immediately.
         for client in server.webSocketClients.values {
@@ -581,6 +607,16 @@ struct SettingsView: View {
         }
 
         canvasLog("[Settings] Server token regenerated — \(server.webSocketClients.count) client(s) disconnected")
+    }
+
+    /// Write the new token via @AppStorage (so SwiftUI re-renders immediately)
+    /// and auto-copy it to the clipboard.
+    private func applyToken(_ token: String) {
+        serverToken = token
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(token, forType: .string)
+        tokenCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { tokenCopied = false }
     }
 
     private func applyRemoteToggle(_ enabled: Bool) {
