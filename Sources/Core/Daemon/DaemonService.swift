@@ -52,22 +52,40 @@ final class DaemonService: ObservableObject {
     // MARK: - Health
 
     func checkHealth() {
-        // Quick check: does socket file exist?
-        let available = FileManager.default.fileExists(atPath: CortanaConstants.daemonSocketPath)
-        if !available {
-            isConnected = false
-            return
+        // Primary: HTTP health endpoint (openClaude Swift daemon on port 8765).
+        // Async — fires a background task; result lands on MainActor via @MainActor class.
+        Task {
+            await checkHTTPHealth()
+        }
+    }
+
+    private func checkHTTPHealth() async {
+        // 1. Try HTTP health endpoint first (Swift daemon — port 8765, no socket required).
+        if let url = URL(string: "\(CortanaConstants.daemonAPIURL)/health") {
+            do {
+                var req = URLRequest(url: url, timeoutInterval: 3)
+                req.httpMethod = "GET"
+                let (_, response) = try await URLSession.shared.data(for: req)
+                if let http = response as? HTTPURLResponse, http.statusCode == 200 {
+                    isConnected = true
+                    return
+                }
+            } catch {
+                // HTTP failed — fall through to file-based check
+            }
         }
 
-        // Also check health file
+        // 2. Fallback: health file (written by TS daemon or older Swift daemon builds).
         let healthPath = CortanaConstants.daemonHealthPath
         if let data = FileManager.default.contents(atPath: healthPath),
            let health = try? JSONDecoder().decode(DaemonHealthFile.self, from: data) {
             let age = Date().timeIntervalSince1970 - health.timestamp
-            isConnected = age < 60 // Healthy if updated within last minute
-        } else {
-            isConnected = available
+            isConnected = age < 60
+            return
         }
+
+        // 3. Last resort: Unix socket file presence.
+        isConnected = FileManager.default.fileExists(atPath: CortanaConstants.daemonSocketPath)
     }
 
     // MARK: - Dispatch
