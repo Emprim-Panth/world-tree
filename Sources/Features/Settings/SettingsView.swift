@@ -348,6 +348,15 @@ struct SettingsView: View {
                     }
                     .disabled(tokenInput.trimmingCharacters(in: .whitespaces).isEmpty)
 
+                    if !serverToken.isEmpty {
+                        Button("Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(serverToken, forType: .string)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+
                     Spacer()
 
                     if !serverToken.isEmpty {
