@@ -13,7 +13,7 @@ struct TreeListView: View {
             Button(action: {
                 store.selectTree(tree)
                 store.pendingAutoSelectBranch = true
-                Task { await connectionManager.send(.listBranches(treeId: tree.id)) }
+                // listBranches is sent by ConversationView.onChange(of: currentTree?.id)
             }) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(tree.name)

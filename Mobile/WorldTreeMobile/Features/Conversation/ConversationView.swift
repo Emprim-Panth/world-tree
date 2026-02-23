@@ -36,6 +36,10 @@ struct ConversationView: View {
             .sheet(isPresented: $showNewTreeSheet) {
                 NewTreeSheet()
             }
+            .onChange(of: store.currentTree?.id) { _, newTreeId in
+                guard let id = newTreeId, store.currentBranch == nil else { return }
+                Task { await connectionManager.send(.listBranches(treeId: id)) }
+            }
         }
     }
 

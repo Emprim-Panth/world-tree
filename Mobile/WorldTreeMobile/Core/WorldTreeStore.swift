@@ -97,13 +97,21 @@ final class WorldTreeStore {
             }
         case "message_complete":
             if !streamingText.isEmpty {
+                let role = event.messageRole ?? "assistant"
                 let msg = Message(
                     id: event.messageId ?? UUID().uuidString,
-                    role: event.messageRole ?? "assistant",
+                    role: role,
                     content: streamingText,
                     createdAt: ISO8601DateFormatter().string(from: Date())
                 )
                 messages.append(msg)
+                if role == "assistant" {
+                    NotificationManager.shared.notifyAssistantMessage(
+                        treeName: currentTree?.name ?? "World Tree",
+                        branchName: currentBranch?.title,
+                        text: streamingText
+                    )
+                }
                 streamingText = ""
             }
             isStreaming = false
