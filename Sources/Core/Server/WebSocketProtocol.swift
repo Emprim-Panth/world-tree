@@ -50,6 +50,8 @@ enum WSClientMessageType: String, Codable {
     case listBranches = "list_branches"
     case getMessages = "get_messages"
     case cancelStream = "cancel_stream"
+    case createTree = "create_tree"
+    case createBranch = "create_branch"
 }
 
 struct WSSubscribePayload: Codable {
@@ -74,6 +76,16 @@ struct WSGetMessagesPayload: Codable {
 
 struct WSCancelStreamPayload: Codable {
     let branchId: String
+}
+
+struct WSCreateTreePayload: Codable {
+    let name: String
+    let project: String?
+}
+
+struct WSCreateBranchPayload: Codable {
+    let treeId: String
+    let title: String?
 }
 
 // MARK: - Server → Client Message Types

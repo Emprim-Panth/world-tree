@@ -863,6 +863,10 @@ extension CanvasServer {
             handleWSSendMessage(clientId: clientId, message: msg)
         case .cancelStream:
             handleWSCancelStream(clientId: clientId, message: msg)
+        case .createTree:
+            handleWSCreateTree(clientId: clientId, message: msg)
+        case .createBranch:
+            handleWSCreateBranch(clientId: clientId, message: msg)
         }
     }
 
@@ -1096,6 +1100,56 @@ extension CanvasServer {
         let ack = WSMessage(type: "stream_cancelled", id: message.id)
         if let json = ack.toJSON() {
             webSocketClients[clientId]?.wsConnection?.send(text: json)
+        }
+    }
+
+    private func handleWSCreateTree(clientId: String, message: WSMessage) {
+        guard let client = webSocketClients[clientId] else { return }
+
+        guard let payload = message.payload,
+              let req = try? payload.decode(as: WSCreateTreePayload.self),
+              !req.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            sendWSError(to: clientId, code: "invalid_payload", message: "create_tree requires a non-empty name", id: message.id)
+            return
+        }
+
+        do {
+            _ = try TreeStore.shared.createTree(name: req.name.trimmingCharacters(in: .whitespacesAndNewlines), project: req.project)
+            let trees = try TreeStore.shared.listTrees()
+            let iso = ISO8601DateFormatter()
+            let treeInfos = trees.map { t in
+                WSTreeInfo(id: t.id, name: t.name, project: t.project, updatedAt: iso.string(from: t.updatedAt), messageCount: t.messageCount)
+            }
+            let response = WSMessage.treesList(trees: treeInfos, id: message.id)
+            if let json = response.toJSON() { client.wsConnection?.send(text: json) }
+        } catch {
+            sendWSError(to: clientId, code: "internal_error", message: error.localizedDescription, id: message.id)
+        }
+    }
+
+    private func handleWSCreateBranch(clientId: String, message: WSMessage) {
+        guard let client = webSocketClients[clientId] else { return }
+
+        guard let payload = message.payload,
+              let req = try? payload.decode(as: WSCreateBranchPayload.self) else {
+            sendWSError(to: clientId, code: "invalid_payload", message: "create_branch requires treeId", id: message.id)
+            return
+        }
+
+        do {
+            _ = try TreeStore.shared.createBranch(treeId: req.treeId, title: req.title)
+            guard let tree = try TreeStore.shared.getTree(req.treeId) else {
+                sendWSError(to: clientId, code: "not_found", message: "Tree not found", id: message.id)
+                return
+            }
+            let iso = ISO8601DateFormatter()
+            let branchInfos = tree.branches.map { b in
+                WSBranchInfo(id: b.id, treeId: b.treeId, title: b.title, status: b.status.rawValue, branchType: b.branchType.rawValue, createdAt: iso.string(from: b.createdAt), updatedAt: iso.string(from: b.updatedAt))
+            }
+            let response = WSMessage.branchesList(branches: branchInfos, id: message.id)
+            if let json = response.toJSON() { client.wsConnection?.send(text: json) }
+        } catch {
+            sendWSError(to: clientId, code: "internal_error", message: error.localizedDescription, id: message.id)
         }
     }
 

@@ -4,6 +4,9 @@ struct ConversationView: View {
     @Environment(ConnectionManager.self) private var connectionManager
     @Environment(WorldTreeStore.self) private var store
 
+    @State private var showNewTreeSheet = false
+    @State private var showNewBranchSheet = false
+
     var body: some View {
         NavigationStack {
             Group {
@@ -27,6 +30,15 @@ struct ConversationView: View {
             .toolbar {
                 connectionStatusToolbarItem
                 backToolbarItem
+                createToolbarItem
+            }
+            .sheet(isPresented: $showNewTreeSheet) {
+                NewTreeSheet()
+            }
+            .sheet(isPresented: $showNewBranchSheet) {
+                if let tree = store.currentTree {
+                    NewBranchSheet(treeId: tree.id)
+                }
             }
         }
     }
@@ -84,6 +96,24 @@ struct ConversationView: View {
                 Button(action: { store.clearTree() }) {
                     Label("Trees", systemImage: "chevron.left")
                         .labelStyle(.titleAndIcon)
+                }
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var createToolbarItem: some ToolbarContent {
+        // Show "+" only in list views, not while in a conversation.
+        if case .connected = connectionManager.state, store.currentBranch == nil {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: {
+                    if store.currentTree != nil {
+                        showNewBranchSheet = true
+                    } else {
+                        showNewTreeSheet = true
+                    }
+                }) {
+                    Image(systemName: "plus")
                 }
             }
         }
