@@ -118,7 +118,7 @@ actor StreamCacheManager {
             try? data.write(to: contextURL(sessionId), options: .atomic)
         }
         // Prune in background if over budget
-        Task { await pruneIfNeeded() }
+        Task { pruneIfNeeded() }
     }
 
     /// Load cached messages for a session. Returns nil if no cache exists.

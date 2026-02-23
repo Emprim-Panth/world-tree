@@ -302,7 +302,7 @@ final class WebSocketConnection: @unchecked Sendable {
         case .text, .binary:
             if frame.fin {
                 // Complete single-frame message
-                if let fragmentOpcode {
+                if fragmentOpcode != nil {
                     // We were in the middle of a fragmented message — protocol error
                     canvasLog("[WebSocket:\(id)] New data frame while fragments pending")
                     sendCloseAndDisconnect(code: 1002, reason: "Unexpected data frame during fragmentation")

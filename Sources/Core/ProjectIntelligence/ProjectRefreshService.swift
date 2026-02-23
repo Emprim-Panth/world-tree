@@ -77,12 +77,12 @@ final class ProjectRefreshService {
     
     /// Get all cached projects (UI accessor)
     func getCachedProjects() async throws -> [CachedProject] {
-        try await cache.getAll()
+        try cache.getAll()
     }
     
     /// Get a specific project
     func getProject(at path: String) async throws -> CachedProject? {
-        try await cache.get(path: path)
+        try cache.get(path: path)
     }
     
     /// Load full context for a project

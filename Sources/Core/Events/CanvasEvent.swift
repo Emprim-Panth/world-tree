@@ -112,7 +112,7 @@ final class EventStore {
 
         do {
             try DatabaseManager.shared.write { db in
-                for var event in events {
+                for event in events {
                     try event.insert(db)
                 }
             }

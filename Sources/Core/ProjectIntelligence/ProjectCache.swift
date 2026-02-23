@@ -91,7 +91,7 @@ final class ProjectCache {
         
         for project in cached {
             if !fileManager.fileExists(atPath: project.path) {
-                try dbPool.write { db in
+                _ = try dbPool.write { db in
                     try project.delete(db)
                 }
                 deletedCount += 1
@@ -111,7 +111,7 @@ final class ProjectCache {
             throw ProjectCacheError.databaseNotInitialized
         }
         
-        try dbPool.write { db in
+        _ = try dbPool.write { db in
             try CachedProject
                 .filter(Column("path") == path)
                 .deleteAll(db)

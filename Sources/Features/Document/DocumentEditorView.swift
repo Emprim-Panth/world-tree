@@ -333,7 +333,7 @@ class DocumentEditorViewModel: ObservableObject {
     private func startStreamBatching() {
         guard streamFlushTimer == nil else { return }
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            self?.flushPendingTokens()
+            MainActor.assumeIsolated { self?.flushPendingTokens() }
         }
         RunLoop.main.add(timer, forMode: .common)
         streamFlushTimer = timer
@@ -447,19 +447,22 @@ class DocumentEditorViewModel: ObservableObject {
                 object: nil,
                 queue: .main
             ) { [weak self] note in
-                guard let info = note.userInfo,
-                      let source = info["source"] as? String,
-                      let noteSessionId = info["sessionId"] as? String,
-                      noteSessionId == sid,
-                      source == "telegram"
-                else { return }
+                MainActor.assumeIsolated {
+                    guard let self,
+                          let info = note.userInfo,
+                          let source = info["source"] as? String,
+                          let noteSessionId = info["sessionId"] as? String,
+                          noteSessionId == sid,
+                          source == "telegram"
+                    else { return }
 
-                // Mark the last user section as telegram-sourced
-                if let idx = self?.document.sections.lastIndex(where: {
-                    if case .user = $0.author { return true }
-                    return false
-                }) {
-                    self?.document.sections[idx].source = "telegram"
+                    // Mark the last user section as telegram-sourced
+                    if let idx = self.document.sections.lastIndex(where: {
+                        if case .user = $0.author { return true }
+                        return false
+                    }) {
+                        self.document.sections[idx].source = "telegram"
+                    }
                 }
             }
         }

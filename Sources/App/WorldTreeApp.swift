@@ -40,7 +40,7 @@ struct WorldTreeApp: App {
                         for (sessionId, content) in recovered where !content.isEmpty {
                             canvasLog("[StreamCache] Recovering interrupted response for session \(sessionId)")
                             let msg = "[Recovered — response was interrupted]\n\n\(content)"
-                            try? MessageStore.shared.sendMessage(sessionId: sessionId, role: .assistant, content: msg)
+                            _ = try? MessageStore.shared.sendMessage(sessionId: sessionId, role: .assistant, content: msg)
                         }
                     }
                 }
