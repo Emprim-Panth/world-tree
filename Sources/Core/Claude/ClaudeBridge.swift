@@ -19,6 +19,9 @@ enum BridgeEvent {
 /// Maintains the same `send()` interface that BranchViewModel expects.
 @MainActor
 final class ClaudeBridge {
+    /// Shared instance for callers (e.g. CanvasServer WS handler) that don't own a lifecycle.
+    static let shared = ClaudeBridge()
+
     private let home = FileManager.default.homeDirectoryForCurrentUser.path
 
     @AppStorage(CortanaConstants.fridayChannelEnabledKey)
@@ -44,6 +47,29 @@ final class ClaudeBridge {
 
     // MARK: - Send
 
+    /// Primary entry point — accepts a fully-constructed ProviderSendContext so
+    /// attachments, recentContext, and other fields are preserved on the direct path.
+    /// Friday path forwards core fields; daemon handles its own context enrichment.
+    func send(context: ProviderSendContext) -> AsyncStream<BridgeEvent> {
+        if fridayEnabled && DaemonService.shared.isConnected {
+            canvasLog("[ClaudeBridge] routing to Friday daemon, session=\(context.sessionId)")
+            return wrapFridayWithFallback(
+                message: context.message,
+                sessionId: context.sessionId,
+                branchId: context.branchId,
+                model: context.model,
+                workingDirectory: context.workingDirectory,
+                project: context.project,
+                checkpointContext: context.checkpointContext
+            )
+        }
+
+        canvasLog("[ClaudeBridge] routing direct to \(ProviderManager.shared.activeProviderName), session=\(context.sessionId)")
+        return ProviderManager.shared.send(context: context)
+    }
+
+    /// Legacy parameter-based entry point — used by CanvasServer and other callers
+    /// that construct context inline.
     func send(
         message: String,
         sessionId: String,

@@ -1048,7 +1048,12 @@ extension CanvasServer {
             client.wsConnection?.send(text: json)
         }
 
-        // Dispatch to LLM and stream tokens to all subscribed WebSocket clients via TokenBroadcaster
+        // Resolve the tree's project field for working directory resolution.
+        // getTree throws and returns T?, so try? produces T?? — flatMap collapses it.
+        let treeProject = (try? TreeStore.shared.getTree(branch.treeId)).flatMap { $0 }?.project
+
+        // Dispatch to LLM via ClaudeBridge — handles Friday routing with automatic fallback
+        // to direct provider when the daemon is unavailable or returns an error.
         let isNew = (try? MessageStore.shared.getMessages(sessionId: sessionId, limit: 2))?.count == 1
         let ctx = ProviderSendContext(
             message: req.content,
@@ -1056,34 +1061,13 @@ extension CanvasServer {
             branchId: req.branchId,
             model: CortanaConstants.defaultModel,
             workingDirectory: nil,
-            project: branch.title,
+            project: treeProject ?? branch.title,
             parentSessionId: nil,
             isNewSession: isNew
         )
 
-        let fridayEnabled = UserDefaults.standard.bool(forKey: CortanaConstants.fridayChannelEnabledKey)
-        let daemonConnected = DaemonService.shared.isConnected
-
-        Task { @MainActor [weak self] in
-            guard self != nil else { return }
-
-            let eventStream: AsyncStream<BridgeEvent>
-            if fridayEnabled && daemonConnected {
-                eventStream = await FridayChannel.shared.send(
-                    text: req.content,
-                    project: branch.title,
-                    branchId: req.branchId,
-                    sessionId: sessionId
-                )
-            } else {
-                guard let provider = ProviderManager.shared.activeProvider else {
-                    let errMsg = WSMessage.error(code: "no_provider", message: "No LLM provider available")
-                    CanvasServer.shared.broadcastToSubscribers(branchId: req.branchId, message: errMsg)
-                    return
-                }
-                eventStream = provider.send(context: ctx)
-            }
-
+        Task { @MainActor in
+            let eventStream = ClaudeBridge.shared.send(context: ctx)
             TokenBroadcaster.shared.broadcast(
                 stream: eventStream,
                 branchId: req.branchId,
