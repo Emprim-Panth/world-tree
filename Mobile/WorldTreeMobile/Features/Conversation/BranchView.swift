@@ -28,6 +28,7 @@ struct BranchView: View {
                 if let id = currentBranchId {
                     messageText = store.draft(for: id)
                     if store.messages.isEmpty, let tree = store.currentTree {
+                        store.isLoadingHistory = true
                         Task {
                             await connectionManager.send(.subscribe(treeId: tree.id, branchId: id))
                             await connectionManager.send(.loadHistory(branchId: id))
@@ -40,12 +41,13 @@ struct BranchView: View {
                     store.saveDraft(messageText, for: old)
                 }
                 messageText = newId.map { store.draft(for: $0) } ?? ""
-                // Subscribe and load history when switching to a new branch while BranchView is on screen.
-                if let newId, let tree = store.currentTree {
-                    Task {
-                        await connectionManager.send(.subscribe(treeId: tree.id, branchId: newId))
-                        await connectionManager.send(.loadHistory(branchId: newId))
-                    }
+                // Only re-fetch when switching branches (oldId != nil means we were already on a branch).
+                // Initial load is handled by onAppear to avoid double-sending.
+                guard let newId, let tree = store.currentTree, oldId != nil else { return }
+                store.isLoadingHistory = true
+                Task {
+                    await connectionManager.send(.subscribe(treeId: tree.id, branchId: newId))
+                    await connectionManager.send(.loadHistory(branchId: newId))
                 }
             }
             .onChange(of: connectionManager.state) { _, newState in
@@ -66,6 +68,11 @@ struct BranchView: View {
     private var messageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
+                if store.isLoadingHistory && store.messages.isEmpty {
+                    ProgressView("Loading messages…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(.top, 80)
+                }
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(store.messages) { message in
                         MessageBubble(

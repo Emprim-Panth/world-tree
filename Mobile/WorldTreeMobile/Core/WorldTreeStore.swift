@@ -22,6 +22,8 @@ final class WorldTreeStore {
     var pendingNavigateToNewBranch = false
     /// Active and recently-completed tool chips shown inline during streaming.
     var activeToolChips: [ToolChip] = []
+    /// True while a get_messages request is in-flight (no messages arrived yet).
+    var isLoadingHistory: Bool = false
     /// Per-branch draft text. Key = branchId. Binding-compatible via draftText(for:).
     private var drafts: [String: String] = [:]
 
@@ -84,6 +86,7 @@ final class WorldTreeStore {
                 streamingText = ""
                 isStreaming = false
                 activeToolChips = []
+                isLoadingHistory = false
             }
         case "token":
             if let token = event.token {
@@ -176,6 +179,7 @@ extension WorldTreeStore {
         streamingText = ""
         isStreaming = false
         activeToolChips = []
+        isLoadingHistory = true
     }
 
     /// Navigate back from BranchView to BranchesListView.
@@ -186,6 +190,7 @@ extension WorldTreeStore {
         streamingText = ""
         isStreaming = false
         activeToolChips = []
+        isLoadingHistory = false
     }
 
     /// Navigate back from BranchesListView to TreeListView.
@@ -199,6 +204,7 @@ extension WorldTreeStore {
         streamingText = ""
         isStreaming = false
         activeToolChips = []
+        isLoadingHistory = false
     }
 
     /// Called once after the tree list arrives. Navigates to the last-viewed tree if it still exists.

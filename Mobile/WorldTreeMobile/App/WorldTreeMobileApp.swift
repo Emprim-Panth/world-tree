@@ -14,6 +14,7 @@ struct WorldTreeMobileApp: App {
             ContentView()
                 .environment(connectionManager)
                 .environment(store)
+                .preferredColorScheme(.dark)
         }
     }
 }
