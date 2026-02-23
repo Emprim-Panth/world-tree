@@ -40,6 +40,11 @@ struct SettingsView: View {
                 .tabItem {
                     Label("Connection", systemImage: "network")
                 }
+
+            voiceTab
+                .tabItem {
+                    Label("Voice", systemImage: "speaker.wave.2")
+                }
         }
         .frame(width: 480, height: 400)
     }
@@ -153,7 +158,7 @@ struct SettingsView: View {
         Form {
             Section("Default Model") {
                 Picker("Model", selection: $defaultModel) {
-                    Text("Sonnet (Balanced)").tag("claude-sonnet-4-5-20250929")
+                    Text("Sonnet (Balanced)").tag("claude-sonnet-4-6")
                     Text("Opus (Deep)").tag("claude-opus-4-6")
                     Text("Haiku (Fast)").tag("claude-haiku-4-5-20251001")
                 }
@@ -161,6 +166,13 @@ struct SettingsView: View {
 
             Section("Context") {
                 Stepper("Messages on fork: \(contextDepth)", value: $contextDepth, in: 3...50)
+            }
+
+            Section("Build") {
+                let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+                let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+                LabeledContent("Version", value: "\(version) (build \(build))")
+                    .font(.callout)
             }
         }
         .formStyle(.grouped)
@@ -583,6 +595,65 @@ struct SettingsView: View {
         case .unavailable(let reason):
             remoteHealthStatus = "✗ Unreachable: \(reason)"
         }
+    }
+
+    // MARK: - Voice
+
+    @AppStorage("voiceAutoSpeak") private var voiceAutoSpeak = false
+    @AppStorage("voiceSpeed") private var voiceSpeed = 1.0
+    @AppStorage("voicePitch") private var voicePitch = 1.0
+
+    private var voiceTab: some View {
+        Form {
+            Section("Text-to-Speech") {
+                Toggle("Auto-speak responses", isOn: $voiceAutoSpeak)
+
+                Text("When enabled, Cortana reads responses aloud using system TTS. You can also right-click any response and choose \"Read Aloud\".")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Voice Settings") {
+                HStack {
+                    Text("Speed")
+                    Slider(value: $voiceSpeed, in: 0.5...2.0, step: 0.1)
+                    Text(String(format: "%.1fx", voiceSpeed))
+                        .font(.caption)
+                        .monospacedDigit()
+                        .frame(width: 32)
+                }
+
+                HStack {
+                    Text("Pitch")
+                    Slider(value: $voicePitch, in: 0.5...2.0, step: 0.1)
+                    Text(String(format: "%.1fx", voicePitch))
+                        .font(.caption)
+                        .monospacedDigit()
+                        .frame(width: 32)
+                }
+
+                Button("Reset to Default") {
+                    voiceSpeed = 1.0
+                    voicePitch = 1.0
+                }
+                .controlSize(.small)
+                .foregroundStyle(.secondary)
+            }
+
+            Section("Test") {
+                Button("Speak Test") {
+                    Task {
+                        let options = SpeechOptions(speed: voiceSpeed, pitch: voicePitch)
+                        try? await VoiceService.shared.speak(
+                            "I'm Cortana. Systems are nominal.",
+                            options: options
+                        )
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
     }
 
     // MARK: - Connection

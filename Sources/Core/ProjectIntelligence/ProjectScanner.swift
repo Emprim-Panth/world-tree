@@ -4,14 +4,16 @@ import Foundation
 final class ProjectScanner {
     private let fileManager = FileManager.default
     private let excludedDirs: Set<String> = [
-        "node_modules",
-        ".git",
-        "DerivedData",
-        "build",
-        "dist",
-        "target",
-        ".build",
-        "Pods"
+        // Build artifacts & package dirs
+        "node_modules", ".git", "DerivedData", "build", "dist", "target", ".build", "Pods",
+        // Archived projects — not actively developed
+        "Argus", "PDT-Mail", "SpecterDC", "TicketMaster", "Visual-Swift",
+        "MountOlympus", "OpenClaude-Reference", "ComfyUI", "HybridAI", "fish-speech",
+        // Manually hidden — removed from scanner, archive via World Tree when ready
+        "ark-gateway", "ark-terminals", "ark-tacpad", "ark-field-mode", "the-cartographer",
+        "CortanaCanvas", "cortana-core", "cortana-core-python-legacy",
+        // Non-project directories
+        "Archives", "docs", "agent-knowledge-base", "Game-Dev-Team-Knowledge"
     ]
     
     /// Scan ~/Development and return all discovered projects

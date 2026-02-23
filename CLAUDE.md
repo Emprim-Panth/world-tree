@@ -1,4 +1,4 @@
-# Cortana Canvas — Conversation Tree Interface
+# World Tree — Conversation Tree Interface
 
 > Cortana's home. Tree-structured branching conversations with daemon integration.
 
@@ -11,8 +11,8 @@
 ## Build & Run
 ```bash
 xcodegen                            # Generate .xcodeproj
-xcodebuild -scheme CortanaCanvas    # Build
-open CortanaCanvas.xcodeproj        # Open in Xcode
+xcodebuild -scheme WorldTree        # Build
+open WorldTree.xcodeproj            # Open in Xcode
 ```
 
 ## Architecture

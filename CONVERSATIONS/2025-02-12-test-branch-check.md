@@ -44,7 +44,7 @@ Evan asked to check the status of "this text chain" and the "Test branch in Canv
 **Cortana:** Created this conversation persistence system.
 
 ## Technical Notes
-- Canvas app data stored in: `~/Library/Containers/com.heiloprojects.cortana-voice/`
+- Canvas app data stored in: `~/Library/Containers/com.forgeandcode.cortana-voice/`
 - Only preference data found (window positions), no conversation database
 - Conversations must be manually exported until Canvas implements export functionality
 

@@ -14,7 +14,7 @@ struct ModelPickerButton: View {
     }
 
     private let models: [ModelOption] = [
-        ModelOption(id: "claude-sonnet-4-5-20250929", label: "Sonnet",  badge: "S", description: "Balanced — fast, capable, default"),
+        ModelOption(id: "claude-sonnet-4-6",            label: "Sonnet",  badge: "S", description: "Balanced — fast, capable, default"),
         ModelOption(id: "claude-opus-4-6",            label: "Opus",    badge: "O", description: "Deep — complex reasoning, slower"),
         ModelOption(id: "claude-haiku-4-5-20251001",  label: "Haiku",   badge: "H", description: "Fast — quick tasks, lightest"),
     ]

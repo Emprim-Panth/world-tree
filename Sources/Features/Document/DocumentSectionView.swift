@@ -4,8 +4,11 @@ import SwiftUI
 struct DocumentSectionView: View {
     let section: DocumentSection
     let isHovered: Bool
+    var showInferButton: Bool = false
     let onEdit: (AttributedString) -> Void
     let onBranch: () -> Void
+    var onInfer: (() -> Void)?
+    var onNavigateToBranch: ((String) -> Void)?
     var onFixError: ((ToolCall) -> Void)?
 
     @State private var isEditing = false
@@ -14,23 +17,42 @@ struct DocumentSectionView: View {
     init(
         section: DocumentSection,
         isHovered: Bool,
+        showInferButton: Bool = false,
         onEdit: @escaping (AttributedString) -> Void,
         onBranch: @escaping () -> Void,
+        onInfer: (() -> Void)? = nil,
+        onNavigateToBranch: ((String) -> Void)? = nil,
         onFixError: ((ToolCall) -> Void)? = nil
     ) {
         self.section = section
         self.isHovered = isHovered
+        self.showInferButton = showInferButton
         self.onEdit = onEdit
         self.onBranch = onBranch
+        self.onInfer = onInfer
+        self.onNavigateToBranch = onNavigateToBranch
         self.onFixError = onFixError
         _editedContent = State(initialValue: section.content)
     }
 
+    @ViewBuilder
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        if case .system = section.author {
+            systemDivider
+        } else {
+            let rowContent = HStack(alignment: .top, spacing: 12) {
             // Author indicator (subtle, left margin)
-            AuthorIndicator(author: section.author)
-                .frame(width: 32, height: 32)
+            ZStack(alignment: .bottomTrailing) {
+                AuthorIndicator(author: section.author)
+                    .frame(width: 32, height: 32)
+
+                // Telegram source indicator
+                if section.source == "telegram" {
+                    Text("📱")
+                        .font(.system(size: 10))
+                        .offset(x: 4, y: 4)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 // Content (editable if user-authored and enabled)
@@ -74,7 +96,7 @@ struct DocumentSectionView: View {
                     FlowAttachmentRow(attachments: attachments)
                 }
 
-                // Timestamp and tokens (subtle)
+                // Timestamp + token count + finding signal dot
                 HStack(spacing: 8) {
                     Text(section.timestamp, style: .time)
                         .font(.caption2)
@@ -85,31 +107,179 @@ struct DocumentSectionView: View {
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
+
+                    // Subtle purple dot when scanner detected a finding signal
+                    if section.hasFindingSignal {
+                        Circle()
+                            .fill(Color.purple)
+                            .frame(width: 6, height: 6)
+                            .help("This response may contain a finding — consider inferring to parent branch")
+                    }
                 }
                 .padding(.top, 4)
+
+                // Inline fork badge — shows when child branches exist
+                if section.hasBranches, let messageId = section.messageId {
+                    BranchBadgeView(messageId: messageId, onTap: onNavigateToBranch)
+                        .padding(.top, 2)
+                }
             }
             .padding(.vertical, 8)
 
             Spacer()
-
-            // Branch button (appears on hover)
+        }
+        .overlay(alignment: .topTrailing) {
+            // Action buttons — overlaid so they never shift text layout
             if isHovered && section.branchPoint {
-                Button(action: onBranch) {
-                    Image(systemName: "arrow.turn.up.right")
-                        .font(.system(size: 12))
-                        .foregroundColor(.blue)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
+                VStack(spacing: 4) {
+                    Button(action: onBranch) {
+                        Image(systemName: "arrow.turn.up.right")
+                            .font(.system(size: 12))
+                            .foregroundColor(.blue)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Branch from here")
+
+                    if showInferButton {
+                        Button(action: { onInfer?() }) {
+                            Image(systemName: "arrow.up.to.line")
+                                .font(.system(size: 12))
+                                .foregroundColor(.purple)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Infer finding to parent branch")
+                    }
                 }
-                .buttonStyle(.plain)
-                .help("Branch from here")
+                .padding(.top, 8)
+                .transition(.opacity.animation(.easeInOut(duration: 0.15)))
             }
         }
         .padding(.horizontal, 0)
-        .background(
-            isHovered ? Color.blue.opacity(0.05) : Color.clear
-        )
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .background {
+            (isHovered ? Color.blue.opacity(0.05) : Color.clear)
+                .animation(.easeInOut(duration: 0.12), value: isHovered)
+        }
+        .contextMenu {
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(String(section.content.characters), forType: .string)
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+
+            if case .assistant = section.author {
+                Button {
+                    let text = String(section.content.characters)
+                        .replacingOccurrences(of: "```[\\s\\S]*?```", with: " code block ", options: .regularExpression)
+                        .replacingOccurrences(of: "`[^`]+`", with: "", options: .regularExpression)
+                        .replacingOccurrences(of: "**", with: "")
+                        .replacingOccurrences(of: "💠", with: "")
+                    Task { try? await VoiceService.shared.speak(text) }
+                } label: {
+                    Label("Read Aloud", systemImage: "speaker.wave.2")
+                }
+            }
+
+            if section.branchPoint {
+                Divider()
+                Button {
+                    onBranch()
+                } label: {
+                    Label("Branch from here", systemImage: "arrow.triangle.branch")
+                }
+            }
+
+            if showInferButton {
+                Button {
+                    onInfer?()
+                } label: {
+                    Label("Infer to parent", systemImage: "arrow.up.to.line")
+                }
+            }
+        }
+
+        // Finding messages get a purple left border + tinted background
+        if section.isFinding {
+            HStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color.purple.opacity(0.5))
+                    .frame(width: 3)
+                rowContent
+                    .padding(.leading, 8)
+            }
+            .background(Color.purple.opacity(0.05))
+            .cornerRadius(6)
+            .padding(.vertical, 2)
+        } else {
+            rowContent
+        }
+        }  // closes else
+    }
+
+    private var systemDivider: some View {
+        HStack(spacing: 12) {
+            VStack { Divider() }
+            Text(String(section.content.characters))
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack { Divider() }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Branch Badge
+
+/// Compact inline indicator shown below messages that have child branches.
+/// Tapping navigates to the branch.
+struct BranchBadgeView: View {
+    let messageId: String
+    var onTap: ((String) -> Void)?
+
+    @State private var branches: [Branch] = []
+
+    var body: some View {
+        Group {
+            if !branches.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 10))
+                    if branches.count == 1 {
+                        Text(branches[0].displayTitle)
+                            .lineLimit(1)
+                    } else {
+                        Text("\(branches.count) branches")
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.blue)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.blue.opacity(0.1))
+                .cornerRadius(10)
+                .onTapGesture {
+                    if let first = branches.first {
+                        onTap?(first.id)
+                    }
+                }
+            }
+        }
+        .onAppear { loadBranches() }
+    }
+
+    private func loadBranches() {
+        Task { @MainActor in
+            if let intId = Int(messageId) {
+                branches = (try? TreeStore.shared.branchesFromMessage(intId)) ?? []
+            }
+        }
     }
 }
 
@@ -229,26 +399,23 @@ struct MarkdownTextView: View {
     let content: AttributedString
     let author: Author
 
+    @ViewBuilder
     var body: some View {
         let raw = String(content.characters)
 
         // For non-assistant messages, plain text is fine
-        guard case .assistant = author else {
-            return AnyView(
-                Text(content)
-                    .fixedSize(horizontal: false, vertical: true)
-            )
-        }
+        if case .assistant = author {
+            // Parse markdown — use AttributedString(markdown:) for inline formatting
+            let rendered = (try? AttributedString(
+                markdown: raw,
+                options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+            )) ?? content
 
-        // Parse markdown — use AttributedString(markdown:) for inline formatting
-        let rendered = (try? AttributedString(
-            markdown: raw,
-            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )) ?? content
-
-        return AnyView(
             MarkdownCodeFenceView(raw: raw, rendered: rendered)
-        )
+        } else {
+            Text(content)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -257,15 +424,13 @@ struct MarkdownCodeFenceView: View {
     let raw: String
     let rendered: AttributedString
 
+    @ViewBuilder
     var body: some View {
         let segments = parseSegments(raw)
         if segments.isEmpty {
-            return AnyView(
-                Text(rendered)
-                    .fixedSize(horizontal: false, vertical: true)
-            )
-        }
-        return AnyView(
+            Text(rendered)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                     switch segment {
@@ -274,7 +439,7 @@ struct MarkdownCodeFenceView: View {
                             if let attr = try? AttributedString(
                                 markdown: text,
                                 options: AttributedString.MarkdownParsingOptions(
-                                    interpretedSyntax: .inlineOnlyPreservingWhitespace
+                                    interpretedSyntax: .full
                                 )
                             ) {
                                 Text(attr)
@@ -285,11 +450,15 @@ struct MarkdownCodeFenceView: View {
                             }
                         }
                     case .codeBlock(let code, let language):
-                        CodeBlockView(code: code, language: language.isEmpty ? nil : language)
+                        if language.trimmingCharacters(in: .whitespaces).lowercased() == "choices" {
+                            ChoiceBlockView(raw: code)
+                        } else {
+                            CodeBlockView(code: code, language: language.isEmpty ? nil : language)
+                        }
                     }
                 }
             }
-        )
+        }
     }
 
     enum Segment {

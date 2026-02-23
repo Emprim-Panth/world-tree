@@ -14,6 +14,10 @@ final class AppState: ObservableObject {
     }
     @Published var selectedProjectPath: String?
     @Published var daemonConnected: Bool = false
+    /// Mermaid source code currently shown in the diagram side panel. nil = panel hidden.
+    @Published var activeMermaidCode: String? = nil
+    /// Non-nil if the database failed to initialize — surfaced as an alert in WorldTreeApp.
+    @Published var dbSetupError: Error? = nil
 
     /// Navigation history for branch back/forward.
     /// Each entry stores both treeId and branchId so both are restored on navigate.
@@ -21,6 +25,17 @@ final class AppState: ObservableObject {
     @Published var branchHistoryIndex: Int = -1
 
     private init() {
+        // Setup DB here — before any view renders — so SingleDocumentViewModel.init()
+        // always reads from a ready database. Previously setupDatabase() was called in
+        // WorldTreeApp.onAppear, which fires AFTER child .onAppear calls, causing a race
+        // where SingleDocumentViewModel got a nil dbPool and fell back to a fake session UUID.
+        do {
+            try DatabaseManager.shared.setup()
+            JobQueue.configure()
+        } catch {
+            dbSetupError = error
+        }
+
         // Restore last selected conversation from previous session
         selectedTreeId = UserDefaults.standard.string(forKey: "lastSelectedTreeId")
         selectedBranchId = UserDefaults.standard.string(forKey: "lastSelectedBranchId")

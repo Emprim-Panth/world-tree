@@ -1,5 +1,87 @@
 import SwiftUI
 
+// MARK: - Compact Chips (primary suggestion UI, shown below the input field)
+
+/// Compact horizontal chips that appear below the text input when branching is detected.
+/// Much less intrusive than the full GhostSuggestionView — stays below the input, never pushes it up.
+struct BranchSuggestionChips: View {
+    let suggestions: [BranchSuggestion]
+    let selectedIndex: Int
+    let onAccept: (BranchSuggestion) -> Void
+    let onAcceptAll: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.blue)
+                Text("Branch detected")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, suggestion in
+                        Button(action: { onAccept(suggestion) }) {
+                            Text(suggestion.title)
+                                .font(.caption)
+                                .lineLimit(1)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(index == selectedIndex
+                                    ? Color.blue.opacity(0.15)
+                                    : Color(nsColor: .controlBackgroundColor))
+                                .foregroundStyle(index == selectedIndex ? Color.blue : Color.primary)
+                                .cornerRadius(12)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(index == selectedIndex
+                                            ? Color.blue.opacity(0.4)
+                                            : Color(nsColor: .separatorColor).opacity(0.5),
+                                            lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help(suggestion.preview)
+                    }
+
+                    if suggestions.count > 1 {
+                        Button(action: onAcceptAll) {
+                            Label("All in parallel", systemImage: "square.split.2x1")
+                                .font(.caption)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Color.orange.opacity(0.1))
+                                .foregroundStyle(.orange)
+                                .cornerRadius(12)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help("Spawn all branches in parallel (⌘↵)")
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 2)
+        .animation(.easeInOut(duration: 0.15), value: selectedIndex)
+    }
+}
+
+// MARK: - Full Card (kept for reference, no longer shown in main UI)
+
 /// Ghost text suggestions that appear as you type
 struct GhostSuggestionView: View {
     let suggestions: [BranchSuggestion]

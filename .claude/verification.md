@@ -1,11 +1,11 @@
-# CortanaCanvas — Design Verification Config
+# WorldTree — Design Verification Config
 
 Used by Data (design-forge, design-review) to locate all project-specific resources.
 
 ## Project
 
 ```yaml
-project: cortanacanvas
+project: worldtree
 platform: macos
 company: Forge&Code
 ```
@@ -13,18 +13,18 @@ company: Forge&Code
 ## Build
 
 ```yaml
-workspace: /Users/evanprimeau/Development/CortanaCanvas/CortanaCanvas.xcodeproj
-scheme: CortanaCanvas
+workspace: /Users/evanprimeau/Development/CortanaCanvas/WorldTree.xcodeproj
+scheme: WorldTree
 bundle-id: com.evanprimeau.cortanacanvas
 destination: "platform=macOS"
-derived-data: /tmp/forge-dd-cortanacanvas
+derived-data: /tmp/forge-dd-worldtree
 ```
 
 ## Capture
 
 ```yaml
 # macOS projects: use peekaboo for screenshots (not xcrun simctl)
-# peekaboo see --app "CortanaCanvas" --path /tmp/review.png
+# peekaboo see --app "WorldTree" --path /tmp/review.png
 screenshot-method: peekaboo
 axe: ~/.cortana/bin/simctl-axe   # tap/interact limited on macOS
 peekaboo: /opt/homebrew/bin/peekaboo
@@ -33,7 +33,7 @@ peekaboo: /opt/homebrew/bin/peekaboo
 ## Navigation
 
 ```yaml
-# CortanaCanvas opens to the Dashboard view (conversation tree browser + canvas)
+# WorldTree opens to the Dashboard view (conversation tree browser + canvas)
 # On macOS, use AppleScript / peekaboo interaction for forge preview navigation
 default-landing: Dashboard
 ```

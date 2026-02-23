@@ -21,7 +21,5 @@ struct ContentView: View {
                 DashboardView()
             }
         }
-        // Phase 6: Voice control - floating overlay
-        .voiceEnabled()
     }
 }

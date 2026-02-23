@@ -13,9 +13,14 @@ struct DocumentSection: Identifiable {
     var content: AttributedString
     var author: Author
     var timestamp: Date
-    var branchPoint: Bool  // Can this section become a branch?
+    var branchPoint: Bool       // Can this section become a branch?
     var metadata: SectionMetadata
     var isEditable: Bool
+    var messageId: String?      // DB message ID — nil for streaming/optimistic sections
+    var hasBranches: Bool       // True when child branches fork from this message
+    var isFinding: Bool         // Content starts with "[Finding from branch"
+    var hasFindingSignal: Bool  // Scanner detected signal words post-response
+    var source: String?         // Message origin — "telegram" for mobile-sourced messages
 
     init(
         id: UUID = UUID(),
@@ -24,7 +29,12 @@ struct DocumentSection: Identifiable {
         timestamp: Date = Date(),
         branchPoint: Bool = false,
         metadata: SectionMetadata = SectionMetadata(),
-        isEditable: Bool = false
+        isEditable: Bool = false,
+        messageId: String? = nil,
+        hasBranches: Bool = false,
+        isFinding: Bool = false,
+        hasFindingSignal: Bool = false,
+        source: String? = nil
     ) {
         self.id = id
         self.content = content
@@ -33,6 +43,11 @@ struct DocumentSection: Identifiable {
         self.branchPoint = branchPoint
         self.metadata = metadata
         self.isEditable = isEditable
+        self.messageId = messageId
+        self.hasBranches = hasBranches
+        self.isFinding = isFinding
+        self.hasFindingSignal = hasFindingSignal
+        self.source = source
     }
 }
 

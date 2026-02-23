@@ -11,13 +11,38 @@ struct WorldTreeApp: App {
                 .environmentObject(appState)
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear {
-                    setupDatabase()
+                    // DB is set up in AppState.init() — just surface any error here
+                    if let error = appState.dbSetupError {
+                        canvasLog("[Canvas] Database setup failed: \(error)")
+                        let alert = NSAlert()
+                        alert.messageText = "World Tree — Database Error"
+                        alert.informativeText = "Failed to open the conversation database.\n\n\(error.localizedDescription)\n\nCheck that the Dropbox path is accessible, or configure a different database path in Settings."
+                        alert.alertStyle = .critical
+                        alert.addButton(withTitle: "Open Settings")
+                        alert.addButton(withTitle: "Quit")
+                        let response = alert.runModal()
+                        if response == .alertSecondButtonReturn {
+                            NSApp.terminate(nil)
+                        } else {
+                            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                        }
+                    }
                     validateRestoredSelection()
                     startProjectRefresh()
                     requestNotificationPermission()
                     startCanvasServerIfEnabled()
                     startPluginServerIfEnabled()
-                    Task { await VoiceService.shared.configure() }
+                    PeekabooBridgeServer.shared.start()
+                    // VoiceService configures lazily on first use — no startup call needed
+                    Task {
+                        // Recover any responses that were interrupted by a crash or SIGTERM
+                        let recovered = await StreamCacheManager.shared.recoverOrphanedStreams()
+                        for (sessionId, content) in recovered where !content.isEmpty {
+                            canvasLog("[StreamCache] Recovering interrupted response for session \(sessionId)")
+                            let msg = "[Recovered — response was interrupted]\n\n\(content)"
+                            try? MessageStore.shared.sendMessage(sessionId: sessionId, role: .assistant, content: msg)
+                        }
+                    }
                 }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .background {
@@ -47,36 +72,41 @@ struct WorldTreeApp: App {
                 Button("Forward") { appState.navigateForward() }
                     .keyboardShortcut("]", modifiers: .command)
                     .disabled(!appState.canGoForward)
+
+                Divider()
+
+                Button("Find in Conversation") {
+                    NotificationCenter.default.post(name: .showConversationSearch, object: nil)
+                }
+                .keyboardShortcut("f", modifiers: .command)
             }
         }
 
         Settings {
             SettingsView()
         }
-    }
 
-    private func setupDatabase() {
-        do {
-            try DatabaseManager.shared.setup()
-            JobQueue.configure() // Share dbPool with background job queue
-        } catch {
-            canvasLog("[Canvas] Database setup failed: \(error)")
-            // Surface the failure to the user — the app cannot function without a database.
-            DispatchQueue.main.async {
-                let alert = NSAlert()
-                alert.messageText = "World Tree — Database Error"
-                alert.informativeText = "Failed to open the conversation database.\n\n\(error.localizedDescription)\n\nCheck that the Dropbox path is accessible, or configure a different database path in Settings."
-                alert.alertStyle = .critical
-                alert.addButton(withTitle: "Open Settings")
-                alert.addButton(withTitle: "Quit")
-                let response = alert.runModal()
-                if response == .alertSecondButtonReturn {
-                    NSApp.terminate(nil)
-                } else {
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                }
+        MenuBarExtra {
+            Button("Open World Tree") {
+                NSApp.activate(ignoringOtherApps: true)
             }
+            Divider()
+            Button("New Tree") {
+                NSApp.activate(ignoringOtherApps: true)
+                NotificationCenter.default.post(name: .createNewTree, object: nil)
+            }
+            Button("New Branch") {
+                NSApp.activate(ignoringOtherApps: true)
+                NotificationCenter.default.post(name: .createNewBranch, object: nil)
+            }
+            Divider()
+            Button("Quit World Tree") {
+                NSApp.terminate(nil)
+            }
+        } label: {
+            Image(systemName: "tree.fill")
         }
+        .menuBarExtraStyle(.menu)
     }
 
     /// Validate that the restored tree/branch still exist in the DB.
@@ -124,4 +154,5 @@ struct WorldTreeApp: App {
 extension Notification.Name {
     static let createNewTree = Notification.Name("createNewTree")
     static let createNewBranch = Notification.Name("createNewBranch")
+    static let showConversationSearch = Notification.Name("showConversationSearch")
 }

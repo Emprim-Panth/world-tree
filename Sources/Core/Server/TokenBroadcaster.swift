@@ -20,6 +20,12 @@ final class TokenBroadcaster {
     /// Active broadcast tasks — allows cancellation via `cancel(branchId:)`.
     private var activeTasks: [String: Task<Void, Never>] = [:]
 
+    /// Per-branch accumulated text — kept in sync so `cancel(branchId:)` can persist partial responses.
+    private var accumulatedText: [String: String] = [:]
+
+    /// Per-branch sessionId — needed by `cancel(branchId:)` to persist and identify the message.
+    private var sessionIds: [String: String] = [:]
+
     private init() {}
 
     // MARK: - Broadcast
@@ -34,13 +40,19 @@ final class TokenBroadcaster {
         branchId: String,
         sessionId: String
     ) -> Task<Void, Never> {
-        // Cancel any prior stream on this branch
+        // Cancel any prior stream on this branch (preemption — no partial persist)
         activeTasks[branchId]?.cancel()
+        activeTasks.removeValue(forKey: branchId)
+        tokenIndexes.removeValue(forKey: branchId)
+        accumulatedText.removeValue(forKey: branchId)
+        sessionIds.removeValue(forKey: branchId)
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
 
             self.tokenIndexes[branchId] = 0
+            self.accumulatedText[branchId] = ""
+            self.sessionIds[branchId] = sessionId
             var accumulated = ""
 
             for await event in stream {
@@ -52,6 +64,9 @@ final class TokenBroadcaster {
                     sessionId: sessionId,
                     accumulated: &accumulated
                 )
+
+                // Keep shared state in sync so cancel() can read the latest partial text
+                self.accumulatedText[branchId] = accumulated
 
                 if let frame {
                     CanvasServer.shared.broadcastToSubscribers(branchId: branchId, message: frame)
@@ -67,6 +82,8 @@ final class TokenBroadcaster {
 
             self.tokenIndexes.removeValue(forKey: branchId)
             self.activeTasks.removeValue(forKey: branchId)
+            self.accumulatedText.removeValue(forKey: branchId)
+            self.sessionIds.removeValue(forKey: branchId)
         }
 
         activeTasks[branchId] = task
@@ -74,10 +91,42 @@ final class TokenBroadcaster {
     }
 
     /// Cancel an active broadcast (e.g. from a `cancel_stream` WebSocket message).
+    /// Persists any accumulated partial response and broadcasts `message_complete` to subscribers.
     func cancel(branchId: String) {
+        let partial = accumulatedText[branchId] ?? ""
+        let sessionId = sessionIds[branchId]
+
         activeTasks[branchId]?.cancel()
         activeTasks.removeValue(forKey: branchId)
         tokenIndexes.removeValue(forKey: branchId)
+        accumulatedText.removeValue(forKey: branchId)
+        sessionIds.removeValue(forKey: branchId)
+
+        guard !partial.isEmpty, let sessionId else { return }
+
+        // Persist the partial assistant message
+        let savedId: String
+        if let msg = try? MessageStore.shared.sendMessage(
+            sessionId: sessionId, role: .assistant, content: partial
+        ) {
+            savedId = msg.id
+            if let branch = try? TreeStore.shared.getBranchBySessionId(sessionId) {
+                try? TreeStore.shared.updateTreeTimestamp(branch.treeId)
+            }
+        } else {
+            savedId = UUID().uuidString
+        }
+
+        let tokenCount = max(1, partial.count / 4)
+        let completeMsg = WSMessage.messageComplete(
+            branchId: branchId,
+            sessionId: sessionId,
+            messageId: savedId,
+            role: "assistant",
+            content: partial,
+            tokenCount: tokenCount
+        )
+        CanvasServer.shared.broadcastToSubscribers(branchId: branchId, message: completeMsg)
     }
 
     // MARK: - Event → Frame Conversion
