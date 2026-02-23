@@ -61,10 +61,16 @@ struct ConversationView: View {
     }
 
     private var connectingView: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 16) {
             ProgressView()
             Text(connectingLabel)
                 .foregroundStyle(.secondary)
+            Button("Change Server") {
+                connectionManager.disconnect()
+                connectionManager.currentServer = nil
+            }
+            .buttonStyle(.bordered)
+            .padding(.top, 4)
         }
     }
 

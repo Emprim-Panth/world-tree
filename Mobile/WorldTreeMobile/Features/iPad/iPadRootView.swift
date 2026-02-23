@@ -47,6 +47,23 @@ struct iPadRootView: View {
                 .keyboardShortcut("n", modifiers: .command)
             }
 
+            // Change server when stuck connecting
+            if case .connecting = connectionManager.state {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Change Server") {
+                        connectionManager.disconnect()
+                        connectionManager.currentServer = nil
+                    }
+                }
+            } else if case .reconnecting = connectionManager.state {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Change Server") {
+                        connectionManager.disconnect()
+                        connectionManager.currentServer = nil
+                    }
+                }
+            }
+
             // Settings gear — Cmd+,
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
