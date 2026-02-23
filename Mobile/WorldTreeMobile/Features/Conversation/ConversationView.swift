@@ -1,0 +1,123 @@
+import SwiftUI
+
+struct ConversationView: View {
+    @Environment(ConnectionManager.self) private var connectionManager
+    @Environment(WorldTreeStore.self) private var store
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                switch connectionManager.state {
+                case .disconnected:
+                    disconnectedView
+                case .connecting, .reconnecting:
+                    connectingView
+                case .connected:
+                    if store.currentBranch != nil {
+                        BranchView()
+                    } else if store.currentTree != nil {
+                        BranchesListView()
+                    } else {
+                        TreeListView()
+                    }
+                }
+            }
+            .navigationTitle(navigationTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                connectionStatusToolbarItem
+                backToolbarItem
+            }
+        }
+    }
+
+    private var navigationTitle: String {
+        if let branch = store.currentBranch {
+            return branch.displayName
+        } else if let tree = store.currentTree {
+            return tree.name
+        }
+        return connectionManager.currentServer?.name ?? "World Tree"
+    }
+
+    private var disconnectedView: some View {
+        ContentUnavailableView(
+            "Disconnected",
+            systemImage: "wifi.slash",
+            description: Text("Tap Reconnect or check your server settings.")
+        )
+    }
+
+    private var connectingView: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+            Text(connectingLabel)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var connectingLabel: String {
+        if case .reconnecting(let attempt) = connectionManager.state {
+            return "Reconnecting (attempt \(attempt) of \(Constants.Network.reconnectMaxAttempts))..."
+        }
+        return "Connecting..."
+    }
+
+    @ToolbarContentBuilder
+    private var connectionStatusToolbarItem: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            ConnectionStatusBadge()
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var backToolbarItem: some ToolbarContent {
+        if store.currentBranch != nil {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: { store.clearBranch() }) {
+                    Label("Branches", systemImage: "chevron.left")
+                        .labelStyle(.titleAndIcon)
+                }
+            }
+        } else if store.currentTree != nil {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: { store.clearTree() }) {
+                    Label("Trees", systemImage: "chevron.left")
+                        .labelStyle(.titleAndIcon)
+                }
+            }
+        }
+    }
+}
+
+private struct ConnectionStatusBadge: View {
+    @Environment(ConnectionManager.self) private var connectionManager
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(statusColor)
+                .frame(width: 8, height: 8)
+            Text(statusLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var statusColor: Color {
+        switch connectionManager.state {
+        case .connected: return .green
+        case .connecting, .reconnecting: return .yellow
+        case .disconnected: return .red
+        }
+    }
+
+    private var statusLabel: String {
+        switch connectionManager.state {
+        case .connected: return "Connected"
+        case .connecting: return "Connecting"
+        case .reconnecting: return "Reconnecting"
+        case .disconnected: return "Disconnected"
+        }
+    }
+}

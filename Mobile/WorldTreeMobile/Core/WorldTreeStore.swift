@@ -5,6 +5,7 @@ import UIKit
 #endif
 
 @Observable
+@MainActor
 final class WorldTreeStore {
     var trees: [TreeSummary] = []
     var currentTree: TreeSummary?
@@ -26,7 +27,7 @@ final class WorldTreeStore {
             queue: .main
         ) { [weak self] notification in
             guard let text = notification.object as? String else { return }
-            self?.processIncoming(text)
+            MainActor.assumeIsolated { self?.processIncoming(text) }
         }
         #if canImport(UIKit)
         NotificationCenter.default.addObserver(
@@ -34,7 +35,7 @@ final class WorldTreeStore {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.persistDrafts()
+            MainActor.assumeIsolated { self?.persistDrafts() }
         }
         #endif
     }
@@ -43,19 +44,19 @@ final class WorldTreeStore {
         guard let event = MessageParser.parse(text) else { return }
 
         switch event.type {
-        case "trees":
+        case "trees_list":
             if let payload = event.trees {
                 trees = payload
                 // TASK-028: auto-navigate to last-viewed tree on first load.
                 restoreLastTree()
             }
-        case "branches":
+        case "branches_list":
             if let payload = event.branches {
                 branches = payload
                 // TASK-028: auto-navigate to last-viewed branch after branches load.
                 restoreLastBranch()
             }
-        case "history":
+        case "messages_list":
             if let payload = event.messages {
                 messages = payload
                 streamingText = ""
@@ -67,22 +68,30 @@ final class WorldTreeStore {
                 isStreaming = true
                 streamingText += token
             }
-        case "tool_start":
-            if let name = event.toolName {
-                activeToolChips.append(.running(name))
+        case "tool_status":
+            if let name = event.toolName, let status = event.toolStatus {
+                switch status {
+                case "started":
+                    activeToolChips.append(.running(name))
+                case "completed":
+                    if let idx = activeToolChips.lastIndex(where: { $0.toolName == name && $0.state == .running }) {
+                        activeToolChips[idx].state = .done
+                    }
+                case "error":
+                    if let idx = activeToolChips.lastIndex(where: { $0.toolName == name && $0.state == .running }) {
+                        activeToolChips[idx].state = .failed
+                    }
+                default:
+                    break
+                }
             }
-        case "tool_end":
-            if let name = event.toolName,
-               let idx = activeToolChips.lastIndex(where: { $0.toolName == name && $0.state == .running }) {
-                activeToolChips[idx].state = (event.toolError == true) ? .failed : .done
-            }
-        case "done":
+        case "message_complete":
             if !streamingText.isEmpty {
                 let msg = Message(
-                    id: UUID().uuidString,
-                    role: "assistant",
+                    id: event.messageId ?? UUID().uuidString,
+                    role: event.messageRole ?? "assistant",
                     content: streamingText,
-                    index: messages.count
+                    createdAt: ISO8601DateFormatter().string(from: Date())
                 )
                 messages.append(msg)
                 streamingText = ""
@@ -121,6 +130,34 @@ extension WorldTreeStore {
     func selectBranch(_ branch: BranchSummary) {
         currentBranch = branch
         persistedBranchId = branch.id
+        // Clear stale messages so BranchView shows a clean state while new ones load.
+        messages = []
+        streamingText = ""
+        isStreaming = false
+        activeToolChips = []
+    }
+
+    /// Navigate back from BranchView to BranchesListView.
+    func clearBranch() {
+        currentBranch = nil
+        persistedBranchId = nil
+        messages = []
+        streamingText = ""
+        isStreaming = false
+        activeToolChips = []
+    }
+
+    /// Navigate back from BranchesListView to TreeListView.
+    func clearTree() {
+        currentTree = nil
+        persistedTreeId = nil
+        currentBranch = nil
+        persistedBranchId = nil
+        branches = []
+        messages = []
+        streamingText = ""
+        isStreaming = false
+        activeToolChips = []
     }
 
     /// Called once after the tree list arrives. Navigates to the last-viewed tree if it still exists.

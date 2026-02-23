@@ -12,7 +12,7 @@ struct BranchView: View {
     private var currentBranchId: String? { store.currentBranch?.id }
 
     var body: some View {
-        let placeholder = store.currentBranch.map { "Message \($0.name)…" } ?? "Message…"
+        let placeholder = store.currentBranch.map { "Message \($0.displayName)…" } ?? "Message…"
         messageList
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -25,9 +25,15 @@ struct BranchView: View {
                 )
             }
             .onAppear {
-                // Restore draft for this branch when the view appears.
                 if let id = currentBranchId {
                     messageText = store.draft(for: id)
+                    // Load history when messages are absent (session restore path).
+                    if store.messages.isEmpty, let tree = store.currentTree {
+                        Task {
+                            await connectionManager.send(.subscribe(treeId: tree.id, branchId: id))
+                            await connectionManager.send(.loadHistory(branchId: id))
+                        }
+                    }
                 }
             }
             .onChange(of: store.currentBranch?.id) { oldId, newId in
