@@ -22,7 +22,7 @@ struct SavedServer: Identifiable, Codable, Equatable {
 
     // MARK: - Convenience
 
-    static func manual(name: String, host: String, port: Int = 8765) -> SavedServer {
+    static func manual(name: String, host: String, port: Int = 5865) -> SavedServer {
         SavedServer(
             id: UUID().uuidString,
             name: name,

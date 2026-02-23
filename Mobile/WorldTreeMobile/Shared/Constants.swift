@@ -3,6 +3,8 @@ import Foundation
 enum Constants {
     enum Network {
         static let defaultPort = 5865
+        /// NWProtocolWebSocket port — always httpPort + 1. Both sides hardcode this.
+        static let wsPort = 5866
         static let bonjourServiceType = "_worldtree._tcp"
         static let bonjourDomain = "local."
         static let reconnectMaxAttempts = 10

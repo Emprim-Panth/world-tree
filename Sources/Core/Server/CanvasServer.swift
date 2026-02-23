@@ -1,6 +1,5 @@
 import Foundation
 import Network
-import CryptoKit
 
 // MARK: - CanvasServer
 
@@ -16,6 +15,9 @@ final class CanvasServer: ObservableObject {
     static let shared = CanvasServer()
 
     static let port: UInt16 = 5865
+    /// Native WebSocket port (NWProtocolWebSocket) — iOS connects here.
+    /// One above the HTTP port so clients derive it as `port + 1`.
+    static let wsPort: UInt16 = 5866
     static let tokenKey = "cortana.serverToken"
     static let enabledKey = "cortana.serverEnabled"
     static let bonjourEnabledKey = "cortana.bonjourEnabled"
@@ -32,6 +34,7 @@ final class CanvasServer: ObservableObject {
     @Published private(set) var bonjourServiceName: String?
 
     private var listener: NWListener?
+    private var wsListener: NWListener?
     private let networkQueue = DispatchQueue(label: "cortana.canvas-server", qos: .userInitiated)
     private var pingTask: Task<Void, Never>?
     private let rateLimiter = AuthRateLimiter()
@@ -93,6 +96,7 @@ final class CanvasServer: ObservableObject {
             }
 
             listener.start(queue: networkQueue)
+            startNativeWSListener()
         } catch {
             lastError = error.localizedDescription
             canvasLog("[CanvasServer] Listener init failed: \(error)")
@@ -110,6 +114,8 @@ final class CanvasServer: ObservableObject {
         }
         webSocketClients.removeAll()
 
+        wsListener?.cancel()
+        wsListener = nil
         listener?.cancel()
         listener = nil
         isRunning = false
@@ -721,7 +727,7 @@ final class CanvasServer: ObservableObject {
 struct WebSocketClient {
     let id: String                          // UUID
     let connection: NWConnection
-    let wsConnection: WebSocketConnection?
+    let wsConnection: (any WSClientSendable)?
     let connectedAt: Date
     var clientName: String?
     var subscribedTreeId: String?
@@ -742,17 +748,21 @@ extension CanvasServer {
         }
 
         // Validate required WebSocket headers
+        canvasLog("[CanvasServer] WS upgrade headers: \(request.headers)")
         guard let wsKey = request.headers["sec-websocket-key"], !wsKey.isEmpty else {
             sendResponse(connection, status: 400, body: #"{"error":"missing Sec-WebSocket-Key"}"#)
             return
         }
 
         guard request.headers["sec-websocket-version"] == "13" else {
+            canvasLog("[CanvasServer] WS upgrade rejected: version='\(request.headers["sec-websocket-version"] ?? "nil")'")
             sendResponse(connection, status: 400, body: #"{"error":"unsupported WebSocket version"}"#)
             return
         }
 
         // Send 101 Switching Protocols
+        let acceptKey = WebSocketCodec.acceptKey(for: wsKey)
+        canvasLog("[CanvasServer] WS upgrade: key='\(wsKey)' accept='\(acceptKey)'")
         let upgradeData = WebSocketCodec.upgradeResponse(for: wsKey)
         connection.send(content: upgradeData, completion: .contentProcessed { [weak self] error in
             if let error {
@@ -1213,6 +1223,115 @@ extension CanvasServer {
             pingTask?.cancel()
             pingTask = nil
         }
+    }
+
+    // MARK: - Native WebSocket Listener (Port 5866)
+    //
+    // Uses NWProtocolWebSocket so Network.framework handles the RFC 6455 handshake
+    // on both sides — no manual SHA-1 or accept-key computation needed.
+    // iOS URLSessionWebSocketTask connects here instead of port 5865.
+    // Auth is done via the first WebSocket message: {"type":"auth","token":"<token>"}
+
+    private func startNativeWSListener() {
+        let wsOptions = NWProtocolWebSocket.Options()
+        wsOptions.autoReplyPing = true
+        let params = NWParameters(tls: nil, tcp: NWProtocolTCP.Options())
+        params.defaultProtocolStack.applicationProtocols.insert(wsOptions, at: 0)
+
+        do {
+            let wsl = try NWListener(using: params, on: NWEndpoint.Port(rawValue: Self.wsPort)!)
+            wsListener = wsl
+
+            wsl.newConnectionHandler = { [weak self] connection in
+                Task { @MainActor [weak self] in self?.handleNativeWSConnection(connection) }
+            }
+
+            wsl.stateUpdateHandler = { state in
+                Task { @MainActor in
+                    switch state {
+                    case .ready:
+                        canvasLog("[CanvasServer] Native WS ready on port \(Self.wsPort)")
+                    case .failed(let error):
+                        canvasLog("[CanvasServer] Native WS failed: \(error)")
+                    case .cancelled:
+                        canvasLog("[CanvasServer] Native WS stopped")
+                    default:
+                        break
+                    }
+                }
+            }
+
+            wsl.start(queue: networkQueue)
+        } catch {
+            canvasLog("[CanvasServer] Native WS listener init failed: \(error)")
+        }
+    }
+
+    private func handleNativeWSConnection(_ connection: NWConnection) {
+        // No token auth — network presence is sufficient (LAN = WiFi auth, WAN = Tailscale).
+        guard webSocketClients.count < Self.maxWebSocketConnections else {
+            connection.cancel()
+            return
+        }
+
+        // Wait for the NWProtocolWebSocket handshake to complete before registering.
+        // The handshake happens asynchronously after connection.start(); we must not
+        // call readNext() until the connection is .ready or receives deliver an error.
+        connection.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                Task { @MainActor [weak self] in
+                    self?.registerNativeWSClient(connection)
+                }
+            case .failed(let error):
+                canvasLog("[CanvasServer] Native WS handshake failed: \(error)")
+                connection.cancel()
+            case .cancelled:
+                break
+            default:
+                break
+            }
+        }
+
+        connection.start(queue: networkQueue)
+    }
+
+    private func registerNativeWSClient(_ connection: NWConnection) {
+        let clientId = UUID().uuidString
+        let wsConn = NativeWebSocketConnection(id: clientId, connection: connection)
+
+        let client = WebSocketClient(
+            id: clientId,
+            connection: connection,
+            wsConnection: wsConn,
+            connectedAt: Date(),
+            lastPongAt: Date()
+        )
+
+        webSocketClients[clientId] = client
+        canvasLog("[CanvasServer] Native WS client connected: \(clientId.prefix(8)) (total: \(webSocketClients.count))")
+
+        wsConn.onMessage = { [weak self] text in
+            Task { @MainActor [weak self] in
+                self?.handleWebSocketMessage(clientId: clientId, text: text)
+            }
+        }
+
+        wsConn.onClose = { [weak self] code, reason in
+            Task { @MainActor [weak self] in
+                self?.removeWebSocketClient(clientId, code: code, reason: reason)
+            }
+        }
+
+        wsConn.onPong = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.webSocketClients[clientId]?.lastPongAt = Date()
+            }
+        }
+
+        wsConn.startReading()
+        startPingTimerIfNeeded()
     }
 }
 

@@ -4,6 +4,14 @@ import Observation
 import UIKit
 #endif
 
+/// Dedicated session for WebSocket connections: ephemeral config avoids any shared-session
+/// TLS delegate or proxy customization that could interfere with WebSocket handshake validation.
+private let _wsSession: URLSession = {
+    let config = URLSessionConfiguration.ephemeral
+    config.waitsForConnectivity = false
+    return URLSession(configuration: config)
+}()
+
 // MARK: - WebSocket Testability
 
 /// Abstraction over URLSessionWebSocketTask for unit-testability.
@@ -87,11 +95,6 @@ final class ConnectionManager {
     private var connectionGeneration = 0
     private var reconnectAttempts = 0
     private let maxReconnectAttempts = 10
-    /// Timestamp when the current WebSocket was opened.
-    private var lastConnectTime: Date?
-    /// Consecutive closes that happened within 3 s of connecting (auth failure signal).
-    private var rapidDisconnectCount = 0
-    private let maxRapidDisconnects = 3
     private var reconnectTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var backgroundTimer: Task<Void, Never>?
@@ -106,7 +109,7 @@ final class ConnectionManager {
 
     init(taskFactory: (@Sendable (URL) -> any WebSocketTaskProtocol)? = nil) {
         self.taskFactory = taskFactory ?? { url in
-            URLSession.shared.webSocketTask(with: url)
+            _wsSession.webSocketTask(with: url)
         }
         setupBackgroundHandling()
     }
@@ -117,7 +120,6 @@ final class ConnectionManager {
     /// Resets the reconnect counter and cancels any pending reconnect first.
     func connect(to server: SavedServer, token: String) async {
         suppressAutoConnect = false
-        rapidDisconnectCount = 0
         currentServer = server
         currentToken = token
         reconnectAttempts = 0
@@ -154,7 +156,10 @@ final class ConnectionManager {
     // MARK: - WebSocket Lifecycle
 
     private func openWebSocket(server: SavedServer, token: String) async {
-        guard let url = URL(string: "ws://\(server.host):\(server.port)/ws?token=\(token)") else {
+        // Port 5866 = NWProtocolWebSocket listener (always httpPort + 1).
+        // Network.framework handles the RFC 6455 handshake on both sides —
+        // no manual SHA-1 computation, no accept-key mismatch possible.
+        guard let url = URL(string: "ws://\(server.host):\(Constants.Network.wsPort)/ws") else {
             state = .disconnected
             return
         }
@@ -162,7 +167,6 @@ final class ConnectionManager {
         let generation = connectionGeneration
         let task = taskFactory(url)
         webSocketTask = task
-        lastConnectTime = Date()
         task.resume()
         state = .connected
         startReceiveLoop(task: task, generation: generation, server: server, token: token)
@@ -187,6 +191,7 @@ final class ConnectionManager {
                 }
             } catch {
                 guard self.connectionGeneration == generation else { return }
+                print("[ConnectionManager] WebSocket error: \(error)")
                 await self.handleDisconnect(server: server, token: token)
             }
         }
@@ -204,23 +209,6 @@ final class ConnectionManager {
     private func handleDisconnect(server: SavedServer, token: String) async {
         webSocketTask = nil
         cancelPing()
-
-        // Detect rapid connect → close (< 3 s alive) as a likely auth failure.
-        // After maxRapidDisconnects consecutive rapid closes, bail to server picker
-        // so the user can enter the correct token instead of looping forever.
-        let isRapid = lastConnectTime.map { Date().timeIntervalSince($0) < 3.0 } ?? false
-        if isRapid {
-            rapidDisconnectCount += 1
-            if rapidDisconnectCount >= maxRapidDisconnects {
-                rapidDisconnectCount = 0
-                suppressAutoConnect = true
-                currentServer = nil
-                state = .disconnected
-                return
-            }
-        } else {
-            rapidDisconnectCount = 0
-        }
 
         guard reconnectAttempts < maxReconnectAttempts else {
             state = .disconnected
