@@ -5,6 +5,14 @@ struct ContentView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
 
     var body: some View {
+        if appState.simpleMode {
+            SimpleModeView()
+        } else {
+            advancedView
+        }
+    }
+
+    private var advancedView: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 350)

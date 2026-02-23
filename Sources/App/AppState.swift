@@ -14,6 +14,9 @@ final class AppState: ObservableObject {
     }
     @Published var selectedProjectPath: String?
     @Published var daemonConnected: Bool = false
+    @Published var simpleMode: Bool {
+        didSet { UserDefaults.standard.set(simpleMode, forKey: "worldtree.simpleMode") }
+    }
     /// Mermaid source code currently shown in the diagram side panel. nil = panel hidden.
     @Published var activeMermaidCode: String? = nil
     /// Non-nil if the database failed to initialize — surfaced as an alert in WorldTreeApp.
@@ -35,6 +38,8 @@ final class AppState: ObservableObject {
         } catch {
             dbSetupError = error
         }
+
+        simpleMode = UserDefaults.standard.bool(forKey: "worldtree.simpleMode")
 
         // Restore last selected conversation from previous session
         selectedTreeId = UserDefaults.standard.string(forKey: "lastSelectedTreeId")

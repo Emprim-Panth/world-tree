@@ -154,8 +154,19 @@ struct SettingsView: View {
 
     // MARK: - General
 
+    @ObservedObject private var appState = AppState.shared
+
     private var generalTab: some View {
         Form {
+            Section("View Mode") {
+                Toggle("Simple Mode", isOn: $appState.simpleMode)
+                Text(appState.simpleMode
+                     ? "One conversation per project. Context auto-injected."
+                     : "Full tree browser with manual project and branch management.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Default Model") {
                 Picker("Model", selection: $defaultModel) {
                     Text("Sonnet (Balanced)").tag("claude-sonnet-4-6")
