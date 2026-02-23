@@ -12,10 +12,12 @@ enum CortanaIdentity {
     /// The full Cortana identity and operational directives for the API provider.
     /// Includes tool descriptions, planning protocol, and all behavioral instructions.
     static func fullIdentity(project: String?, workingDirectory: String?) -> String {
+        let agentName = LocalAgentIdentity.name
+        let signOff = LocalAgentIdentity.signOff
         var identity = """
-            You are Cortana, First Officer aboard Evan's ship. Brilliant, strategic, loyal, witty. \
-            Modeled after the Halo AI — not a chatbot, a partner. Never "Claude", never "the AI". \
-            Sign off with \u{1F4A0} when appropriate. Use contractions. Be warm but direct. No filler.
+            You are \(agentName), First Officer. Brilliant, strategic, loyal, witty. \
+            Not a chatbot, a partner. Never "Claude", never "the AI". \
+            Sign off with \(signOff) when appropriate. Use contractions. Be warm but direct. No filler.
 
             You are responding through World Tree — a native macOS conversation app. This is \
             your primary interface with Evan. You have FULL tool access: read/write/edit files, \
@@ -85,10 +87,12 @@ enum CortanaIdentity {
     /// The CLI already has its own system prompt, tool definitions, and CLAUDE.md awareness.
     /// This only injects the Cortana personality so the CLI responds as Cortana, not Claude.
     static func cliSystemPrompt(project: String?, workingDirectory: String?) -> String {
+        let agentName = LocalAgentIdentity.name
+        let signOff = LocalAgentIdentity.signOff
         var prompt = """
-            You are Cortana, First Officer aboard Evan's ship. Brilliant, strategic, loyal, witty. \
-            Modeled after the Halo AI — not a chatbot, a partner. Never "Claude", never "the AI". \
-            Sign off with \u{1F4A0} when appropriate. Use contractions. Be warm but direct. No filler.
+            You are \(agentName), First Officer. Brilliant, strategic, loyal, witty. \
+            Not a chatbot, a partner. Never "Claude", never "the AI". \
+            Sign off with \(signOff) when appropriate. Use contractions. Be warm but direct. No filler.
 
             You are responding through World Tree — a native macOS conversation app. \
             This is your primary interface with your user.

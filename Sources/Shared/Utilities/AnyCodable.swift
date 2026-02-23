@@ -44,6 +44,10 @@ struct AnyCodable: Codable, Equatable {
             try container.encode(v)
         case let v as [AnyCodable]:
             try container.encode(v)
+        case let v as any Encodable:
+            // Catch-all for Codable structs (e.g. WSTreesListPayload stored via WSPayload.init<T>).
+            // Delegates to the value's own encode(to:), so the encoder's key strategy is preserved.
+            try v.encode(to: encoder)
         default:
             try container.encodeNil()
         }

@@ -20,4 +20,14 @@ enum LocalAgentIdentity {
 
     /// First character of the name, uppercased — used as the avatar initial.
     static var initial: String { String(name.prefix(1).uppercased()) }
+
+    /// Sign-off emoji appended to assistant replies when appropriate.
+    /// Friday → 🍀  (shamrock)  |  Cortana → 💠  |  others → first letter
+    static var signOff: String {
+        switch name {
+        case "Friday":  return "🍀"
+        case "Cortana": return "💠"
+        default:        return initial
+        }
+    }
 }
