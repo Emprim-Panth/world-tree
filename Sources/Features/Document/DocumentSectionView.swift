@@ -177,7 +177,6 @@ struct DocumentSectionView: View {
                         .replacingOccurrences(of: "```[\\s\\S]*?```", with: " code block ", options: .regularExpression)
                         .replacingOccurrences(of: "`[^`]+`", with: "", options: .regularExpression)
                         .replacingOccurrences(of: "**", with: "")
-                        .replacingOccurrences(of: "💠", with: "")
                     Task { try? await VoiceService.shared.speak(text) }
                 } label: {
                     Label("Read Aloud", systemImage: "speaker.wave.2")

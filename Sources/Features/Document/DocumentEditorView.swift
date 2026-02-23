@@ -84,8 +84,8 @@ struct DocumentEditorView: View {
                                     .localizedCaseInsensitiveContains(searchQuery) ? 1.0 : 0.3))
                         }
 
-                        // Live streaming section — tokens appear as they arrive
-                        if let streaming = viewModel.streamingContent {
+                        // Live streaming section — tokens appear as they arrive (only once content exists)
+                        if let streaming = viewModel.streamingContent, !streaming.isEmpty {
                             StreamingSectionView(content: streaming)
                                 .id("streaming")
                         }
@@ -375,6 +375,8 @@ class DocumentEditorViewModel: ObservableObject {
     private var messageObservation: AnyDatabaseCancellable?
     /// Reference to the active streaming task — allows cancellation when user interrupts.
     private var streamTask: Task<Void, Never>?
+    /// Routes messages through Friday daemon when available, falls back to ProviderManager.
+    private let claudeBridge = ClaudeBridge()
     weak var parentBranchLayout: BranchLayoutViewModel?
 
     deinit {
@@ -789,16 +791,8 @@ class DocumentEditorViewModel: ObservableObject {
                 recentContext: recentContext
             )
 
-            let provider = ProviderManager.shared.activeProvider
-
-            guard let provider else {
-                isProcessing = false
-                return
-            }
-
-            // 4. Stream response — mirror every token to the chat and terminal in real time.
-            //    Token batching: accumulate into pendingTokenBuffer; a 60fps Timer flushes
-            //    to streamingContent once per frame — prevents per-token SwiftUI re-renders.
+            // 4. Stream response through ClaudeBridge — routes via Friday daemon if available,
+            //    falls back to ProviderManager (ClaudeCodeProvider) automatically.
             var fullResponse = ""
             var hadExplicitError = false
             streamingContent = ""  // Start streaming indicator
@@ -807,7 +801,7 @@ class DocumentEditorViewModel: ObservableObject {
             // Open SSD crash-recovery file — survives SIGTERM, auto-deleted on clean completion
             await StreamCacheManager.shared.openStreamFile(sessionId: sessionId)
 
-            for await event in provider.send(context: ctx) {
+            for await event in claudeBridge.send(context: ctx) {
                 // Bail out cleanly if this task was cancelled (user interrupted)
                 if Task.isCancelled {
                     canvasLog("[DocumentEditor] Stream task cancelled — stopping token consumption")
@@ -925,7 +919,6 @@ class DocumentEditorViewModel: ObservableObject {
                     .replacingOccurrences(of: "`[^`]+`", with: "", options: .regularExpression)
                     .replacingOccurrences(of: "#+ ", with: "", options: .regularExpression)
                     .replacingOccurrences(of: "**", with: "")
-                    .replacingOccurrences(of: "💠", with: "")
                 let rawSpeed = UserDefaults.standard.double(forKey: "voiceSpeed")
                 let rawPitch = UserDefaults.standard.double(forKey: "voicePitch")
                 let voiceOptions = SpeechOptions(
@@ -1087,33 +1080,39 @@ struct ThinkingIndicatorView: View {
     @State private var phase = 0
     @State private var dotTimer: Timer?
 
-    private let dots = [".", "..", "..."]
-
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Circle()
-                .fill(Color.cyan.gradient)
+                .fill(Color.teal.gradient)
                 .frame(width: 32, height: 32)
                 .overlay {
-                    Text("💠")
-                        .font(.system(size: 14))
+                    Text(LocalAgentIdentity.initial)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
                 }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(dots[phase])
-                    .font(.system(size: 18, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color.cyan.opacity(0.8))
-                    .frame(width: 28, alignment: .leading)
-                    .animation(.none, value: phase)
+                // Three-circle dot animation — no text overflow
+                HStack(spacing: 5) {
+                    ForEach(0..<3, id: \.self) { i in
+                        Circle()
+                            .fill(Color.teal)
+                            .frame(width: 7, height: 7)
+                            .opacity(phase == i ? 1.0 : 0.3)
+                            .scaleEffect(phase == i ? 1.2 : 0.8)
+                            .animation(.easeInOut(duration: 0.25), value: phase)
+                    }
+                }
+                .padding(.top, 12)
 
                 if let description = toolDescription {
                     Text(description)
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(Color.cyan.opacity(0.5))
+                        .foregroundStyle(Color.teal.opacity(0.5))
                         .transition(.opacity)
                 }
             }
-            .padding(.vertical, 10)
+            .padding(.vertical, 4)
         }
         .onAppear {
             dotTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
@@ -1135,11 +1134,12 @@ struct StreamingSectionView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Circle()
-                .fill(Color.cyan.gradient)
+                .fill(Color.teal.gradient)
                 .frame(width: 32, height: 32)
                 .overlay {
-                    Text("💠")
-                        .font(.system(size: 14))
+                    Text(LocalAgentIdentity.initial)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
                 }
 
             VStack(alignment: .leading, spacing: 8) {

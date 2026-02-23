@@ -42,21 +42,22 @@ final class SimpleModeViewModel: ObservableObject {
 
     func select(_ project: CachedProject) {
         guard selectedProject?.path != project.path else { return }
-        selectedProject = project
-        resolvedTreeId = nil
-        resolvedBranchId = nil
-        isResolving = true
-        error = nil
-
-        Task {
+        // Defer mutations off the current view-update pass to avoid
+        // "Publishing changes from within view updates" runtime warnings.
+        Task { @MainActor in
+            self.selectedProject = project
+            self.resolvedTreeId = nil
+            self.resolvedBranchId = nil
+            self.isResolving = true
+            self.error = nil
             do {
                 let result = try await SimpleProjectStore.shared.resolve(for: project)
-                resolvedTreeId = result.treeId
-                resolvedBranchId = result.branchId
+                self.resolvedTreeId = result.treeId
+                self.resolvedBranchId = result.branchId
             } catch {
                 self.error = error.localizedDescription
             }
-            isResolving = false
+            self.isResolving = false
         }
     }
 }
