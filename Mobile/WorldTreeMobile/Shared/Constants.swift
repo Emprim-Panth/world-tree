@@ -17,6 +17,8 @@ enum Constants {
         static let lastBranchId = "lastBranchId"
         static let autoConnect = "autoConnect"
         static let messageFontSize = "messageFontSize"
+        /// Hostname or IP for remote access (Tailscale). Used automatically when not on Wi-Fi.
+        static let remoteServerHost = "remoteServerHost"
     }
 
     enum Defaults {

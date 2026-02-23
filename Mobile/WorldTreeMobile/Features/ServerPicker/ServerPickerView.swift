@@ -1,4 +1,5 @@
 import SwiftUI
+import Network
 
 // MARK: - ServerPickerView
 
@@ -9,6 +10,9 @@ struct ServerPickerView: View {
     @State private var bonjourBrowser = BonjourBrowser()
     @State private var showAddServer = false
     @State private var addServerPrefill: AddServerPrefill? = nil
+    @State private var isOnWifi = true
+    @State private var didAutoConnect = false
+    private let pathMonitor = NWPathMonitor()
 
     var body: some View {
         NavigationStack {
@@ -37,10 +41,11 @@ struct ServerPickerView: View {
             .onAppear {
                 loadServers()
                 bonjourBrowser.start()
-                autoConnectIfNeeded()
+                startNetworkMonitor()
             }
             .onDisappear {
                 bonjourBrowser.stop()
+                pathMonitor.cancel()
             }
         }
     }
@@ -108,10 +113,33 @@ struct ServerPickerView: View {
         updateLastConnected(server)
     }
 
+    private func startNetworkMonitor() {
+        pathMonitor.pathUpdateHandler = { path in
+            DispatchQueue.main.async {
+                self.isOnWifi = path.usesInterfaceType(.wifi)
+                if !self.didAutoConnect {
+                    self.didAutoConnect = true
+                    self.autoConnectIfNeeded()
+                }
+            }
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "worldtree.networkmonitor"))
+    }
+
     private func autoConnectIfNeeded() {
-        guard autoConnect,
-              !connectionManager.suppressAutoConnect,
-              let lastId = UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.lastServerId),
+        guard autoConnect, !connectionManager.suppressAutoConnect else { return }
+
+        let remoteHost = UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.remoteServerHost) ?? ""
+
+        // Off Wi-Fi and remote server configured → connect to remote directly.
+        if !isOnWifi && !remoteHost.isEmpty {
+            let remote = SavedServer.manual(name: "Remote", host: remoteHost)
+            Task { await connectionManager.connect(to: remote, token: "") }
+            return
+        }
+
+        // On Wi-Fi (or no remote configured) → connect to last-used local server.
+        guard let lastId = UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.lastServerId),
               let server = savedServers.first(where: { $0.id == lastId })
         else { return }
         connectTo(server)
