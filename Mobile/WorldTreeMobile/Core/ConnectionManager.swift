@@ -155,6 +155,8 @@ final class ConnectionManager {
         state = .connected
         startReceiveLoop(task: task, generation: generation, server: server, token: token)
         startPingLoop()
+        // Request initial tree list immediately on connect.
+        await send(.listTrees())
     }
 
     private func startReceiveLoop(

@@ -63,6 +63,7 @@ struct MessageInputView: View {
             .padding(.vertical, 8)
             .background(Color(uiColor: .systemBackground))
         }
+        .frame(maxWidth: DesignTokens.Layout.inputBarMaxWidth)
     }
 
     private func sendAndDismiss() {

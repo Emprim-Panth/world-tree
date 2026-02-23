@@ -1,0 +1,71 @@
+name: WorldTreeMobile
+options:
+  bundleIdPrefix: com.forgeandcode
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+
+targets:
+  WorldTreeMobile:
+    type: application
+    platform: iOS
+    sources:
+      - path: WorldTreeMobile
+        excludes:
+          - Resources/Assets.xcassets
+      - path: WorldTreeMobile/Resources/Assets.xcassets
+        buildPhase: resources
+    info:
+      path: WorldTreeMobile/Info.plist
+      properties:
+        CFBundleDisplayName: World Tree
+        NSBonjourServices:
+          - _worldtree._tcp
+        NSLocalNetworkUsageDescription: "World Tree uses the local network to discover and connect to the World Tree Mac app on your network."
+        UILaunchScreen:
+          UIColorName: ""
+        UIRequiresFullScreen: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.forgeandcode.world-tree-mobile
+        PRODUCT_NAME: "WorldTreeMobile"
+        GENERATE_INFOPLIST_FILE: false
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        CODE_SIGN_IDENTITY: "iPhone Developer"
+        CODE_SIGNING_ALLOWED: "YES"
+        DEVELOPMENT_TEAM: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_STRICT_CONCURRENCY: complete
+
+  WorldTreeMobileTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: WorldTreeMobileTests
+    dependencies:
+      - target: WorldTreeMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.forgeandcode.world-tree-mobile-tests
+        PRODUCT_NAME: WorldTreeMobileTests
+        GENERATE_INFOPLIST_FILE: true
+        SWIFT_STRICT_CONCURRENCY: complete

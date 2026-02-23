@@ -20,5 +20,6 @@ enum Constants {
     enum Defaults {
         static let autoConnect = true
         static let messageFontSize = 15.0
+        static let iPadMessageFontSize = 16.0
     }
 }

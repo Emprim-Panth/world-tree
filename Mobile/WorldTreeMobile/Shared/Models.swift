@@ -91,39 +91,32 @@ struct SavedServer: Identifiable, Codable, Equatable {
     }
 }
 
+// Matches WSTreeInfo in WebSocketProtocol.swift (server encodes with convertToSnakeCase).
+// Client parser uses convertFromSnakeCase, so no custom CodingKeys needed.
 struct TreeSummary: Identifiable, Codable, Equatable {
     let id: String
     let name: String
-    let createdAt: Date
-    let branchCount: Int
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case name
-        case createdAt = "created_at"
-        case branchCount = "branch_count"
-    }
+    let updatedAt: String
+    let messageCount: Int
 }
 
+// Matches WSBranchInfo in WebSocketProtocol.swift.
 struct BranchSummary: Identifiable, Codable, Equatable {
     let id: String
     let treeId: String
-    let name: String
-    let messageCount: Int
-    let createdAt: Date
+    let title: String?
+    let status: String
+    let branchType: String
+    let createdAt: String
+    let updatedAt: String
 
-    enum CodingKeys: String, CodingKey {
-        case id
-        case treeId = "tree_id"
-        case name
-        case messageCount = "message_count"
-        case createdAt = "created_at"
-    }
+    var displayName: String { title ?? "Untitled" }
 }
 
+// Matches WSMessageInfo in WebSocketProtocol.swift.
 struct Message: Identifiable, Codable, Equatable {
     let id: String
     let role: String
     let content: String
-    let index: Int
+    let createdAt: String
 }
