@@ -179,7 +179,6 @@ extension WorldTreeStore {
         streamingText = ""
         isStreaming = false
         activeToolChips = []
-        isLoadingHistory = true
     }
 
     /// Navigate back from BranchView to BranchesListView.

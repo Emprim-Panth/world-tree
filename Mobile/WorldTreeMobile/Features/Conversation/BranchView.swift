@@ -41,10 +41,12 @@ struct BranchView: View {
                     store.saveDraft(messageText, for: old)
                 }
                 messageText = newId.map { store.draft(for: $0) } ?? ""
-                // Only re-fetch when switching branches (oldId != nil means we were already on a branch).
-                // Initial load is handled by onAppear to avoid double-sending.
-                guard let newId, let tree = store.currentTree, oldId != nil else { return }
-                store.isLoadingHistory = true
+                guard let newId, let tree = store.currentTree else { return }
+                // For genuine branch switches, set the loading flag here.
+                // For initial load (oldId == nil), onAppear handles it.
+                if oldId != nil {
+                    store.isLoadingHistory = true
+                }
                 Task {
                     await connectionManager.send(.subscribe(treeId: tree.id, branchId: newId))
                     await connectionManager.send(.loadHistory(branchId: newId))
