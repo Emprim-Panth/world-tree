@@ -51,6 +51,7 @@ struct iPadRootView: View {
             if case .connecting = connectionManager.state {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Change Server") {
+                        connectionManager.suppressAutoConnect = true
                         connectionManager.disconnect()
                         connectionManager.currentServer = nil
                     }
@@ -58,6 +59,7 @@ struct iPadRootView: View {
             } else if case .reconnecting = connectionManager.state {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Change Server") {
+                        connectionManager.suppressAutoConnect = true
                         connectionManager.disconnect()
                         connectionManager.currentServer = nil
                     }

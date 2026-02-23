@@ -110,6 +110,7 @@ struct ServerPickerView: View {
 
     private func autoConnectIfNeeded() {
         guard autoConnect,
+              !connectionManager.suppressAutoConnect,
               let lastId = UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.lastServerId),
               let server = savedServers.first(where: { $0.id == lastId })
         else { return }

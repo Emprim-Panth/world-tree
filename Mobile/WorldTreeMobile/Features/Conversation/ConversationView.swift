@@ -66,6 +66,7 @@ struct ConversationView: View {
             Text(connectingLabel)
                 .foregroundStyle(.secondary)
             Button("Change Server") {
+                connectionManager.suppressAutoConnect = true
                 connectionManager.disconnect()
                 connectionManager.currentServer = nil
             }

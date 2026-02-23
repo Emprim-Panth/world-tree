@@ -73,6 +73,10 @@ final class ConnectionManager {
     var currentServer: SavedServer?
     /// Round-trip time of the last successful ping (seconds).
     var latency: TimeInterval?
+    /// Set to true when the user explicitly taps "Change Server".
+    /// Prevents autoConnectIfNeeded from reconnecting to the last server.
+    /// Cleared automatically when connect(to:token:) is called.
+    var suppressAutoConnect: Bool = false
 
     // MARK: - Private
 
@@ -107,6 +111,7 @@ final class ConnectionManager {
     /// Connect to `server` authenticated with `token`.
     /// Resets the reconnect counter and cancels any pending reconnect first.
     func connect(to server: SavedServer, token: String) async {
+        suppressAutoConnect = false
         currentServer = server
         currentToken = token
         reconnectAttempts = 0
