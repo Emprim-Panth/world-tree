@@ -39,7 +39,7 @@ final class ClaudeBridge {
 
     /// Human-readable name of the active provider for UI display
     var activeProviderName: String {
-        if fridayEnabled && DaemonService.shared.isConnected {
+        if fridayEnabled {
             return "Friday (daemon)"
         }
         return ProviderManager.shared.activeProviderName
@@ -51,7 +51,7 @@ final class ClaudeBridge {
     /// attachments, recentContext, and other fields are preserved on the direct path.
     /// Friday path forwards core fields; daemon handles its own context enrichment.
     func send(context: ProviderSendContext) -> AsyncStream<BridgeEvent> {
-        if fridayEnabled && DaemonService.shared.isConnected {
+        if fridayEnabled {
             canvasLog("[ClaudeBridge] routing to Friday daemon, session=\(context.sessionId)")
             return wrapFridayWithFallback(
                 message: context.message,
@@ -79,8 +79,9 @@ final class ClaudeBridge {
         project: String?,
         checkpointContext: String? = nil
     ) -> AsyncStream<BridgeEvent> {
-        // Route through Friday daemon if available and enabled
-        if fridayEnabled && DaemonService.shared.isConnected {
+        // Route through Friday daemon if enabled — FridayChannel fails fast and
+        // wrapFridayWithFallback transparently falls back to direct provider.
+        if fridayEnabled {
             canvasLog("[ClaudeBridge] routing to Friday daemon, session=\(sessionId)")
             return wrapFridayWithFallback(
                 message: message,
