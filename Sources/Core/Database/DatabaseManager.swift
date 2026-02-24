@@ -45,13 +45,25 @@ final class DatabaseManager {
             return override
         }
 
-        let path = CortanaConstants.dropboxDatabasePath
-        let dir = (path as NSString).deletingLastPathComponent
+        let dropboxPath = CortanaConstants.dropboxDatabasePath
+        if FileManager.default.fileExists(atPath: dropboxPath) {
+            return dropboxPath
+        }
+
+        // Dropbox not available — fall back to cortana.db
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let fallback = "\(home)/.cortana/cortana.db"
+        if FileManager.default.fileExists(atPath: fallback) {
+            return fallback
+        }
+
+        // Neither exists — create at Dropbox path (GRDB will create the file)
+        let dir = (dropboxPath as NSString).deletingLastPathComponent
         try? FileManager.default.createDirectory(
             atPath: dir,
             withIntermediateDirectories: true
         )
-        return path
+        return dropboxPath
     }
 
     /// Read-only access (preferred for browsing)

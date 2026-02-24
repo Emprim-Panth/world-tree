@@ -4,7 +4,7 @@ enum CortanaConstants {
     // MARK: - Database
     static let dropboxDatabasePath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.openclaude/state/world-tree.db"
+        return "\(home)/Library/CloudStorage/Dropbox/claude-memory/conversations.db"
     }()
 
     // MARK: - Daemon (OpenClaude paths — degrades gracefully if socket absent)
@@ -30,10 +30,10 @@ enum CortanaConstants {
         return "\(home)/.openclaude/state/plugins"
     }()
 
-    // MARK: - Friday Channel (daemon HTTP API, port 8765)
+    // MARK: - Daemon Channel (HTTP API, port 8765)
     static let daemonAPIURL = "http://localhost:8765"
     static let daemonAPITokenKey = "cortana.daemonAPIToken"
-    static let fridayChannelEnabledKey = "cortana.fridayChannelEnabled"
+    static let daemonChannelEnabledKey = "cortana.fridayChannelEnabled"  // key string unchanged for UserDefaults compat
 
     // MARK: - Activity
     static let activityDir: String = {

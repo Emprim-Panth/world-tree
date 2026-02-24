@@ -10,10 +10,10 @@ enum BridgeEvent {
     case error(String)
 }
 
-/// Thin delegate that routes messages through ProviderManager or FridayChannel.
+/// Thin delegate that routes messages through ProviderManager or DaemonChannel.
 ///
 /// Routing priority:
-/// 1. FridayChannel (daemon HTTP SSE) — when daemon is connected and Friday routing enabled
+/// 1. DaemonChannel (HTTP SSE) — when daemon is connected and daemon routing enabled
 /// 2. ProviderManager — direct LLM provider (fallback)
 ///
 /// Maintains the same `send()` interface that BranchViewModel expects.
@@ -24,8 +24,8 @@ final class ClaudeBridge {
 
     private let home = FileManager.default.homeDirectoryForCurrentUser.path
 
-    @AppStorage(CortanaConstants.fridayChannelEnabledKey)
-    private var fridayEnabled: Bool = true
+    @AppStorage(CortanaConstants.daemonChannelEnabledKey)
+    private var daemonEnabled: Bool = true
 
     init() {
         canvasLog("[ClaudeBridge] initialized, active provider: \(ProviderManager.shared.activeProviderName)")
@@ -39,8 +39,8 @@ final class ClaudeBridge {
 
     /// Human-readable name of the active provider for UI display
     var activeProviderName: String {
-        if fridayEnabled && DaemonService.shared.isConnected {
-            return "Friday (daemon)"
+        if daemonEnabled && DaemonService.shared.isConnected {
+            return "Daemon (direct)"
         }
         return ProviderManager.shared.activeProviderName
     }
@@ -49,11 +49,11 @@ final class ClaudeBridge {
 
     /// Primary entry point — accepts a fully-constructed ProviderSendContext so
     /// attachments, recentContext, and other fields are preserved on the direct path.
-    /// Friday path forwards core fields; daemon handles its own context enrichment.
+    /// Daemon path forwards core fields; daemon handles its own context enrichment.
     func send(context: ProviderSendContext) -> AsyncStream<BridgeEvent> {
-        if fridayEnabled && DaemonService.shared.isConnected {
-            canvasLog("[ClaudeBridge] routing to Friday daemon, session=\(context.sessionId)")
-            return wrapFridayWithFallback(
+        if daemonEnabled && DaemonService.shared.isConnected {
+            canvasLog("[ClaudeBridge] routing to daemon, session=\(context.sessionId)")
+            return wrapDaemonWithFallback(
                 message: context.message,
                 sessionId: context.sessionId,
                 branchId: context.branchId,
@@ -80,12 +80,12 @@ final class ClaudeBridge {
         project: String?,
         checkpointContext: String? = nil
     ) -> AsyncStream<BridgeEvent> {
-        // Route through Friday daemon if enabled AND daemon is reachable.
-        // Skip Friday entirely when isConnected = false — no need to attempt
+        // Route through daemon if enabled AND daemon is reachable.
+        // Skip daemon entirely when isConnected = false — no need to attempt
         // a connection that will fail and delay the direct-provider fallback.
-        if fridayEnabled && DaemonService.shared.isConnected {
-            canvasLog("[ClaudeBridge] routing to Friday daemon, session=\(sessionId)")
-            return wrapFridayWithFallback(
+        if daemonEnabled && DaemonService.shared.isConnected {
+            canvasLog("[ClaudeBridge] routing to daemon, session=\(sessionId)")
+            return wrapDaemonWithFallback(
                 message: message,
                 sessionId: sessionId,
                 branchId: branchId,
@@ -107,12 +107,12 @@ final class ClaudeBridge {
         )
     }
 
-    // MARK: - Friday routing with fallback
+    // MARK: - Daemon routing with fallback
 
     /// When `fullContext` is provided (primary send path), the fallback uses it directly
     /// so attachments, recentContext, parentSessionId, and other fields are preserved.
     /// Legacy callers (CanvasServer) omit `fullContext` and fall back via sendDirect().
-    private func wrapFridayWithFallback(
+    private func wrapDaemonWithFallback(
         message: String,
         sessionId: String,
         branchId: String,
@@ -125,40 +125,56 @@ final class ClaudeBridge {
         AsyncStream { continuation in
             Task { @MainActor in
                 var receivedContent = false
-                let fridayStream = await FridayChannel.shared.send(
+                let daemonStream = await DaemonChannel.shared.send(
                     text: message,
                     project: project,
                     branchId: branchId,
                     sessionId: sessionId
                 )
 
-                for await event in fridayStream {
-                    // If first event is an error (before any content), fall through to direct provider
-                    if case .error = event, !receivedContent {
-                        canvasLog("[ClaudeBridge] Friday unavailable, falling back to direct provider")
-                        let directStream: AsyncStream<BridgeEvent>
-                        if let ctx = fullContext {
-                            // Preserve original context — attachments, recentContext, etc.
-                            directStream = ProviderManager.shared.send(context: ctx)
-                        } else {
-                            directStream = self.sendDirect(
-                                message: message,
-                                sessionId: sessionId,
-                                branchId: branchId,
-                                model: model,
-                                workingDirectory: workingDirectory,
-                                project: project,
-                                checkpointContext: checkpointContext
-                            )
-                        }
-                        for await directEvent in directStream {
-                            continuation.yield(directEvent)
-                        }
-                        continuation.finish()
-                        return
+                for await event in daemonStream {
+                    switch event {
+                    case .error where !receivedContent:
+                        // Daemon reported an error before producing any text — fall through immediately.
+                        canvasLog("[ClaudeBridge] Daemon error before content — falling back to direct provider")
+                        break
+                    case .text:
+                        // Only mark content received for actual text tokens.
+                        receivedContent = true
+                        continuation.yield(event)
+                        continue
+                    case .done where !receivedContent:
+                        // Daemon stream ended with no text (silent empty run) — fall through below.
+                        canvasLog("[ClaudeBridge] Daemon produced no content — falling back to direct provider")
+                        break
+                    default:
+                        continuation.yield(event)
+                        continue
                     }
-                    receivedContent = true
-                    continuation.yield(event)
+                    // An error or empty-done caused us to exit the loop — fall back below.
+                    break
+                }
+
+                if !receivedContent {
+                    // Daemon didn't produce text — route to direct provider, preserving full context.
+                    canvasLog("[ClaudeBridge] Falling back to direct provider for session=\(sessionId)")
+                    let directStream: AsyncStream<BridgeEvent>
+                    if let ctx = fullContext {
+                        directStream = ProviderManager.shared.send(context: ctx)
+                    } else {
+                        directStream = self.sendDirect(
+                            message: message,
+                            sessionId: sessionId,
+                            branchId: branchId,
+                            model: model,
+                            workingDirectory: workingDirectory,
+                            project: project,
+                            checkpointContext: checkpointContext
+                        )
+                    }
+                    for await directEvent in directStream {
+                        continuation.yield(directEvent)
+                    }
                 }
                 continuation.finish()
             }

@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - FridayChannel
+// MARK: - DaemonChannel
 
 /// HTTP SSE client to the openClaude daemon's canvas message endpoint.
 ///
@@ -9,9 +9,9 @@ import Foundation
 ///
 /// Falls back gracefully — yields `.error` if the daemon is unreachable.
 /// ClaudeBridge checks `DaemonService.shared.isConnected` and the
-/// `fridayChannelEnabled` preference before routing here.
-actor FridayChannel {
-    static let shared = FridayChannel()
+/// `daemonChannelEnabled` preference before routing here.
+actor DaemonChannel {
+    static let shared = DaemonChannel()
 
     private init() {}
 
@@ -40,7 +40,7 @@ actor FridayChannel {
 
     // MARK: - Send
 
-    /// Send a message to the Friday daemon and stream the response as BridgeEvents.
+    /// Send a message to the daemon and stream the response as BridgeEvents.
     ///
     /// On connection failure the stream immediately yields `.error` so `ClaudeBridge`
     /// can fall through to the direct ProviderManager path.
@@ -106,8 +106,8 @@ actor FridayChannel {
                     continuation.yield(.done(usage: SessionTokenUsage()))
                     continuation.finish()
                 } catch {
-                    canvasLog("[FridayChannel] Connection failed: \(error.localizedDescription)")
-                    continuation.yield(.error("Friday daemon not available — using direct provider"))
+                    canvasLog("[DaemonChannel] Connection failed: \(error.localizedDescription)")
+                    continuation.yield(.error("Daemon channel not available — using direct provider"))
                     continuation.finish()
                 }
             }

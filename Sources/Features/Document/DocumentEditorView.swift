@@ -55,6 +55,34 @@ struct DocumentEditorView: View {
                                     .padding(.vertical, 60)
                             }
 
+                            // Persisted message sections
+                            ForEach(viewModel.document.sections) { section in
+                                DocumentSectionView(
+                                    section: section,
+                                    isHovered: hoveredSectionId == section.id,
+                                    showInferButton: !viewModel.isRootBranch,
+                                    onEdit: { newContent in
+                                        viewModel.updateSection(section.id, content: newContent)
+                                    },
+                                    onBranch: {
+                                        viewModel.requestFork(from: section.id)
+                                    },
+                                    onInfer: {
+                                        viewModel.inferFinding(from: section.id)
+                                    },
+                                    onNavigateToBranch: { branchId in
+                                        parentBranchLayout?.scrollToBranch(branchId)
+                                    },
+                                    onFixError: { toolCall in
+                                        viewModel.currentInput = "This tool call failed — please diagnose and fix:\n\nTool: \(toolCall.name)\nInput: \(toolCall.input)\nError: \(toolCall.output ?? "unknown")"
+                                    }
+                                )
+                                .id(section.id)
+                                .onHover { isHovered in
+                                    hoveredSectionId = isHovered ? section.id : nil
+                                }
+                            }
+
                         // Live streaming section — tokens appear as they arrive (only once content exists)
                         if let streaming = viewModel.streamingContent, !streaming.isEmpty {
                             StreamingSectionView(content: streaming)
@@ -349,7 +377,7 @@ class DocumentEditorViewModel: ObservableObject {
     private var loadRetryCount = 0
     /// Reference to the active streaming task — allows cancellation when user interrupts.
     private var streamTask: Task<Void, Never>?
-    /// Routes messages through Friday daemon when available, falls back to ProviderManager.
+    /// Routes messages through daemon channel when available, falls back to ProviderManager.
     private let claudeBridge = ClaudeBridge()
     weak var parentBranchLayout: BranchLayoutViewModel?
 
@@ -865,7 +893,7 @@ class DocumentEditorViewModel: ObservableObject {
                 recentContext: recentContext
             )
 
-            // 4. Stream response through ClaudeBridge — routes via Friday daemon if available,
+            // 4. Stream response through ClaudeBridge — routes via daemon channel if available,
             //    falls back to ProviderManager (ClaudeCodeProvider) automatically.
             var fullResponse = ""
             var hadExplicitError = false

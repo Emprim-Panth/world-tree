@@ -283,7 +283,7 @@ class ContextInspectorViewModel: ObservableObject {
 
     /// Derive a human-readable title from the content of a system block.
     private func systemBlockTitle(for text: String, index: Int) -> String {
-        if text.contains("You are Cortana") || text.contains("You are Friday") || text.contains("First Officer") {
+        if text.contains("You are Cortana") || text.contains("First Officer") {
             return "\(LocalAgentIdentity.name) Identity"
         } else if text.contains("CLAUDE.md") || text.contains("Operating Principles") {
             return "CLAUDE.md Instructions"

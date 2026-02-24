@@ -715,13 +715,13 @@ struct SettingsView: View {
 
     // MARK: - Connection
 
-    @AppStorage(CortanaConstants.fridayChannelEnabledKey) private var fridayEnabled = true
+    @AppStorage(CortanaConstants.daemonChannelEnabledKey) private var daemonEnabled = true
     @StateObject private var daemonService = DaemonService.shared
 
     private var connectionTab: some View {
         Form {
-            Section("Friday (openClaude Daemon)") {
-                Toggle("Route messages through Friday", isOn: $fridayEnabled)
+            Section("Daemon Channel (openClaude)") {
+                Toggle("Route messages through daemon", isOn: $daemonEnabled)
 
                 HStack(spacing: 6) {
                     Circle()
@@ -734,9 +734,9 @@ struct SettingsView: View {
                         .foregroundStyle(daemonService.isConnected ? .primary : .secondary)
                 }
 
-                Text(fridayEnabled && daemonService.isConnected
-                     ? "Canvas → Friday → Claude (memory + identity)"
-                     : "Direct to provider (no Friday context)")
+                Text(daemonEnabled && daemonService.isConnected
+                     ? "Canvas → Daemon → Claude (memory + identity)"
+                     : "Direct to provider (no daemon context)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

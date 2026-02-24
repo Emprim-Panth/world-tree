@@ -6,7 +6,10 @@ import GRDB
 enum MigrationManager {
 
     static func migrate(_ dbPool: DatabasePool) throws {
-        var migrator = DatabaseMigrator()
+        // Disable deferred FK checks — the database is shared with cortana-core
+        // and may have orphaned rows in tables we don't own (sessions, messages, summaries).
+        // World Tree only controls canvas_* tables.
+        var migrator = DatabaseMigrator().disablingDeferredForeignKeyChecks()
 
         // Migration 1: Canvas tree & branch tables
         migrator.registerMigration("v1_canvas_tables") { db in
@@ -168,7 +171,13 @@ enum MigrationManager {
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_events_branch_time ON canvas_events(branch_id, timestamp)")
 
             // Ensure messages table has session_id index (DB quick win)
-            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)")
+            // Guard: messages table is owned by cortana-core and may not exist in standalone databases
+            let hasMessages = try Bool.fetchOne(db, sql: """
+                SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='messages'
+                """) ?? false
+            if hasMessages {
+                try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)")
+            }
         }
 
         // Migration 7: Context checkpoints for session rotation

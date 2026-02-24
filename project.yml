@@ -62,6 +62,17 @@ targets:
       - package: CortanaCore
     entitlements:
       path: WorldTree.entitlements
+    postBuildScripts:
+      - script: |
+          # Copy built app to /Applications so Dock icon always reflects latest build
+          APP_SRC="${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app"
+          APP_DST="/Applications/${PRODUCT_NAME}.app"
+          if [ -d "$APP_SRC" ]; then
+            rm -rf "$APP_DST"
+            cp -R "$APP_SRC" "$APP_DST"
+          fi
+        name: "Install to /Applications"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.forgeandcode.world-tree

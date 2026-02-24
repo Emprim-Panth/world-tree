@@ -539,15 +539,15 @@ final class CanvasServer: ObservableObject {
 
         var fullResponse = ""
 
-        // Prefer Friday daemon for server-routed messages (full identity + memory context).
+        // Route through daemon channel if enabled and reachable.
         // Falls back to direct ProviderManager if daemon is unavailable.
-        let fridayEnabled = UserDefaults.standard.bool(forKey: CortanaConstants.fridayChannelEnabledKey)
+        let daemonEnabled = UserDefaults.standard.bool(forKey: CortanaConstants.daemonChannelEnabledKey)
         let daemonConnected = DaemonService.shared.isConnected
 
         let eventStream: AsyncStream<BridgeEvent>
-        if fridayEnabled && daemonConnected {
-            canvasLog("[CanvasServer] Routing through Friday daemon")
-            eventStream = await FridayChannel.shared.send(
+        if daemonEnabled && daemonConnected {
+            canvasLog("[CanvasServer] Routing through daemon channel")
+            eventStream = await DaemonChannel.shared.send(
                 text: content,
                 project: project,
                 branchId: resolved.branchId,
