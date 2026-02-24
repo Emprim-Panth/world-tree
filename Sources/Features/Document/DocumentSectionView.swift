@@ -465,16 +465,26 @@ struct MarkdownCodeFenceView: View {
         case codeBlock(String, String)
     }
 
+    /// Split a prose string at paragraph boundaries (\n\n) into individual segments.
+    /// This lets the VStack put visible spacing between paragraphs instead of
+    /// rendering everything as one unbroken block of text.
+    private func proseSegments(_ text: String) -> [Segment] {
+        text.components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .newlines) }
+            .filter { !$0.isEmpty }
+            .map { .prose($0) }
+    }
+
     private func parseSegments(_ text: String) -> [Segment] {
         var segments: [Segment] = []
         var remaining = text[text.startIndex...]
 
         while !remaining.isEmpty {
             if let fenceStart = remaining.range(of: "```") {
-                // Text before the fence
+                // Text before the fence — split into paragraphs
                 let before = String(remaining[remaining.startIndex..<fenceStart.lowerBound])
                 if !before.isEmpty {
-                    segments.append(.prose(before))
+                    segments.append(contentsOf: proseSegments(before))
                 }
 
                 // Find language tag (rest of opening line)
@@ -494,11 +504,11 @@ struct MarkdownCodeFenceView: View {
                     if remaining.hasPrefix("\n") { remaining = remaining.dropFirst() }
                 } else {
                     // Unclosed fence — treat as prose
-                    segments.append(.prose(String(remaining)))
+                    segments.append(contentsOf: proseSegments(String(remaining)))
                     break
                 }
             } else {
-                segments.append(.prose(String(remaining)))
+                segments.append(contentsOf: proseSegments(String(remaining)))
                 break
             }
         }

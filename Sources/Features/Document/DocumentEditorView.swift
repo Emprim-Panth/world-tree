@@ -1158,10 +1158,12 @@ struct StreamingSectionView: View {
         if content.isEmpty {
             Text(" ")
         } else {
+            // Use the same structured renderer as completed sections so streaming
+            // output has paragraph breaks, headers, and code blocks — not a wall of text.
             let rendered = (try? AttributedString(
                 markdown: content,
                 options: AttributedString.MarkdownParsingOptions(
-                    interpretedSyntax: .inlineOnlyPreservingWhitespace
+                    interpretedSyntax: .full
                 )
             )) ?? AttributedString(content)
             MarkdownCodeFenceView(raw: content, rendered: rendered)
