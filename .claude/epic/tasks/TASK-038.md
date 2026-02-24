@@ -1,4 +1,4 @@
-# TASK-037: Fourth audit pass: implement C-1 through L-5 fixes
+# TASK-038: Wire branch fork display: BranchLayoutView / addBranch disconnect
 
 **Status:** Done
 **Priority:** High
@@ -10,7 +10,7 @@
 
 ## Description
 
-All findings from fourth audit pass: deadlock (C-1/H-1), retain cycle (C-2), N txn (H-2), force unwrap (H-3), lock (H-4), N+1 query (H-6), stub lies (H-11), DateFormatter alloc (M-1/L-1), ISO8601 alloc (M-2), lock (M-4), thread starvation (M-5), AVSpeechDelegate (M-9), force unwrap (L-2), force cast (L-4), unused field (L-5)
+H-7/H-8: BranchLayoutView is never instantiated. SingleDocumentView renders activeBranches inline, but DocumentEditorView.requestFork adds to BranchLayoutViewModel.visibleBranches. These two branch tracking systems are disconnected — forked branches never appear in the side panel. Fix: remove one system, wire the other end-to-end (either render BranchLayoutView or route fork through SingleDocumentViewModel.addBranch).
 
 ---
 

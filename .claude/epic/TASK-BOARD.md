@@ -27,7 +27,7 @@
 
 | ID | Title | Assignee | Started | Notes |
 |----|-------|----------|---------|-------|
-| | | | | |
+| TASK-037 | Fourth audit pass: implement C-1 through L-5 fixes | — | 2026-02-24 | |
 
 ---
 
@@ -43,7 +43,8 @@
 
 | ID | Title | Approved By | Ready Since |
 |----|-------|-------------|-------------|
-| TASK-037 | Fourth audit pass: implement C-1 through L-5 fixes | — | 2026-02-24 |
+| TASK-038 | Wire branch fork display: BranchLayoutView / addBranch disconnect | — | 2026-02-24 |
+| TASK-039 | Wire SessionRotator into active streaming pipeline | — | 2026-02-24 |
 
 ---
 
@@ -95,11 +96,11 @@
 | Status | Count |
 |--------|-------|
 | Blocked | 0 |
-| In Progress | 0 |
+| In Progress | 1 |
 | Ready for Review | 0 |
-| Ready | 1 |
+| Ready | 2 |
 | Done | 36 |
-| **Total** | **37** |
+| **Total** | **39** |
 
 ---
 

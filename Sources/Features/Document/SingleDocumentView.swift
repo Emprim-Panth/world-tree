@@ -33,12 +33,12 @@ struct SingleDocumentView: View {
                 )
 
                 // Branch columns slide in from right when created
-                if !viewModel.activeBranches.isEmpty {
+                if !viewModel.branchLayout.visibleBranches.isEmpty {
                     HStack(spacing: 0) {
                         Spacer()
 
                         // Side-by-side branch columns
-                        ForEach(viewModel.activeBranches) { branch in
+                        ForEach(viewModel.branchLayout.visibleBranches) { branch in
                             VStack(spacing: 0) {
                                 // Branch header
                                 HStack {
@@ -74,7 +74,7 @@ struct SingleDocumentView: View {
                             .transition(.move(edge: .trailing))
                         }
                     }
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.activeBranches.count)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.branchLayout.visibleBranches.count)
                 }
             }
             .frame(minHeight: 200)
@@ -144,8 +144,6 @@ struct SingleDocumentView: View {
 
 @MainActor
 class SingleDocumentViewModel: ObservableObject {
-    @Published var activeBranches: [Branch] = []
-
     let treeId: String
     let mainBranchId: String         // branch.id (used for terminal routing)
     let mainBranchSessionId: String  // branch.sessionId (used for DB queries)
@@ -220,13 +218,9 @@ class SingleDocumentViewModel: ObservableObject {
     }
 
     func closeBranch(_ branchId: String) {
-        activeBranches.removeAll { $0.id == branchId }
+        branchLayout.visibleBranches.removeAll { $0.id == branchId }
         // Terminate the PTY process so the zsh doesn't accumulate indefinitely
         BranchTerminalManager.shared.terminate(branchId: branchId)
-    }
-
-    func addBranch(_ branch: Branch) {
-        activeBranches.append(branch)
     }
 }
 

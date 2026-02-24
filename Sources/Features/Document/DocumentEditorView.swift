@@ -197,6 +197,10 @@ struct DocumentEditorView: View {
                             guard !newBranchId.isEmpty,
                                   let treeId = viewModel.treeId else { return }
                             AppState.shared.selectBranch(newBranchId, in: treeId)
+                            // Open as side panel — load branch and add to the shared layout
+                            if let branch = try? TreeStore.shared.getBranch(newBranchId) {
+                                viewModel.parentBranchLayout?.visibleBranches.append(branch)
+                            }
                         }
                     )
                 }
@@ -339,6 +343,11 @@ class DocumentEditorViewModel: ObservableObject {
     /// nil = no send yet this launch (treat as stale).
     private var lastSendTimestamp: Date?
     private static let sessionStaleInterval: TimeInterval = 15 * 60  // 15 min
+
+    /// Checkpoint summary from the last SessionRotator rotation.
+    /// Non-nil means the CLI session was just compacted — next processUserInput will
+    /// inject this as priority context then clear it.
+    private var checkpointContext: String?
     /// Stable UUID per message ID — prevents random UUIDs being generated each
     /// render cycle when msg.id is an integer string (not a UUID string).
     private var stableSectionIds: [String: UUID] = [:]
@@ -784,6 +793,11 @@ class DocumentEditorViewModel: ObservableObject {
             } ?? true  // nil = first send this launch
             lastSendTimestamp = now
 
+            // Consume any rotation checkpoint before building context — cleared here so
+            // it's used exactly once (this request) even if the request fails mid-stream.
+            let rotationCheckpoint = checkpointContext
+            checkpointContext = nil
+
             let allSections = document.sections
             let maxAdditional = isSessionStale ? 8 : 2   // 12 total stale, 6 total active
             let contextSections = ConversationScorer.select(
@@ -794,6 +808,14 @@ class DocumentEditorViewModel: ObservableObject {
             )
 
             let recentContext: String? = {
+                // If the session was just rotated, the checkpoint is the most accurate
+                // summary of the full conversation. Use it as primary context.
+                if let checkpoint = rotationCheckpoint {
+                    canvasLog("[DocumentEditor] Using rotation checkpoint as context (\(checkpoint.count) chars)")
+                    return "CONTEXT CHECKPOINT (conversation was compacted — use this as your memory of earlier work):\n"
+                        + checkpoint
+                        + "\nEND CHECKPOINT"
+                }
                 guard !contextSections.isEmpty else { return nil }
                 let lines = contextSections.map { section -> String in
                     let role: String
@@ -921,6 +943,24 @@ class DocumentEditorViewModel: ObservableObject {
             // Clean completion — delete the temp file (nothing to recover)
             // Actor serialises this after any pending appendToStream calls finish
             await StreamCacheManager.shared.closeStream(sessionId: sessionId)
+
+            // Check if context rotation is needed after this exchange.
+            // Uses ClaudeCodeProvider.rotateSession() to clear the CLI session mapping —
+            // only meaningful for the ClaudeCode provider path.
+            if let codeProvider = ProviderManager.shared.activeProvider as? ClaudeCodeProvider {
+                let allMessages = (try? MessageStore.shared.getMessages(sessionId: sessionId)) ?? []
+                let toolCount = EventStore.shared.activityCount(branchId: branchId, minutes: 60)
+                if let checkpoint = await SessionRotator.rotateIfNeeded(
+                    sessionId: sessionId,
+                    branchId: branchId,
+                    messages: allMessages,
+                    toolEventCount: toolCount,
+                    provider: codeProvider
+                ) {
+                    checkpointContext = checkpoint
+                    canvasLog("[DocumentEditor] Rotation triggered — checkpoint ready for next send")
+                }
+            }
 
             // Update local context cache so next request builds context from SSD, not Dropbox
             let cacheLimit = await StreamCacheManager.shared.contextMessageLimit

@@ -1,4 +1,4 @@
-# TASK-037: Fourth audit pass: implement C-1 through L-5 fixes
+# TASK-039: Wire SessionRotator into active streaming pipeline
 
 **Status:** Done
 **Priority:** High
@@ -10,7 +10,7 @@
 
 ## Description
 
-All findings from fourth audit pass: deadlock (C-1/H-1), retain cycle (C-2), N txn (H-2), force unwrap (H-3), lock (H-4), N+1 query (H-6), stub lies (H-11), DateFormatter alloc (M-1/L-1), ISO8601 alloc (M-2), lock (M-4), thread starvation (M-5), AVSpeechDelegate (M-9), force unwrap (L-2), force cast (L-4), unused field (L-5)
+H-9: SessionRotator (Sources/Core/Context/SessionRotator.swift) is only called from _Archive/OldCanvas/BranchViewModel.swift. Active streaming pipeline never calls rotateIfNeeded. Should be called in DocumentEditorViewModel or wherever context pressure is evaluated during active Claude sessions.
 
 ---
 
