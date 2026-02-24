@@ -1385,7 +1385,7 @@ struct UserInputArea: View {
                         )
                         .focused($editorFocused)
                     }
-                    .frame(minHeight: 60)
+                    .frame(minHeight: 36, maxHeight: 200)
                     .background(isDragTargeted
                         ? Color.accentColor.opacity(0.08)
                         : Color(nsColor: .controlBackgroundColor))

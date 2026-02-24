@@ -23,7 +23,29 @@ struct KeyboardHandlingTextEditor: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
 
+        // Allow the text view to resize vertically with content so
+        // sizeThatFits can report the natural line height to SwiftUI.
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.heightTracksTextView = false
+
         return scrollView
+    }
+
+    /// Reports content height to SwiftUI so the enclosing frame can size itself.
+    /// Called each layout pass; the parent ZStack caps this at maxHeight: 200.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView scrollView: NSScrollView, context: Context) -> CGSize? {
+        guard let textView = scrollView.documentView as? NSTextView,
+              let container = textView.textContainer,
+              let manager = textView.layoutManager else {
+            return CGSize(width: proposal.width ?? 0, height: 36)
+        }
+        manager.ensureLayout(for: container)
+        let usedHeight = manager.usedRect(for: container).height
+        let inset = textView.textContainerInset
+        let natural = usedHeight + inset.height * 2 + 4
+        return CGSize(width: proposal.width ?? 0, height: max(36, natural))
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
