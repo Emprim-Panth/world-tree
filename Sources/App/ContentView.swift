@@ -3,7 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
     @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
-    @ObservedObject private var approvalCoordinator = ApprovalCoordinator.shared
+    @StateObject private var approvalCoordinator = ApprovalCoordinator.shared
 
     var body: some View {
         Group {

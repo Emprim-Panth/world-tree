@@ -7,8 +7,8 @@ struct SettingsView: View {
     @AppStorage("daemonSocketPath") private var daemonSocketPath = CortanaConstants.daemonSocketPath
     @AppStorage("defaultModel") private var defaultModel = CortanaConstants.defaultModel
     @AppStorage("contextDepth") private var contextDepth = CortanaConstants.defaultContextDepth
-    @ObservedObject private var providerManager = ProviderManager.shared
-    @ObservedObject private var server = CanvasServer.shared
+    @StateObject private var providerManager = ProviderManager.shared
+    @StateObject private var server = CanvasServer.shared
 
     var body: some View {
         TabView {
@@ -156,7 +156,7 @@ struct SettingsView: View {
 
     // MARK: - General
 
-    @ObservedObject private var appState = AppState.shared
+    @StateObject private var appState = AppState.shared
 
     private var generalTab: some View {
         Form {
@@ -262,7 +262,7 @@ struct SettingsView: View {
     @AppStorage(CanvasServer.tokenKey) private var serverToken = ""
     @AppStorage(CanvasServer.bonjourEnabledKey) private var bonjourEnabled = true
     @AppStorage(PluginServer.enabledKey) private var pluginEnabled = true
-    @ObservedObject private var pluginServer = PluginServer.shared
+    @StateObject private var pluginServer = PluginServer.shared
     @State private var tokenInput = ""
     @State private var showToken = false
     @State private var showRegenConfirm = false
@@ -716,7 +716,7 @@ struct SettingsView: View {
     // MARK: - Connection
 
     @AppStorage(CortanaConstants.fridayChannelEnabledKey) private var fridayEnabled = true
-    @ObservedObject private var daemonService = DaemonService.shared
+    @StateObject private var daemonService = DaemonService.shared
 
     private var connectionTab: some View {
         Form {

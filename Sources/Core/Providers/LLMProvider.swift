@@ -29,11 +29,19 @@ protocol LLMProvider: AnyObject {
     /// Pre-warm context for a session so the first message has zero cold-start delay.
     /// Called when a conversation is opened, before any message is sent.
     func warmUp(sessionId: String, branchId: String, project: String?, workingDirectory: String?) async
+
+    /// Rotate the CLI session mapping for the given canvas session.
+    /// Only meaningful for providers that maintain persistent CLI sessions.
+    func rotateSession(for sessionId: String)
 }
 
 extension LLMProvider {
     func warmUp(sessionId: String, branchId: String, project: String?, workingDirectory: String?) async {
         // Default: no-op. Providers without state management don't need this.
+    }
+
+    func rotateSession(for sessionId: String) {
+        // Default: no-op. Providers without session mapping don't need this.
     }
 }
 

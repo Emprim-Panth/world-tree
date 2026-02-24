@@ -25,12 +25,14 @@ struct DocumentEditorView: View {
     @State private var searchQuery = ""
     @State private var isAtBottom = true
 
+    let branchId: String
     var parentBranchLayout: BranchLayoutViewModel?
 
     init(sessionId: String,
          branchId: String,
          workingDirectory: String,
          parentBranchLayout: BranchLayoutViewModel? = nil) {
+        self.branchId = branchId
         self.parentBranchLayout = parentBranchLayout
         _viewModel = StateObject(wrappedValue: DocumentEditorViewModel(
             sessionId: sessionId,
@@ -255,6 +257,11 @@ struct DocumentEditorView: View {
                     viewModel.currentInput = choice
                     viewModel.submitInput()
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .forkLastMessage)) { note in
+                    guard let targetBranchId = note.object as? String,
+                          targetBranchId == branchId else { return }
+                    viewModel.forkFromLastMessage()
+                }
             }
         }
     }
@@ -353,6 +360,8 @@ class DocumentEditorViewModel: ObservableObject {
     private var stableSectionIds: [String: UUID] = [:]
     /// GRDB ValueObservation cancellable — auto-cancels when view model is deallocated.
     private var messageObservation: AnyDatabaseCancellable?
+    /// Retry counter for loadDocument() — prevents infinite recursion when DB is slow to initialize.
+    private var loadRetryCount = 0
     /// Reference to the active streaming task — allows cancellation when user interrupts.
     private var streamTask: Task<Void, Never>?
     /// Routes messages through Friday daemon when available, falls back to ProviderManager.
@@ -389,12 +398,18 @@ class DocumentEditorViewModel: ObservableObject {
         guard let dbPool = DatabaseManager.shared.dbPool else {
             // Database not ready yet (app cold start — child .onAppear fires before
             // WorldTreeApp.onAppear calls setupDatabase). Retry shortly.
+            guard loadRetryCount < 10 else {
+                canvasLog("[DocumentEditor] DB not ready after 10 retries — giving up")
+                return
+            }
+            loadRetryCount += 1
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(250))
                 self?.loadDocument()
             }
             return
         }
+        loadRetryCount = 0  // reset on success
 
         let sid = sessionId  // capture value type, not self
 
@@ -574,8 +589,16 @@ class DocumentEditorViewModel: ObservableObject {
 
         // If editing user message, potentially create a branch
         if case .user = document.sections[index].author {
-            // TODO: Implement automatic branching on edit
+            if let sectionId = document.sections.indices.contains(index) ? document.sections[index].id : nil {
+                requestFork(from: sectionId)
+            }
         }
+    }
+
+    /// Fork from the last message that has a messageId — used by Cmd+B / menu bar "New Branch".
+    func forkFromLastMessage() {
+        guard let last = document.sections.last(where: { $0.messageId != nil }) else { return }
+        requestFork(from: last.id)
     }
 
     /// Open ForkMenu for the message at this section.
@@ -945,9 +968,8 @@ class DocumentEditorViewModel: ObservableObject {
             await StreamCacheManager.shared.closeStream(sessionId: sessionId)
 
             // Check if context rotation is needed after this exchange.
-            // Uses ClaudeCodeProvider.rotateSession() to clear the CLI session mapping —
-            // only meaningful for the ClaudeCode provider path.
-            if let codeProvider = ProviderManager.shared.activeProvider as? ClaudeCodeProvider {
+            // rotateSession() is a protocol method with a no-op default — works for any provider.
+            if let activeProvider = ProviderManager.shared.activeProvider {
                 let allMessages = (try? MessageStore.shared.getMessages(sessionId: sessionId)) ?? []
                 let toolCount = EventStore.shared.activityCount(branchId: branchId, minutes: 60)
                 if let checkpoint = await SessionRotator.rotateIfNeeded(
@@ -955,7 +977,7 @@ class DocumentEditorViewModel: ObservableObject {
                     branchId: branchId,
                     messages: allMessages,
                     toolEventCount: toolCount,
-                    provider: codeProvider
+                    provider: activeProvider
                 ) {
                     checkpointContext = checkpoint
                     canvasLog("[DocumentEditor] Rotation triggered — checkpoint ready for next send")
@@ -1140,9 +1162,6 @@ struct ConversationSearchBar: View {
 struct ThinkingIndicatorView: View {
     var toolDescription: String? = nil
 
-    @State private var phase = 0
-    @State private var dotTimer: Timer?
-
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Circle()
@@ -1155,18 +1174,20 @@ struct ThinkingIndicatorView: View {
                 }
 
             VStack(alignment: .leading, spacing: 2) {
-                // Three-circle dot animation — no text overflow
-                HStack(spacing: 5) {
-                    ForEach(0..<3, id: \.self) { i in
-                        Circle()
-                            .fill(Color.teal)
-                            .frame(width: 7, height: 7)
-                            .opacity(phase == i ? 1.0 : 0.3)
-                            .scaleEffect(phase == i ? 1.2 : 0.8)
-                            .animation(.easeInOut(duration: 0.25), value: phase)
+                TimelineView(.periodic(from: Date(), by: 0.4)) { context in
+                    let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.4) % 3
+                    HStack(spacing: 5) {
+                        ForEach(0..<3, id: \.self) { i in
+                            Circle()
+                                .fill(Color.teal)
+                                .frame(width: 7, height: 7)
+                                .opacity(phase == i ? 1.0 : 0.3)
+                                .scaleEffect(phase == i ? 1.2 : 0.8)
+                                .animation(.easeInOut(duration: 0.25), value: phase)
+                        }
                     }
+                    .padding(.top, 12)
                 }
-                .padding(.top, 12)
 
                 if let description = toolDescription {
                     Text(description)
@@ -1176,15 +1197,6 @@ struct ThinkingIndicatorView: View {
                 }
             }
             .padding(.vertical, 4)
-        }
-        .onAppear {
-            dotTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
-                phase = (phase + 1) % 3
-            }
-        }
-        .onDisappear {
-            dotTimer?.invalidate()
-            dotTimer = nil
         }
     }
 }

@@ -262,10 +262,14 @@ final class SidebarViewModel: ObservableObject {
         let observation = ValueObservation.tracking { db -> [ConversationTree] in
             let sql = """
                 SELECT t.*,
-                    (SELECT COUNT(*) FROM canvas_branches b
-                     JOIN messages m ON m.session_id = b.session_id
-                     WHERE b.tree_id = t.id) as message_count
+                    COALESCE(msg_agg.message_count, 0) as message_count
                 FROM canvas_trees t
+                LEFT JOIN (
+                    SELECT b.tree_id, COUNT(m.id) as message_count
+                    FROM canvas_branches b
+                    JOIN messages m ON m.session_id = b.session_id
+                    GROUP BY b.tree_id
+                ) msg_agg ON msg_agg.tree_id = t.id
                 WHERE t.archived = 0
                 ORDER BY t.updated_at DESC
                 """
@@ -276,24 +280,28 @@ final class SidebarViewModel: ObservableObject {
             }
         }
 
-        self.observation = observation.start(in: dbPool, onError: { [weak self] error in
-            Task { @MainActor [weak self] in
-                self?.error = error.localizedDescription
-            }
-        }, onChange: { [weak self] trees in
-            Task { @MainActor in
-                guard let self else { return }
-                // Restore previously-loaded branches — the observation query doesn't
-                // include branches, so each refresh would wipe them without this.
-                var restored = trees
-                for i in restored.indices {
-                    if let cached = self.cachedBranches[restored[i].id] {
-                        restored[i].branches = cached
-                    }
+        self.observation = observation.start(
+            in: dbPool,
+            scheduling: .async(onQueue: .main),
+            onError: { [weak self] error in
+                Task { @MainActor [weak self] in
+                    self?.error = error.localizedDescription
                 }
-                self.trees = restored
+            }, onChange: { [weak self] trees in
+                Task { @MainActor in
+                    guard let self else { return }
+                    // Restore previously-loaded branches — the observation query doesn't
+                    // include branches, so each refresh would wipe them without this.
+                    var restored = trees
+                    for i in restored.indices {
+                        if let cached = self.cachedBranches[restored[i].id] {
+                            restored[i].branches = cached
+                        }
+                    }
+                    self.trees = restored
+                }
             }
-        })
+        )
     }
 
     /// Cache loaded branches for a tree so they survive GRDB observation refreshes.

@@ -133,6 +133,11 @@ class VoiceControlViewModel: ObservableObject {
             name: VoiceService.voiceError, object: nil)
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        levelTimer?.invalidate()
+    }
+
     @objc private func handleTranscription(_ notification: Notification) {
         currentTranscription = notification.userInfo?["text"] as? String ?? ""
     }

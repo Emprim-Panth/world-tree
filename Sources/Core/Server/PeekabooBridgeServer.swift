@@ -22,10 +22,13 @@ final class PeekabooBridgeServer {
     private let socketPath: String
     private var serverFD: Int32 = -1
     private(set) var isRunning = false
+    private let lock = NSLock()
+    private let connectionSemaphore = DispatchSemaphore(value: 16)
 
     private init() {
         let appSupport = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         let claudeDir = appSupport.appendingPathComponent("Claude")
         try? FileManager.default.createDirectory(at: claudeDir, withIntermediateDirectories: true)
         socketPath = claudeDir.appendingPathComponent("bridge.sock").path
@@ -34,7 +37,9 @@ final class PeekabooBridgeServer {
     // MARK: - Lifecycle
 
     func start() {
-        guard !isRunning else { return }
+        lock.lock()
+        guard !isRunning else { lock.unlock(); return }
+        lock.unlock()
 
         // Clean up stale socket from a previous run.
         try? FileManager.default.removeItem(atPath: socketPath)
@@ -44,7 +49,6 @@ final class PeekabooBridgeServer {
             canvasLog("[PeekabooBridge] socket() failed errno=\(errno)")
             return
         }
-        serverFD = fd
 
         // Copy socket path into sun_path (fixed-length C char tuple).
         var addr = sockaddr_un()
@@ -70,15 +74,24 @@ final class PeekabooBridgeServer {
             close(fd); return
         }
 
+        lock.lock()
+        serverFD = fd
         isRunning = true
+        lock.unlock()
+
         canvasLog("[PeekabooBridge] Ready at \(socketPath)")
 
         Thread.detachNewThread { [weak self] in self?.acceptLoop() }
     }
 
     func stop() {
+        lock.lock()
         isRunning = false
-        if serverFD >= 0 { close(serverFD); serverFD = -1 }
+        let fdToClose = serverFD
+        serverFD = -1
+        lock.unlock()
+
+        if fdToClose >= 0 { close(fdToClose) }
         try? FileManager.default.removeItem(atPath: socketPath)
         canvasLog("[PeekabooBridge] Stopped")
     }
@@ -86,15 +99,23 @@ final class PeekabooBridgeServer {
     // MARK: - Accept Loop  (background thread)
 
     private func acceptLoop() {
-        while isRunning {
+        while true {
+            lock.lock()
+            let running = isRunning
+            let currentFD = serverFD
+            lock.unlock()
+            guard running else { break }
+
             var clientAddr = sockaddr_un()
             var clientLen = socklen_t(MemoryLayout<sockaddr_un>.stride)
+            // accept() blocks; lock must NOT be held here.
             let clientFD = withUnsafeMutablePointer(to: &clientAddr) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    accept(serverFD, $0, &clientLen)
+                    accept(currentFD, $0, &clientLen)
                 }
             }
             guard clientFD >= 0 else { continue }
+            connectionSemaphore.wait()
             Thread.detachNewThread { self.handleClient(fd: clientFD) }
         }
     }
@@ -102,7 +123,7 @@ final class PeekabooBridgeServer {
     // MARK: - Client Handler  (background thread)
 
     private func handleClient(fd: Int32) {
-        defer { close(fd) }
+        defer { connectionSemaphore.signal(); close(fd) }
         canvasLog("[PeekabooBridge] Client connected fd=\(fd)")
 
         var buffer = Data()
@@ -212,18 +233,19 @@ final class PeekabooBridgeServer {
         let sem = DispatchSemaphore(value: 0)
         var result: Data?
 
-        // Task runs on the cooperative thread pool; SCK APIs work from any thread.
-        Task {
+        // Task.detached prevents cancellation propagation from any parent task context.
+        // SCK APIs work from any thread.
+        Task.detached { [self] in
             do {
                 let content = try await SCShareableContent.current
-                let cgImage = try await pickAndCapture(
+                let cgImage = try await self.pickAndCapture(
                     content: content, windowID: windowID, bundleID: bundleID)
-                result = encodeCapture(cgImage)
+                result = self.encodeCapture(cgImage)
             } catch {
                 let msg = "[PeekabooBridge] SCK capture error: \(error)"
                 canvasLog(msg)
                 try? (msg + "\n").appendToFile(atPath: "/tmp/peekaboo_bridge.log")
-                result = respondError("captureFailed", error.localizedDescription)
+                result = self.respondError("captureFailed", error.localizedDescription)
             }
             sem.signal()
         }

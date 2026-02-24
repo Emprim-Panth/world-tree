@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ProviderBadge: View {
-    @ObservedObject private var providerManager = ProviderManager.shared
+    @StateObject private var providerManager = ProviderManager.shared
 
     var body: some View {
         Text(providerManager.activeProviderBadge)

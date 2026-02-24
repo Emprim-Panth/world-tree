@@ -133,6 +133,13 @@ struct SingleDocumentView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .createNewBranch)) { _ in
+            // Route to the main document editor to fork from its last message
+            NotificationCenter.default.post(
+                name: .forkLastMessage,
+                object: viewModel.mainBranchId
+            )
+        }
         // NOTE: Terminals are intentionally NOT terminated on disappear.
         // BranchTerminalManager owns the PTY processes for their full lifetime —
         // they survive branch switching, sidebar navigation, and view recreation.

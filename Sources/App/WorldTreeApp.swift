@@ -163,4 +163,5 @@ extension Notification.Name {
     static let createNewTree = Notification.Name("createNewTree")
     static let createNewBranch = Notification.Name("createNewBranch")
     static let showConversationSearch = Notification.Name("showConversationSearch")
+    static let forkLastMessage = Notification.Name("forkLastMessage")
 }

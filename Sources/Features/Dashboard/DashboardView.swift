@@ -93,6 +93,9 @@ struct DashboardView: View {
             loadData()
             daemonService.startMonitoring()
         }
+        .onDisappear {
+            daemonService.stopMonitoring()
+        }
     }
 
     private func loadData() {

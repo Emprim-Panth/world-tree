@@ -91,7 +91,11 @@ final class CanvasServer: ObservableObject {
                     case .failed(let error):
                         self.isRunning = false
                         self.lastError = error.localizedDescription
-                        canvasLog("[CanvasServer] Failed: \(error)")
+                        canvasLog("[CanvasServer] Failed: \(error) — restarting in 5s")
+                        Task { @MainActor [weak self] in
+                            try? await Task.sleep(for: .seconds(5))
+                            self?.start()
+                        }
                     case .cancelled:
                         self.isRunning = false
                         canvasLog("[CanvasServer] Stopped")
@@ -258,7 +262,7 @@ final class CanvasServer: ObservableObject {
         // Extract remote IP for rate limiting (best-effort — may be nil for Unix sockets)
         let remoteIP = Self.remoteIP(from: connection)
         // Hand off to nonisolated receive loop
-        Self.receiveData(from: connection, token: configuredToken, remoteIP: remoteIP, accumulated: Data())
+        Self.receiveData(from: connection, token: configuredToken, remoteIP: remoteIP, accumulated: Data(), server: self)
     }
 
     /// Extract the dotted-decimal (or colon-delimited) IP from an NWConnection endpoint.
@@ -283,7 +287,8 @@ final class CanvasServer: ObservableObject {
         from connection: NWConnection,
         token: String,
         remoteIP: String,
-        accumulated: Data
+        accumulated: Data,
+        server: CanvasServer
     ) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { chunk, _, isComplete, error in
             if let error {
@@ -299,7 +304,7 @@ final class CanvasServer: ObservableObject {
             let terminator = Data("\r\n\r\n".utf8)
             guard let headerEnd = buffer.range(of: terminator) else {
                 if isComplete { connection.cancel() }
-                else { receiveData(from: connection, token: token, remoteIP: remoteIP, accumulated: buffer) }
+                else { receiveData(from: connection, token: token, remoteIP: remoteIP, accumulated: buffer, server: server) }
                 return
             }
 
@@ -309,12 +314,12 @@ final class CanvasServer: ObservableObject {
             let bodyReceived = buffer.count - headerEnd.upperBound
 
             if bodyReceived >= contentLength {
-                Task { @MainActor in
-                    await CanvasServer.shared.handleRawRequest(
+                Task { @MainActor [weak server] in
+                    await server?.handleRawRequest(
                         buffer, connection: connection, expectedToken: token, remoteIP: remoteIP)
                 }
             } else {
-                receiveData(from: connection, token: token, remoteIP: remoteIP, accumulated: buffer)
+                receiveData(from: connection, token: token, remoteIP: remoteIP, accumulated: buffer, server: server)
             }
         }
     }
@@ -1031,8 +1036,11 @@ extension CanvasServer {
 
         canvasLog("[CanvasServer] WS[\(clientId.prefix(8))] send_message to branch:\(req.branchId.prefix(8))")
 
-        // Persist user message
-        _ = try? MessageStore.shared.sendMessage(sessionId: sessionId, role: .user, content: req.content)
+        // Persist user message — if this fails, do NOT dispatch to LLM
+        guard let _ = try? MessageStore.shared.sendMessage(sessionId: sessionId, role: .user, content: req.content) else {
+            sendWSError(to: clientId, code: "persist_failed", message: "Failed to save message — not sent to AI", id: message.id)
+            return
+        }
 
         // Acknowledge receipt immediately so the client knows the message was accepted
         let ack = WSMessage(type: "message_received", id: message.id)
@@ -1231,13 +1239,17 @@ extension CanvasServer {
                 Task { @MainActor [weak self] in self?.handleNativeWSConnection(connection) }
             }
 
-            wsl.stateUpdateHandler = { state in
-                Task { @MainActor in
+            wsl.stateUpdateHandler = { [weak self] state in
+                Task { @MainActor [weak self] in
                     switch state {
                     case .ready:
                         canvasLog("[CanvasServer] Native WS ready on port \(Self.wsPort)")
                     case .failed(let error):
-                        canvasLog("[CanvasServer] Native WS failed: \(error)")
+                        canvasLog("[CanvasServer] Native WS failed: \(error) — restarting in 5s")
+                        Task { @MainActor [weak self] in
+                            try? await Task.sleep(for: .seconds(5))
+                            self?.startNativeWSListener()
+                        }
                     case .cancelled:
                         canvasLog("[CanvasServer] Native WS stopped")
                     default:

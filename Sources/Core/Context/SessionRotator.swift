@@ -23,7 +23,7 @@ enum SessionRotator {
         branchId: String,
         messages: [Message],
         toolEventCount: Int,
-        provider: ClaudeCodeProvider
+        provider: any LLMProvider
     ) async -> String? {
         let (tokens, level) = ContextPressureEstimator.estimate(
             messages: messages,
@@ -51,7 +51,7 @@ enum SessionRotator {
     static func forceRotate(
         sessionId: String,
         branchId: String,
-        provider: ClaudeCodeProvider
+        provider: any LLMProvider
     ) async -> String? {
         let messages = (try? MessageStore.shared.getMessages(sessionId: sessionId)) ?? []
         let eventCount = EventStore.shared.activityCount(branchId: branchId, minutes: 999_999)
@@ -73,7 +73,7 @@ enum SessionRotator {
         branchId: String,
         estimatedTokens: Int,
         messageCount: Int,
-        provider: ClaudeCodeProvider
+        provider: any LLMProvider
     ) async -> String? {
         // 1. Generate checkpoint summary
         guard let checkpoint = await BranchSummarizer.shared.checkpoint(sessionId: sessionId) else {

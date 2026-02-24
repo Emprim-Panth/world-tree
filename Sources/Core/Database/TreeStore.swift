@@ -35,24 +35,36 @@ final class TreeStore {
 
     func listTrees(includeArchived: Bool = false) throws -> [ConversationTree] {
         try db.read { db in
-            var sql = """
+            let archiveFilter = includeArchived ? "" : "WHERE t.archived = 0"
+            let sql = """
                 SELECT t.*,
-                    (SELECT COUNT(*) FROM canvas_branches b
-                     JOIN sessions s ON b.session_id = s.id
-                     JOIN messages m ON m.session_id = s.id
-                     WHERE b.tree_id = t.id) as message_count,
-                    (SELECT COUNT(*) FROM canvas_branches b
-                     WHERE b.tree_id = t.id AND b.status = 'active') as branch_count,
-                    (SELECT m.content FROM messages m
-                     JOIN canvas_branches b ON m.session_id = b.session_id
-                     WHERE b.tree_id = t.id AND m.role = 'assistant'
-                     ORDER BY m.timestamp DESC LIMIT 1) as last_message_snippet
+                    COALESCE(msg_agg.message_count, 0) as message_count,
+                    COALESCE(br_agg.branch_count, 0) as branch_count,
+                    last_msg.content as last_message_snippet
                 FROM canvas_trees t
+                LEFT JOIN (
+                    SELECT b.tree_id, COUNT(m.id) as message_count
+                    FROM canvas_branches b
+                    JOIN messages m ON m.session_id = b.session_id
+                    GROUP BY b.tree_id
+                ) msg_agg ON msg_agg.tree_id = t.id
+                LEFT JOIN (
+                    SELECT tree_id, COUNT(*) as branch_count
+                    FROM canvas_branches
+                    WHERE status = 'active'
+                    GROUP BY tree_id
+                ) br_agg ON br_agg.tree_id = t.id
+                LEFT JOIN (
+                    SELECT b.tree_id, m.content
+                    FROM messages m
+                    JOIN canvas_branches b ON m.session_id = b.session_id
+                    WHERE m.role = 'assistant'
+                    GROUP BY b.tree_id
+                    HAVING m.timestamp = MAX(m.timestamp)
+                ) last_msg ON last_msg.tree_id = t.id
+                \(archiveFilter)
+                ORDER BY t.updated_at DESC
                 """
-            if !includeArchived {
-                sql += " WHERE t.archived = 0"
-            }
-            sql += " ORDER BY t.updated_at DESC"
 
             return try Row.fetchAll(db, sql: sql).map { row in
                 var tree = ConversationTree(row: row)
@@ -202,24 +214,38 @@ final class TreeStore {
     }
 
     /// Executes the cascade delete for a single tree inside an already-open GRDB write transaction.
+    /// FK-safe order: messages → canvas_branches → sessions → canvas_trees
     private static func deleteTreeContents(db: Database, treeId: String) throws {
-        try db.execute(
-            sql: """
-                DELETE FROM messages WHERE session_id IN (
-                    SELECT session_id FROM canvas_branches WHERE tree_id = ?
-                )
-                """,
+        // Collect session IDs before any deletes (branches are the FK source)
+        let sessionRows = try Row.fetchAll(
+            db,
+            sql: "SELECT session_id FROM canvas_branches WHERE tree_id = ?",
             arguments: [treeId]
         )
-        try db.execute(
-            sql: """
-                DELETE FROM sessions WHERE id IN (
-                    SELECT session_id FROM canvas_branches WHERE tree_id = ?
-                )
-                """,
-            arguments: [treeId]
-        )
+        let sessionIds: [String] = sessionRows.compactMap { $0["session_id"] }
+
+        // 1. Delete messages (references sessions via session_id)
+        if !sessionIds.isEmpty {
+            let placeholders = sessionIds.map { _ in "?" }.joined(separator: ", ")
+            try db.execute(
+                sql: "DELETE FROM messages WHERE session_id IN (\(placeholders))",
+                arguments: StatementArguments(sessionIds)
+            )
+        }
+
+        // 2. Delete canvas_branches (references sessions and canvas_trees)
         try db.execute(sql: "DELETE FROM canvas_branches WHERE tree_id = ?", arguments: [treeId])
+
+        // 3. Delete sessions (now safe — no branches reference them)
+        if !sessionIds.isEmpty {
+            let placeholders = sessionIds.map { _ in "?" }.joined(separator: ", ")
+            try db.execute(
+                sql: "DELETE FROM sessions WHERE id IN (\(placeholders))",
+                arguments: StatementArguments(sessionIds)
+            )
+        }
+
+        // 4. Delete the tree (now safe — no branches reference it)
         try db.execute(sql: "DELETE FROM canvas_trees WHERE id = ?", arguments: [treeId])
     }
 
@@ -490,11 +516,16 @@ final class TreeStore {
     static func buildBranchTree(from branches: [Branch]) -> [Branch] {
         guard !branches.isEmpty else { return [] }
 
+        // Build O(1) parent lookup — avoids O(n) scan per depth computation
+        let parentLookup: [String: String?] = Dictionary(
+            uniqueKeysWithValues: branches.map { ($0.id, $0.parentBranchId) }
+        )
+
         // Pass 1: compute depth by walking each branch's parent chain
         var depthCache: [String: Int] = [:]
         func computeDepth(id: String) -> Int {
             if let d = depthCache[id] { return d }
-            let parent = branches.first { $0.id == id }?.parentBranchId
+            let parent = parentLookup[id] ?? nil
             let d = parent.map { computeDepth(id: $0) + 1 } ?? 0
             depthCache[id] = d
             return d

@@ -98,9 +98,7 @@ final class AnthropicAPIProvider: LLMProvider {
                     let selectedModel = context.model ?? CortanaConstants.defaultModel
                     let cwd = resolveWorkingDirectory(context.workingDirectory, project: context.project)
                     // Pass the branch's tmux session name so bash tool calls run visibly in the terminal
-                    let tmuxSession = await MainActor.run {
-                        BranchTerminalManager.shared.sessionName(for: context.branchId)
-                    }
+                    let tmuxSession = BranchTerminalManager.shared.sessionName(for: context.branchId)
                     let executor = ToolExecutor(
                         workingDirectory: URL(fileURLWithPath: cwd),
                         tmuxSessionName: tmuxSession,
@@ -235,7 +233,8 @@ final class AnthropicAPIProvider: LLMProvider {
 
                     state.recordUsage(cumulativeUsage)
                     try? state.persist()
-                    continuation.yield(.done(usage: state.tokenUsage))
+                    let finalUsage = state.tokenUsage
+                    continuation.yield(.done(usage: finalUsage))
                     continuation.finish()
                 } catch {
                     canvasLog("[AnthropicAPIProvider] ERROR: \(error)")
