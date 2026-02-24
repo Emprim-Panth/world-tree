@@ -127,9 +127,8 @@ final class ClaudeBridge {
                 )
 
                 for await event in fridayStream {
-                    // If first event is an error, fall through to direct provider
-                    if case .error(let msg) = event, !receivedContent,
-                       msg.contains("daemon not available") || msg.contains("Connection") {
+                    // If first event is an error (before any content), fall through to direct provider
+                    if case .error = event, !receivedContent {
                         canvasLog("[ClaudeBridge] Friday unavailable, falling back to direct provider")
                         let directStream = self.sendDirect(
                             message: message,
