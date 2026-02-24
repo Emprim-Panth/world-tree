@@ -47,7 +47,8 @@ struct SettingsView: View {
                     Label("Voice", systemImage: "speaker.wave.2")
                 }
         }
-        .frame(width: 480, height: 400)
+        .frame(width: 520)
+        .frame(minHeight: 400)
     }
 
     // MARK: - Provider

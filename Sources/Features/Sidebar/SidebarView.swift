@@ -213,7 +213,9 @@ struct SidebarView: View {
                                 }
                             }
 
-                            Spacer().frame(height: 4)
+                            Divider()
+                                .padding(.horizontal, 12)
+                                .padding(.top, 2)
                         }
                     }
                 }
@@ -262,6 +264,7 @@ struct SidebarView: View {
                         .padding(.vertical, 8)
                 }
                 .buttonStyle(.plain)
+                .help("Create a new conversation tree (⌘N)")
 
                 Divider().frame(height: 24)
 
@@ -424,7 +427,7 @@ struct SidebarView: View {
                 .cornerRadius(6)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, isBridge ? 7 : 5)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(isSelected ? accentColor.opacity(0.18) : Color.clear)
         .cornerRadius(6)

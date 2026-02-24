@@ -160,7 +160,9 @@ struct DocumentSectionView: View {
         }
         .padding(.horizontal, 0)
         .background {
-            (isHovered ? Color.blue.opacity(0.05) : Color.clear)
+            let isUser = { if case .user = section.author { return true }; return false }()
+            let base: Color = isUser ? Color.blue.opacity(0.03) : Color.clear
+            (isHovered ? Color.blue.opacity(0.05) : base)
                 .animation(.easeInOut(duration: 0.12), value: isHovered)
         }
         .contextMenu {

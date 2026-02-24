@@ -24,7 +24,6 @@ struct DocumentEditorView: View {
     @State private var showSearch = false
     @State private var searchQuery = ""
     @State private var isAtBottom = true
-    @State private var hasNewMessages = false
 
     var parentBranchLayout: BranchLayoutViewModel?
 
@@ -98,10 +97,29 @@ struct DocumentEditorView: View {
                                 .padding(.vertical, 8)
                         }
 
-                        // User input area (always at bottom)
+                        // Scroll anchor — tracks whether user is near bottom
+                        Color.clear.frame(height: 1).id("scroll-bottom")
+                            .onAppear { isAtBottom = true }
+                            .onDisappear { isAtBottom = false }
+                    }
+                    .padding(.horizontal, max(24, (geometry.size.width - 800) / 2))
+                    .padding(.vertical, 24)
+                    .environment(\.conversationHPad, max(24, (geometry.size.width - 800) / 2))
+                }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if showSearch {
+                        ConversationSearchBar(query: $searchQuery, onDismiss: {
+                            showSearch = false
+                            searchQuery = ""
+                            isFocused = true
+                        })
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .animation(.easeInOut(duration: 0.2), value: showSearch)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 0) {
                         Divider()
-                            .padding(.vertical, 16)
-
                         VStack(alignment: .leading, spacing: 8) {
                             UserInputArea(
                                 text: $viewModel.currentInput,
@@ -133,79 +151,36 @@ struct DocumentEditorView: View {
                             )
                             .focused($isFocused)
 
-                            // Branch suggestions — appear below the input as compact chips
                             if let opportunity = viewModel.branchOpportunity {
                                 BranchSuggestionChips(
                                     suggestions: opportunity.suggestions,
                                     selectedIndex: selectedSuggestionIndex,
-                                    onAccept: { suggestion in
-                                        viewModel.acceptSuggestion(suggestion)
-                                    },
-                                    onAcceptAll: {
-                                        viewModel.spawnParallelBranches()
-                                    },
-                                    onDismiss: {
-                                        viewModel.branchOpportunity = nil
-                                    }
+                                    onAccept: { suggestion in viewModel.acceptSuggestion(suggestion) },
+                                    onAcceptAll: { viewModel.spawnParallelBranches() },
+                                    onDismiss: { viewModel.branchOpportunity = nil }
                                 )
                                 .transition(.opacity.combined(with: .move(edge: .bottom)))
                             }
                         }
-                        .padding(.bottom, 24)
-
-                        // Scroll anchor — tracks whether user is near bottom
-                        Color.clear.frame(height: 1).id("scroll-bottom")
-                            .onAppear { isAtBottom = true; hasNewMessages = false }
-                            .onDisappear { isAtBottom = false }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
                     }
-                    .padding(.horizontal, max(24, (geometry.size.width - 800) / 2))
-                    .padding(.vertical, 24)
-                    .environment(\.conversationHPad, max(24, (geometry.size.width - 800) / 2))
-                }
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    if showSearch {
-                        ConversationSearchBar(query: $searchQuery, onDismiss: {
-                            showSearch = false
-                            searchQuery = ""
-                            isFocused = true
-                        })
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                    .background(.bar)
+                    // Hidden cancel button — Cmd+. stops the active stream
+                    .background {
+                        Button("") { viewModel.cancelStream() }
+                            .keyboardShortcut(".", modifiers: .command)
+                            .opacity(0)
+                            .allowsHitTesting(false)
+                    }
+                    // Cmd+L focuses the input field
+                    .background {
+                        Button("") { isFocused = true }
+                            .keyboardShortcut("l", modifiers: .command)
+                            .opacity(0)
+                            .allowsHitTesting(false)
                     }
                 }
-                .animation(.easeInOut(duration: 0.2), value: showSearch)
-                .overlay(alignment: .bottom) {
-                    // Floating scroll-to-bottom — appears when user scrolls up
-                    if !isAtBottom {
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                proxy.scrollTo("scroll-bottom", anchor: .bottom)
-                            }
-                            hasNewMessages = false
-                        } label: {
-                            HStack(spacing: 6) {
-                                if hasNewMessages {
-                                    Circle()
-                                        .fill(Color.cyan)
-                                        .frame(width: 8, height: 8)
-                                    Text("New messages")
-                                        .font(.caption)
-                                }
-                                Image(systemName: "arrow.down")
-                                    .font(.system(size: 12, weight: .semibold))
-                            }
-                            .foregroundStyle(.primary)
-                            .padding(.horizontal, hasNewMessages ? 14 : 10)
-                            .padding(.vertical, 8)
-                            .background(.ultraThinMaterial)
-                            .clipShape(Capsule())
-                            .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.bottom, 12)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                }
-                .animation(.easeInOut(duration: 0.2), value: isAtBottom)
                 .background(Color(nsColor: .textBackgroundColor))
                 .onAppear {
                     isFocused = true
@@ -229,11 +204,7 @@ struct DocumentEditorView: View {
                 // If the user scrolled up to read, we show a "new messages" indicator instead.
                 .onChange(of: viewModel.document.sections.count) { _, _ in
                     guard viewModel.streamingContent == nil, !viewModel.isProcessing else { return }
-                    if isAtBottom {
-                        proxy.scrollTo("scroll-bottom")
-                    } else {
-                        hasNewMessages = true
-                    }
+                    if isAtBottom { proxy.scrollTo("scroll-bottom") }
                 }
                 .onChange(of: viewModel.streamingContent) { _, content in
                     if content != nil {
@@ -637,6 +608,50 @@ class DocumentEditorViewModel: ObservableObject {
         submitInput()
     }
 
+    func cancelStream() {
+        if let partialContent = streamingContent, !partialContent.isEmpty {
+            streamTask?.cancel()
+            streamTask = nil
+            stopStreamBatching()
+            let partial = partialContent
+            streamingContent = nil
+            currentTool = nil
+            isProcessing = false
+            do {
+                let msg = try MessageStore.shared.sendMessage(
+                    sessionId: sessionId, role: .assistant, content: partial)
+                seenMessageIds.insert(msg.id)
+                let section = DocumentSection(
+                    id: stableId(for: msg.id),
+                    content: AttributedString(partial),
+                    author: .assistant,
+                    timestamp: msg.createdAt,
+                    branchPoint: true,
+                    isEditable: false,
+                    messageId: msg.id
+                )
+                document.sections.append(section)
+            } catch {
+                let section = DocumentSection(
+                    content: AttributedString(partial),
+                    author: .assistant,
+                    timestamp: Date(),
+                    branchPoint: true,
+                    isEditable: false
+                )
+                document.sections.append(section)
+            }
+            Task { await StreamCacheManager.shared.closeStream(sessionId: sessionId) }
+        } else if streamTask != nil {
+            streamTask?.cancel()
+            streamTask = nil
+            stopStreamBatching()
+            streamingContent = nil
+            currentTool = nil
+            isProcessing = false
+        }
+    }
+
     func submitInput() {
         let inputText = currentInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachmentSnapshot = pendingAttachments
@@ -1001,8 +1016,8 @@ class DocumentEditorViewModel: ObservableObject {
 struct EmptyConversationView: View {
     var body: some View {
         VStack(spacing: 16) {
-            Text("💠")
-                .font(.system(size: 48))
+            AuthorIndicator(author: .assistant)
+                .frame(width: 48, height: 48)
 
             Text("Start a conversation")
                 .font(.title2)
@@ -1377,7 +1392,7 @@ struct UserInputArea: View {
 
                         Button(action: onSubmit) {
                             Label(
-                                isProcessing ? "Sending…" : "Send",
+                                isProcessing ? "Thinking…" : "Send",
                                 systemImage: isProcessing ? "arrow.trianglehead.clockwise" : "paperplane.fill"
                             )
                             .font(.caption)

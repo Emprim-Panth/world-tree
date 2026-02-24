@@ -27,17 +27,17 @@ struct DashboardView: View {
                 // Status cards
                 HStack(spacing: 16) {
                     statusCard(
-                        icon: "bubble.left.and.bubble.right",
-                        title: "Trees",
-                        value: "\(treeCount)",
-                        color: .blue
-                    )
-
-                    statusCard(
                         icon: daemonService.isConnected ? "checkmark.circle" : "xmark.circle",
                         title: "Daemon",
                         value: daemonService.isConnected ? "Connected" : "Offline",
                         color: daemonService.isConnected ? .green : .red
+                    )
+
+                    statusCard(
+                        icon: "bubble.left.and.bubble.right",
+                        title: "Trees",
+                        value: "\(treeCount)",
+                        color: .blue
                     )
                 }
                 .frame(maxWidth: 500)

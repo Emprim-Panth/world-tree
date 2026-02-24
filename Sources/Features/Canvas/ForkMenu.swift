@@ -17,7 +17,7 @@ struct ForkMenu: View {
     private let models = [
         ("Auto", CortanaConstants.defaultModel),
         ("Opus", "claude-opus-4-6"),
-        ("Sonnet", "claude-sonnet-4-5-20250929"),
+        ("Sonnet", "claude-sonnet-4-6"),
         ("Haiku", "claude-haiku-4-5-20251001"),
     ]
 
@@ -62,6 +62,10 @@ struct ForkMenu: View {
                         .tag(BranchType.exploration)
                 }
                 .pickerStyle(.segmented)
+
+                Text(branchTypeDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             // Title
@@ -142,7 +146,7 @@ struct ForkMenu: View {
 
                 Spacer()
 
-                Button(branchType == .implementation ? "Dispatch" : "Create Branch") {
+                Button(isCreating ? "Creating…" : (branchType == .implementation ? "Dispatch" : "Create Branch")) {
                     createBranch()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -151,6 +155,14 @@ struct ForkMenu: View {
         }
         .padding(20)
         .frame(width: 420)
+    }
+
+    private var branchTypeDescription: String {
+        switch branchType {
+        case .conversation: return "Continue the discussion in a parallel thread."
+        case .implementation: return "Dispatch an agent to execute a task in a separate branch."
+        case .exploration: return "Investigate an idea or hypothesis without affecting the main thread."
+        }
     }
 
     private func createBranch() {
