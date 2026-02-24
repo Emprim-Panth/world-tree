@@ -64,7 +64,12 @@ actor VoiceService {
     /// userInfo: ["error": String]
     static let voiceError = Notification.Name("VoiceService.voiceError")
 
-    private init() {
+    private init() {}
+
+    /// Wire up the AVSpeechSynthesizer delegate on first use.
+    /// Called from actor-isolated context so storage is safe to access.
+    private func ensureDelegateConfigured() {
+        guard speechDelegate == nil else { return }
         let delegate = SpeechDelegate(service: self)
         speechDelegate = delegate
         synthesizer.delegate = delegate
@@ -203,6 +208,7 @@ actor VoiceService {
     }
 
     private func speakWithSystem(_ text: String, options: SpeechOptions) {
+        ensureDelegateConfigured()
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = Float(options.speed) * AVSpeechUtteranceDefaultSpeechRate
         utterance.pitchMultiplier = Float(options.pitch)
