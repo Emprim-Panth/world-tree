@@ -363,7 +363,13 @@ final class DaemonService: ObservableObject {
         }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
+        // 10s timeout — tmux should never take this long
+        let sem = DispatchSemaphore(value: 0)
+        proc.terminationHandler = { _ in sem.signal() }
+        if sem.wait(timeout: .now() + .seconds(10)) == .timedOut {
+            proc.terminate()
+            return nil
+        }
 
         guard proc.terminationStatus == 0 else { return nil }
         return String(data: data, encoding: .utf8)
@@ -384,7 +390,12 @@ final class DaemonService: ObservableObject {
 
         do {
             try proc.run()
-            proc.waitUntilExit()
+            let sem = DispatchSemaphore(value: 0)
+            proc.terminationHandler = { _ in sem.signal() }
+            if sem.wait(timeout: .now() + .seconds(5)) == .timedOut {
+                proc.terminate()
+                return false
+            }
             return proc.terminationStatus == 0
         } catch {
             return false
@@ -404,7 +415,12 @@ final class DaemonService: ObservableObject {
 
         do {
             try proc.run()
-            proc.waitUntilExit()
+            let sem = DispatchSemaphore(value: 0)
+            proc.terminationHandler = { _ in sem.signal() }
+            if sem.wait(timeout: .now() + .seconds(5)) == .timedOut {
+                proc.terminate()
+                return false
+            }
             return proc.terminationStatus == 0
         } catch {
             return false

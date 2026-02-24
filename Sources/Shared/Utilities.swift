@@ -37,10 +37,17 @@ func extractHTTPContentLength(from headers: String) -> Int {
 }
 
 /// Escape a string for safe embedding in a JSON value.
+/// Uses JSONSerialization for correct handling of all Unicode control characters.
 func escapeJSONString(_ s: String) -> String {
-    s.replacingOccurrences(of: "\\", with: "\\\\")
-     .replacingOccurrences(of: "\"", with: "\\\"")
-     .replacingOccurrences(of: "\n", with: "\\n")
-     .replacingOccurrences(of: "\r", with: "\\r")
-     .replacingOccurrences(of: "\t", with: "\\t")
+    if let data = try? JSONSerialization.data(withJSONObject: s),
+       let json = String(data: data, encoding: .utf8) {
+        // JSONSerialization wraps in quotes — strip them
+        return String(json.dropFirst().dropLast())
+    }
+    // Fallback: manual escape for the common cases
+    return s.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\t", with: "\\t")
 }

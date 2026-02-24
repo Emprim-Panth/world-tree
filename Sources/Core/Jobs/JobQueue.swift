@@ -10,6 +10,7 @@ actor JobQueue {
     private var runningProcesses: [String: Process] = [:]
     private let home = FileManager.default.homeDirectoryForCurrentUser.path
     private let maxOutputSize = 200_000 // 200KB per job
+    private let maxJobDuration: Int = 600 // 10 minutes
 
     /// Get dbPool directly (thread-safe, no actor isolation needed)
     private var dbPool: DatabasePool? {
@@ -108,11 +109,33 @@ actor JobQueue {
             return
         }
 
-        // Async wait — does not block the actor thread during job execution
+        // Async wait with timeout — does not block the actor thread during job execution
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            proc.terminationHandler = { _ in continuation.resume() }
+            var hasResumed = false
+            let lock = NSLock()
+
+            func safeResume() {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !hasResumed else { return }
+                hasResumed = true
+                continuation.resume()
+            }
+
+            let timeoutWork = DispatchWorkItem { [weak proc] in
+                if let proc, proc.isRunning {
+                    canvasLog("[JobQueue] Job \(job.id) timed out after \(self.maxJobDuration)s — terminating")
+                    proc.terminate()
+                }
+                safeResume()
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(self.maxJobDuration), execute: timeoutWork)
+
+            proc.terminationHandler = { _ in
+                timeoutWork.cancel()
+                safeResume()
+            }
         }
-        proc.terminationHandler = nil
         runningProcesses.removeValue(forKey: job.id)
 
         let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()

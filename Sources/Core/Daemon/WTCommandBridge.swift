@@ -22,8 +22,9 @@ final class WTCommandBridge: ObservableObject {
 
     private let commandsPath = WTCommandWriter.commandsPath
     private var source: DispatchSourceFileSystemObject?
-    private var fileHandle: FileHandle?
-    private var bytesRead: UInt64 = 0
+    private nonisolated(unsafe) var fileHandle: FileHandle?
+    private nonisolated(unsafe) var bytesRead: UInt64 = 0
+    private let ioLock = NSLock()
 
     private init() {}
 
@@ -67,13 +68,15 @@ final class WTCommandBridge: ObservableObject {
 
     // MARK: - Reading
 
-    private func readNewLines() {
-        guard let fh = fileHandle else { return }
+    private nonisolated func readNewLines() {
+        ioLock.lock()
+        guard let fh = fileHandle else { ioLock.unlock(); return }
         fh.seek(toFileOffset: bytesRead)
         let data = fh.readDataToEndOfFile()
-        guard !data.isEmpty else { return }
-        bytesRead += UInt64(data.count)
+        if !data.isEmpty { bytesRead += UInt64(data.count) }
+        ioLock.unlock()
 
+        guard !data.isEmpty else { return }
         let raw = String(data: data, encoding: .utf8) ?? ""
         let lines = raw.split(separator: "\n", omittingEmptySubsequences: true)
 

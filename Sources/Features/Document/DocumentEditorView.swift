@@ -235,7 +235,10 @@ struct DocumentEditorView: View {
             .background(Color(nsColor: .textBackgroundColor))
         }
     }
-}
+    }
+} // end struct DocumentEditorView
+
+// MARK: - ViewModel
 
 @MainActor
 class DocumentEditorViewModel: ObservableObject {
@@ -909,8 +912,6 @@ class DocumentEditorViewModel: ObservableObject {
             stopStreamBatching()       // flush remaining tokens, stop timer
             streamingContent = nil     // Stream complete — persisted section takes over
             hasNewStreamContent = false
-
-            watchdog.cancel()
 
             // If cancelled, skip persist — the interruption handler already saved the partial
             guard !Task.isCancelled else { return }

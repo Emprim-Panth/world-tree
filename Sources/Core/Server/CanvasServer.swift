@@ -300,6 +300,13 @@ final class CanvasServer: ObservableObject {
             var buffer = accumulated
             if let chunk { buffer.append(chunk) }
 
+            // Reject oversized requests (1 MB limit) to prevent memory exhaustion
+            if buffer.count > 1_048_576 {
+                canvasLog("[CanvasServer] Request too large (\(buffer.count) bytes) — dropping")
+                connection.cancel()
+                return
+            }
+
             // Wait for the full HTTP header block (\r\n\r\n terminator)
             let terminator = Data("\r\n\r\n".utf8)
             guard let headerEnd = buffer.range(of: terminator) else {

@@ -7,6 +7,7 @@ final class LogTailer {
     private var source: DispatchSourceFileSystemObject?
     private var fileHandle: FileHandle?
     private var lastOffset: UInt64 = 0
+    private let stateLock = NSLock()
 
     init(fileURL: URL) {
         self.fileURL = fileURL
@@ -66,9 +67,11 @@ final class LogTailer {
 
     /// Read new content that was appended since last read
     private func readNewContent(handle: FileHandle, continuation: AsyncStream<String>.Continuation) {
+        stateLock.lock()
         handle.seek(toFileOffset: lastOffset)
         let data = handle.readDataToEndOfFile()
         lastOffset = handle.offsetInFile
+        stateLock.unlock()
 
         guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
 
