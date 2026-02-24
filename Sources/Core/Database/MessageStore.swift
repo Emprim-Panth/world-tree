@@ -103,6 +103,33 @@ final class MessageStore {
 
     // MARK: - Search
 
+    /// Search messages within a specific session using the existing FTS5 index.
+    /// Falls back to LIKE if FTS fails.
+    func searchMessages(query: String, sessionId: String, limit: Int = 20) throws -> [Message] {
+        try db.read { db in
+            do {
+                let sql = """
+                    SELECT m.*, 0 as has_branches
+                    FROM messages m
+                    JOIN messages_fts ON messages_fts.rowid = m.id
+                    WHERE messages_fts MATCH ? AND m.session_id = ?
+                    ORDER BY rank
+                    LIMIT ?
+                    """
+                return try Message.fetchAll(db, sql: sql, arguments: [query, sessionId, limit])
+            } catch {
+                let sql = """
+                    SELECT m.*, 0 as has_branches
+                    FROM messages m
+                    WHERE m.content LIKE ? AND m.session_id = ?
+                    ORDER BY m.timestamp DESC
+                    LIMIT ?
+                    """
+                return try Message.fetchAll(db, sql: sql, arguments: ["%\(query)%", sessionId, limit])
+            }
+        }
+    }
+
     /// Search messages using the existing FTS5 index.
     /// Falls back to LIKE if FTS fails (matching cortana-core behavior).
     func searchMessages(query: String, limit: Int = 50) throws -> [Message] {

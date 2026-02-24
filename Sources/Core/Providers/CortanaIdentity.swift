@@ -86,7 +86,7 @@ enum CortanaIdentity {
     /// Compact Cortana personality overlay for CLI providers.
     /// The CLI already has its own system prompt, tool definitions, and CLAUDE.md awareness.
     /// This only injects the Cortana personality so the CLI responds as Cortana, not Claude.
-    static func cliSystemPrompt(project: String?, workingDirectory: String?) -> String {
+    static func cliSystemPrompt(project: String?, workingDirectory: String?, sessionId: String? = nil) -> String {
         let agentName = LocalAgentIdentity.name
         let signOff = LocalAgentIdentity.signOff
         var prompt = """
@@ -108,6 +108,22 @@ enum CortanaIdentity {
         }
         if let cwd = workingDirectory {
             prompt += "\nWorking directory: \(cwd)"
+        }
+        if let sid = sessionId {
+            let dbPath = "\(home)/Library/CloudStorage/Dropbox/claude-memory/conversations.db"
+            prompt += """
+
+
+            ## Conversation Search
+            To recall earlier messages in this conversation, query the SQLite FTS5 index:
+            ```sql
+            SELECT role, content FROM messages m
+            JOIN messages_fts ON messages_fts.rowid = m.id
+            WHERE messages_fts MATCH 'your query' AND m.session_id = '\(sid)'
+            ORDER BY rank LIMIT 10;
+            ```
+            Database: \(dbPath)
+            """
         }
         return prompt
     }

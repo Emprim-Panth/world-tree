@@ -87,7 +87,8 @@ final class AnthropicAPIProvider: LLMProvider {
                     }
                     let executor = ToolExecutor(
                         workingDirectory: URL(fileURLWithPath: cwd),
-                        tmuxSessionName: tmuxSession
+                        tmuxSessionName: tmuxSession,
+                        sessionId: context.sessionId
                     )
                     var cumulativeUsage = TokenUsage.zero
 

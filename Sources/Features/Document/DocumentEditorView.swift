@@ -756,8 +756,13 @@ class DocumentEditorViewModel: ObservableObject {
             lastSendTimestamp = now
 
             let allSections = document.sections
-            let turnLimit = isSessionStale ? 16 : 4  // 8 turns stale, 2 turns active
-            let contextSections = allSections.suffix(turnLimit)
+            let maxAdditional = isSessionStale ? 8 : 2   // 12 total stale, 6 total active
+            let contextSections = ConversationScorer.select(
+                sections: allSections,
+                query: content,
+                mandatoryCount: 4,
+                maxAdditional: maxAdditional
+            )
 
             let recentContext: String? = {
                 guard !contextSections.isEmpty else { return nil }

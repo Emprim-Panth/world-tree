@@ -7,7 +7,7 @@ enum CanvasTools {
     static func definitions() -> [ToolSchema] {
         var tools = [readFile, writeFile, editFile, bash, glob, grep,
                      buildProject, runTests, checkpointCreate, checkpointRevert, checkpointList,
-                     backgroundRun, listTerminals, terminalOutput, captureScreenshot]
+                     backgroundRun, listTerminals, terminalOutput, searchConversation, captureScreenshot]
         tools[tools.count - 1].cacheControl = CacheControl(type: "ephemeral")
         return tools
     }
@@ -328,6 +328,30 @@ enum CanvasTools {
                 ),
             ],
             required: ["session"]
+        )
+    )
+
+    static let searchConversation = ToolSchema(
+        name: "search_conversation",
+        description: """
+            Search this conversation's full message history using BM25 full-text search. \
+            Returns the most relevant past messages matching the query. \
+            Use this when you need context from earlier in the conversation that isn't \
+            in your current context window.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "query": PropertySchema(
+                    type: "string",
+                    description: "Search terms to find relevant messages"
+                ),
+                "limit": PropertySchema(
+                    type: "integer",
+                    description: "Max results (default 10, max 20)"
+                ),
+            ],
+            required: ["query"]
         )
     )
 

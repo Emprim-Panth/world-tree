@@ -30,9 +30,13 @@ actor ToolExecutor {
     /// the visible terminal so Evan can watch execution live and interact if needed.
     let tmuxSessionName: String?
 
-    init(workingDirectory: URL, tmuxSessionName: String? = nil) {
+    /// Canvas session ID — used by search_conversation to scope FTS queries.
+    let sessionId: String?
+
+    init(workingDirectory: URL, tmuxSessionName: String? = nil, sessionId: String? = nil) {
         self.workingDirectory = workingDirectory
         self.tmuxSessionName = tmuxSessionName
+        self.sessionId = sessionId
     }
 
     func execute(name: String, input: [String: AnyCodable]) async -> ToolResult {
@@ -57,6 +61,7 @@ actor ToolExecutor {
         case "list_terminals": return await listTerminals(input)
         case "terminal_output": return await terminalOutput(input)
         case "capture_screenshot": return await captureScreenshot(input)
+        case "search_conversation": return await executeSearchConversation(input)
         default: return ToolResult(content: "Unknown tool: \(name)", isError: true)
         }
     }
@@ -977,6 +982,44 @@ actor ToolExecutor {
             content: "Screenshot captured (\(targetLabel)).\nFile: \(outputPath)",
             isError: false
         )
+    }
+
+    // MARK: - search_conversation
+
+    private func executeSearchConversation(_ input: [String: AnyCodable]) async -> ToolResult {
+        guard let sid = sessionId else {
+            return ToolResult(
+                content: "search_conversation unavailable — no session ID",
+                isError: true
+            )
+        }
+        let query = input["query"]?.value as? String ?? ""
+        let limit = input["limit"]?.value as? Int ?? 10
+        guard !query.isEmpty else {
+            return ToolResult(content: "query is required", isError: true)
+        }
+        do {
+            let messages = try await MainActor.run {
+                try MessageStore.shared.searchMessages(
+                    query: query, sessionId: sid, limit: min(limit, 20)
+                )
+            }
+            if messages.isEmpty {
+                return ToolResult(
+                    content: "No matching messages found for: \(query)",
+                    isError: false
+                )
+            }
+            let results = messages.map { m in
+                "[\(m.role.rawValue.uppercased())] \(m.content.prefix(500))"
+            }.joined(separator: "\n\n---\n\n")
+            return ToolResult(content: results, isError: false)
+        } catch {
+            return ToolResult(
+                content: "Search failed: \(error.localizedDescription)",
+                isError: true
+            )
+        }
     }
 
     // MARK: - Path Resolution

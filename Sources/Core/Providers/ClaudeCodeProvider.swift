@@ -142,7 +142,8 @@ final class ClaudeCodeProvider: LLMProvider {
 
             var systemPrompt = CortanaIdentity.cliSystemPrompt(
                 project: context.project,
-                workingDirectory: context.workingDirectory
+                workingDirectory: context.workingDirectory,
+                sessionId: context.sessionId
             )
             // Inject recent conversation history so context survives --resume failures.
             // Server-side sessions can expire silently; this is the fallback.
