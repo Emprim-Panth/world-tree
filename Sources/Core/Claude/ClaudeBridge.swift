@@ -60,7 +60,8 @@ final class ClaudeBridge {
                 model: context.model,
                 workingDirectory: context.workingDirectory,
                 project: context.project,
-                checkpointContext: context.checkpointContext
+                checkpointContext: context.checkpointContext,
+                fullContext: context  // preserve full context for fallback
             )
         }
 
@@ -108,6 +109,9 @@ final class ClaudeBridge {
 
     // MARK: - Friday routing with fallback
 
+    /// When `fullContext` is provided (primary send path), the fallback uses it directly
+    /// so attachments, recentContext, parentSessionId, and other fields are preserved.
+    /// Legacy callers (CanvasServer) omit `fullContext` and fall back via sendDirect().
     private func wrapFridayWithFallback(
         message: String,
         sessionId: String,
@@ -115,7 +119,8 @@ final class ClaudeBridge {
         model: String?,
         workingDirectory: String?,
         project: String?,
-        checkpointContext: String?
+        checkpointContext: String?,
+        fullContext: ProviderSendContext? = nil
     ) -> AsyncStream<BridgeEvent> {
         AsyncStream { continuation in
             Task { @MainActor in
@@ -131,15 +136,21 @@ final class ClaudeBridge {
                     // If first event is an error (before any content), fall through to direct provider
                     if case .error = event, !receivedContent {
                         canvasLog("[ClaudeBridge] Friday unavailable, falling back to direct provider")
-                        let directStream = self.sendDirect(
-                            message: message,
-                            sessionId: sessionId,
-                            branchId: branchId,
-                            model: model,
-                            workingDirectory: workingDirectory,
-                            project: project,
-                            checkpointContext: checkpointContext
-                        )
+                        let directStream: AsyncStream<BridgeEvent>
+                        if let ctx = fullContext {
+                            // Preserve original context — attachments, recentContext, etc.
+                            directStream = ProviderManager.shared.send(context: ctx)
+                        } else {
+                            directStream = self.sendDirect(
+                                message: message,
+                                sessionId: sessionId,
+                                branchId: branchId,
+                                model: model,
+                                workingDirectory: workingDirectory,
+                                project: project,
+                                checkpointContext: checkpointContext
+                            )
+                        }
                         for await directEvent in directStream {
                             continuation.yield(directEvent)
                         }

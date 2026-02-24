@@ -356,6 +356,8 @@ class DocumentEditorViewModel: ObservableObject {
     private let branchId: String
     private let workingDirectory: String
     private var cachedProject: String?
+    /// Parent branch's session ID — loaded once at document open for --fork-session support.
+    private var cachedParentSessionId: String?
     private var seenMessageIds: Set<String> = []
     private(set) var treeId: String?
     private(set) var parentBranchId: String?
@@ -478,6 +480,12 @@ class DocumentEditorViewModel: ObservableObject {
                 self.currentBranch = branch
                 let project = (try? TreeStore.shared.getTree(branch.treeId))?.project
                 self.cachedProject = project
+                // Cache parent session ID for --fork-session / context inheritance.
+                // Done once at document open — eliminates DB reads on every send.
+                if let parentBranchId = branch.parentBranchId,
+                   let parentBranch = try? TreeStore.shared.getBranch(parentBranchId) {
+                    self.cachedParentSessionId = parentBranch.sessionId
+                }
                 await ProviderManager.shared.activeProvider?.warmUp(
                     sessionId: self.sessionId,
                     branchId: self.branchId,
@@ -784,7 +792,7 @@ class DocumentEditorViewModel: ObservableObject {
                 model: model,
                 workingDirectory: AppState.shared.selectedProjectPath ?? workingDirectory,
                 project: resolvedProject,
-                parentSessionId: nil,
+                parentSessionId: cachedParentSessionId,
                 isNewSession: isNew,
                 attachments: attachments,
                 recentContext: recentContext
@@ -797,8 +805,9 @@ class DocumentEditorViewModel: ObservableObject {
             streamingContent = ""  // Start streaming indicator
             startStreamBatching()
 
-            // Open SSD crash-recovery file — survives SIGTERM, auto-deleted on clean completion
-            await StreamCacheManager.shared.openStreamFile(sessionId: sessionId)
+            // Open SSD crash-recovery file — fire-and-forget, doesn't need to be ready
+            // before the first token. appendToStream() guards on handle presence.
+            Task { await StreamCacheManager.shared.openStreamFile(sessionId: sessionId) }
 
             for await event in claudeBridge.send(context: ctx) {
                 // Bail out cleanly if this task was cancelled (user interrupted)
