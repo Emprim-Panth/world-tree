@@ -15,6 +15,17 @@ actor FridayChannel {
 
     private init() {}
 
+    /// Dedicated URLSession for SSE streams.
+    /// Short request timeout (8 s) so a slow/absent daemon endpoint fails fast
+    /// and ClaudeBridge can fall back to the direct provider immediately.
+    /// Resource timeout is generous (5 min) so legitimate long streams are not cut.
+    private nonisolated static let sseSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest  = 8    // first-byte timeout
+        config.timeoutIntervalForResource = 300  // total stream duration
+        return URLSession(configuration: config)
+    }()
+
     // MARK: - Configuration
 
     private var apiURL: String {
@@ -48,7 +59,7 @@ actor FridayChannel {
                         return
                     }
 
-                    var req = URLRequest(url: url, timeoutInterval: 120)
+                    var req = URLRequest(url: url)  // no timeoutInterval — session config governs
                     req.httpMethod = "POST"
                     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
@@ -63,7 +74,7 @@ actor FridayChannel {
                     if let sessionId { payload["session_id"] = sessionId }
                     req.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-                    let (bytes, response) = try await URLSession.shared.bytes(for: req)
+                    let (bytes, response) = try await Self.sseSession.bytes(for: req)
 
                     if let http = response as? HTTPURLResponse, http.statusCode != 200 {
                         continuation.yield(.error("Daemon returned HTTP \(http.statusCode)"))

@@ -46,3 +46,9 @@ Sources/
 
 Shared: `~/Library/CloudStorage/Dropbox/claude-memory/conversations.db`
 Canvas adds: `canvas_trees`, `canvas_branches` tables (prefixed, isolated)
+
+## Ticketmaster
+
+**Project ID:** `world-tree`
+
+All work on this project is tracked in Ticketmaster. Every task gets a ticket before work starts. Use `mcp__ticketmaster__list_tasks("world-tree")` to see open work.
