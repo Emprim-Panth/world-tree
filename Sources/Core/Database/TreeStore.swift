@@ -179,52 +179,48 @@ final class TreeStore {
     }
 
     /// Delete all trees in a project group (full cascade: messages → sessions → branches → trees).
+    /// All deletes run in a single transaction — atomic.
     func deleteProject(_ projectName: String) throws {
-        let treeIds: [String] = try db.read { db in
+        try db.write { db in
+            let rows: [Row]
             if projectName == "General" {
-                let rows = try Row.fetchAll(db, sql: "SELECT id FROM canvas_trees WHERE project IS NULL OR project = '' OR project = 'General'")
-                return rows.map { $0["id"] }
+                rows = try Row.fetchAll(db, sql: "SELECT id FROM canvas_trees WHERE project IS NULL OR project = '' OR project = 'General'")
             } else {
-                let rows = try Row.fetchAll(db, sql: "SELECT id FROM canvas_trees WHERE project = ?", arguments: [projectName])
-                return rows.map { $0["id"] }
+                rows = try Row.fetchAll(db, sql: "SELECT id FROM canvas_trees WHERE project = ?", arguments: [projectName])
             }
-        }
-        for id in treeIds {
-            try deleteTree(id)
+            for row in rows {
+                let id: String = row["id"]
+                try Self.deleteTreeContents(db: db, treeId: id)
+            }
         }
     }
 
     func deleteTree(_ id: String) throws {
         try db.write { db in
-            // Delete messages for all branches in this tree
-            try db.execute(
-                sql: """
-                    DELETE FROM messages WHERE session_id IN (
-                        SELECT session_id FROM canvas_branches WHERE tree_id = ?
-                    )
-                    """,
-                arguments: [id]
-            )
-            // Delete sessions for all branches
-            try db.execute(
-                sql: """
-                    DELETE FROM sessions WHERE id IN (
-                        SELECT session_id FROM canvas_branches WHERE tree_id = ?
-                    )
-                    """,
-                arguments: [id]
-            )
-            // Delete branches
-            try db.execute(
-                sql: "DELETE FROM canvas_branches WHERE tree_id = ?",
-                arguments: [id]
-            )
-            // Delete tree
-            try db.execute(
-                sql: "DELETE FROM canvas_trees WHERE id = ?",
-                arguments: [id]
-            )
+            try Self.deleteTreeContents(db: db, treeId: id)
         }
+    }
+
+    /// Executes the cascade delete for a single tree inside an already-open GRDB write transaction.
+    private static func deleteTreeContents(db: Database, treeId: String) throws {
+        try db.execute(
+            sql: """
+                DELETE FROM messages WHERE session_id IN (
+                    SELECT session_id FROM canvas_branches WHERE tree_id = ?
+                )
+                """,
+            arguments: [treeId]
+        )
+        try db.execute(
+            sql: """
+                DELETE FROM sessions WHERE id IN (
+                    SELECT session_id FROM canvas_branches WHERE tree_id = ?
+                )
+                """,
+            arguments: [treeId]
+        )
+        try db.execute(sql: "DELETE FROM canvas_branches WHERE tree_id = ?", arguments: [treeId])
+        try db.execute(sql: "DELETE FROM canvas_trees WHERE id = ?", arguments: [treeId])
     }
 
     // MARK: - Branches
@@ -423,6 +419,22 @@ final class TreeStore {
     func getBranchBySessionId(_ sessionId: String) throws -> Branch? {
         try db.read { db in
             try Branch.filter(Column("session_id") == sessionId).fetchOne(db)
+        }
+    }
+
+    /// Batch-fetch branches by session IDs in a single IN query.
+    /// Returns a dictionary keyed by session_id for O(1) lookup.
+    func getBranchesBySessionIds(_ sessionIds: [String]) throws -> [String: Branch] {
+        guard !sessionIds.isEmpty else { return [:] }
+        return try db.read { db in
+            let placeholders = sessionIds.map { _ in "?" }.joined(separator: ", ")
+            let sql = "SELECT * FROM canvas_branches WHERE session_id IN (\(placeholders))"
+            let args = StatementArguments(sessionIds)
+            let branches = try Branch.fetchAll(db, sql: sql, arguments: args)
+            return Dictionary(uniqueKeysWithValues: branches.compactMap { branch in
+                guard let sid = branch.sessionId else { return nil }
+                return (sid, branch)
+            })
         }
     }
 

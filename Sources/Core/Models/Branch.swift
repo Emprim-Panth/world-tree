@@ -37,13 +37,17 @@ struct Branch: Identifiable, Equatable, Hashable {
     var depth: Int = 0
     var messageCount: Int = 0
 
-    /// Display title: uses explicit title, or generates from type + creation
-    var displayTitle: String {
-        if let title, !title.isEmpty { return title }
+    private static let displayTitleFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .short
-        return "\(branchType.rawValue.capitalized) — \(formatter.string(from: createdAt))"
+        return formatter
+    }()
+
+    /// Display title: uses explicit title, or generates from type + creation
+    var displayTitle: String {
+        if let title, !title.isEmpty { return title }
+        return "\(branchType.rawValue.capitalized) — \(Branch.displayTitleFormatter.string(from: createdAt))"
     }
 }
 

@@ -23,6 +23,24 @@ struct Message: Identifiable, Equatable, Hashable {
     var timestamp: Date { createdAt }
 }
 
+// MARK: - Date Formatters (static — DateFormatter is thread-safe for date(from:))
+
+private extension Message {
+    static let iso8601Formatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withDashSeparatorInDate,
+                           .withColonSeparatorInTime, .withSpaceBetweenDateAndTime]
+        return f
+    }()
+
+    static let sqliteFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        return f
+    }()
+}
+
 // MARK: - GRDB Conformance
 
 extension Message: FetchableRecord {
@@ -42,16 +60,10 @@ extension Message: FetchableRecord {
 
         // Read timestamp as DATETIME text and convert to Date
         if let timestampStr = row["timestamp"] as? String {
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withDashSeparatorInDate, .withColonSeparatorInTime, .withSpaceBetweenDateAndTime]
-            if let date = formatter.date(from: timestampStr.replacingOccurrences(of: " ", with: "T") + "Z") {
+            if let date = Message.iso8601Formatter.date(from: timestampStr.replacingOccurrences(of: " ", with: "T") + "Z") {
                 createdAt = date
             } else {
-                // Fallback: try basic SQLite datetime format
-                let sqlFormatter = DateFormatter()
-                sqlFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-                sqlFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-                createdAt = sqlFormatter.date(from: timestampStr) ?? Date()
+                createdAt = Message.sqliteFormatter.date(from: timestampStr) ?? Date()
             }
         } else {
             createdAt = Date()

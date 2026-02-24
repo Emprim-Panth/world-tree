@@ -39,6 +39,8 @@ final class CanvasServer: ObservableObject {
     private var pingTask: Task<Void, Never>?
     private let rateLimiter = AuthRateLimiter()
 
+    private static let iso8601 = ISO8601DateFormatter()
+
     var configuredToken: String {
         UserDefaults.standard.string(forKey: Self.tokenKey) ?? ""
     }
@@ -181,7 +183,7 @@ final class CanvasServer: ObservableObject {
             "url": "http://localhost:\(Self.port)",
             "port": Self.port,
             "token": configuredToken,
-            "started_at": ISO8601DateFormatter().string(from: Date())
+            "started_at": Self.iso8601.string(from: Date())
         ]
         if let ngrok = ngrokURL {
             state["ngrok_url"] = ngrok
@@ -411,7 +413,7 @@ final class CanvasServer: ObservableObject {
     private func handleSessions(_ connection: NWConnection) async {
         do {
             let trees = try TreeStore.shared.listTrees()
-            let iso = ISO8601DateFormatter()
+            let iso = Self.iso8601
             let items = trees.map { t in
                 #"{"id":"\#(t.id)","name":"\#(esc(t.name))","project":"\#(esc(t.project ?? ""))","updated_at":"\#(iso.string(from: t.updatedAt))","message_count":\#(t.messageCount)}"#
             }
@@ -913,7 +915,7 @@ extension CanvasServer {
 
         do {
             let trees = try TreeStore.shared.listTrees()
-            let iso = ISO8601DateFormatter()
+            let iso = Self.iso8601
             let treeInfos = trees.map { t in
                 WSTreeInfo(
                     id: t.id,
@@ -947,7 +949,7 @@ extension CanvasServer {
                 sendWSError(to: clientId, code: "not_found", message: "Tree not found", id: message.id)
                 return
             }
-            let iso = ISO8601DateFormatter()
+            let iso = Self.iso8601
             let branchInfos = tree.branches.map { b in
                 WSBranchInfo(
                     id: b.id,
@@ -987,7 +989,7 @@ extension CanvasServer {
 
             let limit = req.limit ?? 50
             let msgs = try MessageStore.shared.getMessages(sessionId: sessionId, limit: limit)
-            let iso = ISO8601DateFormatter()
+            let iso = Self.iso8601
             let msgInfos = msgs.map { m in
                 WSMessageInfo(
                     id: m.id,
@@ -1100,7 +1102,7 @@ extension CanvasServer {
         do {
             _ = try TreeStore.shared.createTree(name: req.name.trimmingCharacters(in: .whitespacesAndNewlines), project: req.project)
             let trees = try TreeStore.shared.listTrees()
-            let iso = ISO8601DateFormatter()
+            let iso = Self.iso8601
             let treeInfos = trees.map { t in
                 WSTreeInfo(id: t.id, name: t.name, project: t.project, updatedAt: iso.string(from: t.updatedAt), messageCount: t.messageCount)
             }
@@ -1131,7 +1133,7 @@ extension CanvasServer {
                 sendWSError(to: clientId, code: "not_found", message: "Tree not found", id: message.id)
                 return
             }
-            let iso = ISO8601DateFormatter()
+            let iso = Self.iso8601
             let branchInfos = tree.branches.map { b in
                 WSBranchInfo(id: b.id, treeId: b.treeId, title: b.title, status: b.status.rawValue, branchType: b.branchType.rawValue, createdAt: iso.string(from: b.createdAt), updatedAt: iso.string(from: b.updatedAt))
             }
@@ -1217,8 +1219,12 @@ extension CanvasServer {
         let params = NWParameters(tls: nil, tcp: NWProtocolTCP.Options())
         params.defaultProtocolStack.applicationProtocols.insert(wsOptions, at: 0)
 
+        guard let wsPort = NWEndpoint.Port(rawValue: Self.wsPort) else {
+            canvasLog("[CanvasServer] Invalid WebSocket port: \(Self.wsPort)")
+            return
+        }
         do {
-            let wsl = try NWListener(using: params, on: NWEndpoint.Port(rawValue: Self.wsPort)!)
+            let wsl = try NWListener(using: params, on: wsPort)
             wsListener = wsl
 
             wsl.newConnectionHandler = { [weak self] connection in

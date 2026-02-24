@@ -110,7 +110,9 @@ enum CortanaIdentity {
             prompt += "\nWorking directory: \(cwd)"
         }
         if let sid = sessionId {
-            let dbPath = "\(home)/Library/CloudStorage/Dropbox/claude-memory/conversations.db"
+            let dbPath = UserDefaults.standard.string(forKey: "databasePath").flatMap {
+                $0.isEmpty ? nil : $0
+            } ?? CortanaConstants.dropboxDatabasePath
             prompt += """
 
 

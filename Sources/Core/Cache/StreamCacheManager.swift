@@ -21,7 +21,8 @@ actor StreamCacheManager {
     // MARK: - Paths
 
     private let cacheRoot: URL = {
-        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches")
         return base.appendingPathComponent("WorldTree")
     }()
 

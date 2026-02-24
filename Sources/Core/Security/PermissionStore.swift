@@ -7,6 +7,7 @@ final class PermissionStore {
 
     private let defaults = UserDefaults.standard
     private let key = "com.worldtree.security.approved-patterns"
+    private let lock = NSLock()
 
     private init() {}
 
@@ -16,16 +17,20 @@ final class PermissionStore {
     }
 
     func approve(reason: String) {
-        var approved = defaults.stringArray(forKey: key) ?? []
-        guard !approved.contains(reason) else { return }
-        approved.append(reason)
-        defaults.set(approved, forKey: key)
+        lock.withLock {
+            var approved = defaults.stringArray(forKey: key) ?? []
+            guard !approved.contains(reason) else { return }
+            approved.append(reason)
+            defaults.set(approved, forKey: key)
+        }
     }
 
     func revoke(reason: String) {
-        var approved = defaults.stringArray(forKey: key) ?? []
-        approved.removeAll { $0 == reason }
-        defaults.set(approved, forKey: key)
+        lock.withLock {
+            var approved = defaults.stringArray(forKey: key) ?? []
+            approved.removeAll { $0 == reason }
+            defaults.set(approved, forKey: key)
+        }
     }
 
     func allApproved() -> [String] {

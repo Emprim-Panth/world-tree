@@ -24,6 +24,13 @@ final class DaemonService: ObservableObject {
     /// Minimum interval between auto-rotations for the same session (5 minutes).
     private let rotationCooldown: TimeInterval = 300
 
+    private static let isoWithFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let isoBasic = ISO8601DateFormatter()
+
     private init() {}
 
     // MARK: - Lifecycle
@@ -161,10 +168,8 @@ final class DaemonService: ObservableObject {
         } else if let timestamp = dict["started_at"]?.value as? Int {
             startedAt = Date(timeIntervalSince1970: TimeInterval(timestamp))
         } else if let isoString = dict["started_at"]?.value as? String {
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            startedAt = formatter.date(from: isoString)
-                ?? ISO8601DateFormatter().date(from: isoString)
+            startedAt = Self.isoWithFractional.date(from: isoString)
+                ?? Self.isoBasic.date(from: isoString)
         }
 
         return DaemonSession(
@@ -183,7 +188,11 @@ final class DaemonService: ObservableObject {
     func refreshTmuxSessions() {
         let shouldAutoManage = autoManageTmuxContext
         Task.detached { [weak self] in
-            var sessions = Self.discoverTmuxSessions()
+            var sessions: [TmuxSession] = await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .utility).async {
+                    continuation.resume(returning: Self.discoverTmuxSessions())
+                }
+            }
 
             // Enrich sessions with Claude CLI session data
             for i in sessions.indices {

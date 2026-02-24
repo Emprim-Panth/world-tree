@@ -115,9 +115,11 @@ final class SidebarViewModel: ObservableObject {
         defer { isSearching = false }
         do {
             let messages = try MessageStore.shared.searchMessages(query: query, limit: 40)
+            let sessionIds = messages.map(\.sessionId)
+            let branchesBySession = (try? TreeStore.shared.getBranchesBySessionIds(sessionIds)) ?? [:]
             var results: [MessageSearchResult] = []
             for msg in messages {
-                guard let branch = try? TreeStore.shared.getBranchBySessionId(msg.sessionId),
+                guard let branch = branchesBySession[msg.sessionId],
                       let tree = trees.first(where: { $0.id == branch.treeId }) else { continue }
                 let snippet = msg.content
                     .replacingOccurrences(of: "\n", with: " ")
@@ -320,6 +322,7 @@ final class SidebarViewModel: ObservableObject {
                 treeId: tree.id,
                 type: branchType,
                 title: branchTitle,
+                model: template?.suggestedModel,
                 contextSnapshot: contextSnapshot,
                 workingDirectory: workingDirectory
             )

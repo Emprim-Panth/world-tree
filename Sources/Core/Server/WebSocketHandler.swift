@@ -292,21 +292,35 @@ final class WebSocketConnection: @unchecked Sendable {
     }
 
     private func processBuffer() {
-        lock.lock()
-        defer { lock.unlock() }
+        // Collect frames while holding the lock, then dispatch callbacks without it.
+        // Calling user callbacks (onMessage, onClose) or sendCloseAndDisconnect while
+        // holding the lock would allow re-entrant locking via handleFrame → send* paths.
+        var decodedFrames: [WebSocketFrame] = []
+        var decodeError: Error?
 
+        lock.lock()
         while true {
             do {
                 guard let (frame, consumed) = try WebSocketCodec.decode(from: buffer) else {
                     break // Need more data
                 }
                 buffer.removeFirst(consumed)
-                handleFrame(frame)
+                decodedFrames.append(frame)
             } catch {
-                canvasLog("[WebSocket:\(id)] Frame error: \(error)")
-                sendCloseAndDisconnect(code: 1002, reason: error.localizedDescription)
+                decodeError = error
                 break
             }
+        }
+        lock.unlock()
+
+        if let error = decodeError {
+            canvasLog("[WebSocket:\(id)] Frame error: \(error)")
+            sendCloseAndDisconnect(code: 1002, reason: error.localizedDescription)
+            return
+        }
+
+        for frame in decodedFrames {
+            handleFrame(frame)
         }
     }
 
@@ -382,22 +396,26 @@ final class WebSocketConnection: @unchecked Sendable {
 
     /// Send a text message over the WebSocket.
     func send(text: String) {
-        guard !isClosed else { return }
+        lock.lock(); let closed = isClosed; lock.unlock()
+        guard !closed else { return }
         let data = WebSocketCodec.textFrame(text)
         connection.send(content: data, completion: .idempotent)
     }
 
     /// Send a ping frame.
     func sendPing() {
-        guard !isClosed else { return }
+        lock.lock(); let closed = isClosed; lock.unlock()
+        guard !closed else { return }
         let data = WebSocketCodec.pingFrame()
         connection.send(content: data, completion: .idempotent)
     }
 
     /// Send a close frame and cancel the connection.
     func sendCloseAndDisconnect(code: UInt16 = 1000, reason: String? = nil) {
-        guard !isClosed else { return }
+        lock.lock()
+        if isClosed { lock.unlock(); return }
         isClosed = true
+        lock.unlock()
         let data = WebSocketCodec.closeFrame(code: code, reason: reason)
         connection.send(content: data, completion: .contentProcessed { [weak self] _ in
             self?.connection.cancel()
@@ -406,8 +424,10 @@ final class WebSocketConnection: @unchecked Sendable {
     }
 
     private func handleClose(code: UInt16, reason: String?) {
-        guard !isClosed else { return }
+        lock.lock()
+        if isClosed { lock.unlock(); return }
         isClosed = true
+        lock.unlock()
         onClose?(code, reason)
         connection.cancel()
     }

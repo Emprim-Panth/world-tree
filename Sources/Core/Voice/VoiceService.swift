@@ -2,6 +2,31 @@ import Foundation
 import AVFoundation
 import Speech
 
+// MARK: - Speech Delegate
+
+/// Bridges AVSpeechSynthesizerDelegate (NSObject-based) back into the VoiceService actor.
+private final class SpeechDelegate: NSObject, AVSpeechSynthesizerDelegate {
+    // Weak to avoid a retain cycle: actor → delegate → actor.
+    private weak var service: VoiceService?
+
+    init(service: VoiceService) {
+        self.service = service
+        super.init()
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        guard let service else { return }
+        Task { await service.markSpeakingDone() }
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        guard let service else { return }
+        Task { await service.markSpeakingDone() }
+    }
+}
+
+// MARK: - VoiceService
+
 /// Voice Service — handles both voice input (STT) and voice output (TTS).
 ///
 /// Input uses Apple's on-device SFSpeechRecognizer — no API keys, no network.
@@ -21,6 +46,7 @@ actor VoiceService {
     // MARK: - Text-to-Speech (Output)
 
     private let synthesizer = AVSpeechSynthesizer()
+    private var speechDelegate: SpeechDelegate?
     private var isSpeaking = false
     private var audioPlayer: AVAudioPlayer?
 
@@ -38,7 +64,11 @@ actor VoiceService {
     /// userInfo: ["error": String]
     static let voiceError = Notification.Name("VoiceService.voiceError")
 
-    private init() {}
+    private init() {
+        let delegate = SpeechDelegate(service: self)
+        speechDelegate = delegate
+        synthesizer.delegate = delegate
+    }
 
     // MARK: - Permissions
 
@@ -181,13 +211,12 @@ actor VoiceService {
         }
         isSpeaking = true
         synthesizer.speak(utterance)
-        // AVSpeechSynthesizer is fire-and-forget — mark done after a reasonable delay
-        Task {
-            let words = Double(text.split(separator: " ").count)
-            let estimatedSeconds = max(1.0, words / 2.5)
-            try? await Task.sleep(nanoseconds: UInt64(estimatedSeconds * 1_000_000_000))
-            isSpeaking = false
-        }
+        // isSpeaking is reset by SpeechDelegate.speechSynthesizer(_:didFinish:) or didCancel.
+    }
+
+    /// Called by SpeechDelegate when the synthesizer finishes or cancels an utterance.
+    func markSpeakingDone() {
+        isSpeaking = false
     }
 
     func stopSpeaking() {

@@ -23,13 +23,8 @@ struct VMExecutor: ExecutionEnvironment {
     }
 
     /// Check if Virtualization.framework is available on this system.
+    /// Returns false because execute() always falls back to LocalExecutor — VM isolation is not yet implemented.
     static var isAvailable: Bool {
-        #if arch(arm64)
-        // Virtualization.framework requires Apple Silicon and macOS 13+
-        if #available(macOS 13.0, *) {
-            return true
-        }
-        #endif
         return false
     }
 }

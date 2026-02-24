@@ -13,12 +13,21 @@ final class AnthropicAPIProvider: LLMProvider {
         .promptCaching, .costTracking, .modelSelection
     ]
 
-    private(set) var isRunning = false
+    private let stateLock = NSLock()
+    private var _isRunning = false
+    private(set) var isRunning: Bool {
+        get { stateLock.withLock { _isRunning } }
+        set { stateLock.withLock { _isRunning = newValue } }
+    }
 
     private let apiClient: AnthropicClient
     private var stateManager: ConversationStateManager?
     private var currentTask: Task<Void, Never>?
-    private var isCancelled = false
+    private var _isCancelled = false
+    private var isCancelled: Bool {
+        get { stateLock.withLock { _isCancelled } }
+        set { stateLock.withLock { _isCancelled = newValue } }
+    }
 
     private let home = FileManager.default.homeDirectoryForCurrentUser.path
     private let maxToolLoopIterations = 25

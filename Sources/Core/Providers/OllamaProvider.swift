@@ -14,20 +14,9 @@ final class OllamaProvider: LLMProvider {
     // MARK: - Health Check
 
     func checkHealth() async -> ProviderHealth {
-        // Ping Ollama API to see if it's running
-        guard let url = URL(string: "http://localhost:11434/api/tags") else {
-            return .unavailable(reason: "Invalid Ollama URL")
-        }
-
-        do {
-            let (_, response) = try await URLSession.shared.data(from: url)
-            if let http = response as? HTTPURLResponse, http.statusCode == 200 {
-                return .available
-            }
-            return .unavailable(reason: "Ollama not responding")
-        } catch {
-            return .unavailable(reason: "Ollama not running")
-        }
+        // Provider is not yet implemented — always report unavailable so it
+        // cannot be selected in the picker until send() is implemented.
+        return .unavailable(reason: "Ollama support coming soon")
     }
 
     // MARK: - Send

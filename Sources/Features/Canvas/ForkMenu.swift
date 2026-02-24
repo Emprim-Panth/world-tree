@@ -202,6 +202,7 @@ struct ForkMenu: View {
                 workingDirectory: branchCwd
             )
 
+            isCreating = false
             onCreated(newBranch.id)
         } catch {
             self.error = error.localizedDescription
