@@ -3,12 +3,27 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
     @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
+    @ObservedObject private var approvalCoordinator = ApprovalCoordinator.shared
 
     var body: some View {
-        if appState.simpleMode {
-            SimpleModeView()
-        } else {
-            advancedView
+        Group {
+            if appState.simpleMode {
+                SimpleModeView()
+            } else {
+                advancedView
+            }
+        }
+        .sheet(item: $approvalCoordinator.pendingRequest) { request in
+            ApprovalSheet(
+                assessment: request.assessment,
+                command: request.command,
+                onApprove: { remember in
+                    approvalCoordinator.resolve(approved: true, remember: remember)
+                },
+                onDeny: {
+                    approvalCoordinator.resolve(approved: false, remember: false)
+                }
+            )
         }
     }
 

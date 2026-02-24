@@ -3,12 +3,15 @@ import SwiftUI
 // MARK: - HITL Approval Sheet
 
 /// Human-in-the-loop approval dialog for destructive operations.
-/// Shows risk assessment details and requires explicit confirmation.
+/// Shows risk assessment details, requires explicit confirmation, and optionally
+/// remembers the decision permanently via PermissionStore.
 struct ApprovalSheet: View {
     let assessment: ToolGuard.Assessment
     let command: String
-    let onApprove: () -> Void
+    let onApprove: (Bool) -> Void   // Bool = remember permanently
     let onDeny: () -> Void
+
+    @State private var remember = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -58,6 +61,15 @@ struct ApprovalSheet: View {
             }
             .padding(.horizontal)
 
+            // Permanent approval toggle
+            Toggle(isOn: $remember) {
+                Text("Always allow this operation")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .toggleStyle(.checkbox)
+            .padding(.horizontal)
+
             Divider()
 
             // Actions
@@ -68,8 +80,8 @@ struct ApprovalSheet: View {
                 .buttonStyle(.bordered)
                 .controlSize(.large)
 
-                Button("Approve Execution") {
-                    onApprove()
+                Button("Approve") {
+                    onApprove(remember)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(riskColor)

@@ -213,11 +213,14 @@ actor ToolExecutor {
         let plainInput = input.mapValues { $0.value as Any }
         let assessment = ToolGuard.assess(toolName: "bash", input: plainInput)
         if assessment.requiresApproval {
-            canvasLog("[ToolGuard] BLOCKED: \(assessment.reason) — command: \(command.prefix(100))")
-            return ToolResult(
-                content: "[Security Gate] Operation blocked: \(assessment.reason). Command requires human approval.",
-                isError: true
+            canvasLog("[ToolGuard] Approval required: \(assessment.reason) — command: \(command.prefix(100))")
+            let approved = await ApprovalCoordinator.shared.requestApproval(
+                assessment: assessment,
+                command: command
             )
+            guard approved else {
+                return ToolResult(content: "[Security Gate] Operation denied.", isError: true)
+            }
         }
 
         let timeoutSecs = min((input["timeout"]?.value as? Int) ?? 120, 600)
@@ -294,11 +297,14 @@ actor ToolExecutor {
         let plainInput = input.mapValues { $0.value as Any }
         let assessment = ToolGuard.assess(toolName: "bash", input: plainInput)
         if assessment.requiresApproval {
-            canvasLog("[ToolGuard] BLOCKED: \(assessment.reason) — command: \(command.prefix(100))")
-            return ToolResult(
-                content: "[Security Gate] Operation blocked: \(assessment.reason). Command requires human approval.",
-                isError: true
+            canvasLog("[ToolGuard] Approval required: \(assessment.reason) — command: \(command.prefix(100))")
+            let approved = await ApprovalCoordinator.shared.requestApproval(
+                assessment: assessment,
+                command: command
             )
+            guard approved else {
+                return ToolResult(content: "[Security Gate] Operation denied.", isError: true)
+            }
         }
 
         let timeoutSecs = min((input["timeout"]?.value as? Int) ?? 120, 600)
