@@ -229,8 +229,8 @@ struct DocumentEditorView: View {
                 // If the user scrolled up to read, we show a "new messages" indicator instead.
                 .onChange(of: viewModel.document.sections.count) { _, _ in
                     guard viewModel.streamingContent == nil, !viewModel.isProcessing else { return }
-                    if isAtBottom, let lastSection = viewModel.document.sections.last {
-                        proxy.scrollTo(lastSection.id, anchor: .bottom)
+                    if isAtBottom {
+                        proxy.scrollTo("scroll-bottom")
                     } else {
                         hasNewMessages = true
                     }
@@ -239,11 +239,11 @@ struct DocumentEditorView: View {
                     if content != nil {
                         // Only auto-scroll while streaming if user hasn't scrolled up
                         if viewModel.isScrolledToBottom {
-                            proxy.scrollTo("streaming", anchor: .bottom)
+                            proxy.scrollTo("scroll-bottom")
                         }
-                    } else if let lastSection = viewModel.document.sections.last {
-                        // Streaming ended — always snap to the finalised section
-                        proxy.scrollTo(lastSection.id, anchor: .bottom)
+                    } else {
+                        // Streaming ended — snap to bottom so input is in view
+                        proxy.scrollTo("scroll-bottom")
                         viewModel.hasNewStreamContent = false
                     }
                 }
@@ -256,11 +256,7 @@ struct DocumentEditorView: View {
                     if viewModel.hasNewStreamContent && !viewModel.isScrolledToBottom {
                         ScrollToBottomFAB {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                if viewModel.streamingContent != nil {
-                                    proxy.scrollTo("streaming", anchor: .bottom)
-                                } else if let last = viewModel.document.sections.last {
-                                    proxy.scrollTo(last.id, anchor: .bottom)
-                                }
+                                proxy.scrollTo("scroll-bottom")
                             }
                             viewModel.hasNewStreamContent = false
                         }
@@ -272,7 +268,7 @@ struct DocumentEditorView: View {
                            value: viewModel.hasNewStreamContent && !viewModel.isScrolledToBottom)
                 .onChange(of: viewModel.isProcessing) { _, processing in
                     if processing && viewModel.streamingContent == nil && isAtBottom {
-                        proxy.scrollTo("thinking", anchor: .bottom)
+                        proxy.scrollTo("scroll-bottom")
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .showConversationSearch)) { _ in
