@@ -5,6 +5,7 @@ struct BranchNavigatorView: View {
     let branches: [Branch]
     @Binding var selectedBranchId: String?
     let onSelectBranch: (String) -> Void
+    let onCreateRootBranch: () -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -21,7 +22,7 @@ struct BranchNavigatorView: View {
                 }
 
                 // Add new branch button
-                Button(action: { /* TODO: Create root branch */ }) {
+                Button(action: onCreateRootBranch) {
                     VStack(spacing: 4) {
                         Image(systemName: "plus.circle.fill")
                             .font(.system(size: 24))

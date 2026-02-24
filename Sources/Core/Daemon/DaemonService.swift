@@ -277,10 +277,16 @@ final class DaemonService: ObservableObject {
         }
     }
 
+    /// Resolved path to the tmux binary — checked once at startup across common install locations.
+    nonisolated private static let tmuxExecutable: String = {
+        let candidates = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) } ?? "/opt/homebrew/bin/tmux"
+    }()
+
     /// Runs `tmux list-panes -a` off the main thread for pane-level discovery.
     /// Groups panes by session, captures working directory and running command.
     nonisolated private static func discoverTmuxSessions() -> [TmuxSession] {
-        let tmuxPath = "/opt/homebrew/bin/tmux"
+        let tmuxPath = tmuxExecutable
         guard FileManager.default.fileExists(atPath: tmuxPath) else { return [] }
 
         // Step 1: Get session-level data
@@ -358,7 +364,7 @@ final class DaemonService: ObservableObject {
 
     /// Send keystrokes to a tmux session (for rotation commands, etc.)
     nonisolated static func sendToTmux(session: String, keys: String) -> Bool {
-        let tmuxPath = "/opt/homebrew/bin/tmux"
+        let tmuxPath = tmuxExecutable
         guard FileManager.default.fileExists(atPath: tmuxPath) else { return false }
 
         let proc = Process()
@@ -378,7 +384,7 @@ final class DaemonService: ObservableObject {
 
     /// Send Ctrl+C to a tmux session to cancel the running command.
     nonisolated static func cancelTmuxSession(session: String) -> Bool {
-        let tmuxPath = "/opt/homebrew/bin/tmux"
+        let tmuxPath = tmuxExecutable
         guard FileManager.default.fileExists(atPath: tmuxPath) else { return false }
 
         let proc = Process()

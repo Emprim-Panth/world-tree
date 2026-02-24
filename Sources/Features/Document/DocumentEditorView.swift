@@ -351,6 +351,7 @@ class DocumentEditorViewModel: ObservableObject {
     weak var parentBranchLayout: BranchLayoutViewModel?
 
     deinit {
+        streamFlushTimer?.invalidate()
         if let observer = externalSourceObserver {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -573,9 +574,13 @@ class DocumentEditorViewModel: ObservableObject {
         guard let section = document.sections.first(where: { $0.id == sectionId }),
               let messageId = section.messageId else { return }
         Task {
-            let messages = (try? MessageStore.shared.getMessages(sessionId: self.sessionId)) ?? []
-            if let message = messages.first(where: { $0.id == messageId }) {
-                self.pendingForkMessage = message
+            do {
+                let messages = try MessageStore.shared.getMessages(sessionId: self.sessionId)
+                if let message = messages.first(where: { $0.id == messageId }) {
+                    self.pendingForkMessage = message
+                }
+            } catch {
+                canvasLog("[DocumentEditor] requestFork: failed to load messages: \(error)")
             }
         }
     }
@@ -586,11 +591,15 @@ class DocumentEditorViewModel: ObservableObject {
               let messageId = section.messageId,
               let parentId = parentBranchId else { return }
         Task {
-            try? TreeStore.shared.inferFinding(
-                fromBranchId: self.branchId,
-                messageId: messageId,
-                toParentBranchId: parentId
-            )
+            do {
+                try TreeStore.shared.inferFinding(
+                    fromBranchId: self.branchId,
+                    messageId: messageId,
+                    toParentBranchId: parentId
+                )
+            } catch {
+                canvasLog("[DocumentEditor] inferFinding failed: \(error)")
+            }
         }
     }
 

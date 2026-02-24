@@ -334,6 +334,54 @@ final class TreeStore {
         }
     }
 
+    /// Delete a single branch and its associated session/messages.
+    /// Children are reparented to the deleted branch's parent (or become root branches).
+    func deleteBranch(_ id: String) throws {
+        try db.write { db in
+            // Reparent children so they aren't orphaned
+            let parentRow = try Row.fetchOne(
+                db,
+                sql: "SELECT parent_branch_id FROM canvas_branches WHERE id = ?",
+                arguments: [id]
+            )
+            let parentId: String? = parentRow?["parent_branch_id"]
+            if let parentId {
+                try db.execute(
+                    sql: "UPDATE canvas_branches SET parent_branch_id = ? WHERE parent_branch_id = ?",
+                    arguments: [parentId, id]
+                )
+            } else {
+                try db.execute(
+                    sql: "UPDATE canvas_branches SET parent_branch_id = NULL WHERE parent_branch_id = ?",
+                    arguments: [id]
+                )
+            }
+
+            // Delete messages for this branch's session
+            try db.execute(
+                sql: """
+                    DELETE FROM messages WHERE session_id = (
+                        SELECT session_id FROM canvas_branches WHERE id = ?
+                    )
+                    """,
+                arguments: [id]
+            )
+
+            // Delete the session
+            try db.execute(
+                sql: """
+                    DELETE FROM sessions WHERE id = (
+                        SELECT session_id FROM canvas_branches WHERE id = ?
+                    )
+                    """,
+                arguments: [id]
+            )
+
+            // Delete the branch
+            try db.execute(sql: "DELETE FROM canvas_branches WHERE id = ?", arguments: [id])
+        }
+    }
+
     /// Returns branches that fork from a specific message
     func branchesFromMessage(_ messageId: Int) throws -> [Branch] {
         try db.read { db in

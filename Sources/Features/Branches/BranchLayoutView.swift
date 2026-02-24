@@ -17,6 +17,9 @@ struct BranchLayoutView: View {
                 selectedBranchId: $selectedBranchId,
                 onSelectBranch: { branchId in
                     viewModel.scrollToBranch(branchId)
+                },
+                onCreateRootBranch: {
+                    viewModel.createRootBranch()
                 }
             )
             .frame(height: 80)
@@ -37,6 +40,18 @@ struct BranchLayoutView: View {
                                 },
                                 onSelect: {
                                     selectedBranchId = branch.id
+                                },
+                                onRename: { newTitle in
+                                    viewModel.renameBranch(branch.id, title: newTitle)
+                                },
+                                onComplete: {
+                                    viewModel.completeBranch(branch.id)
+                                },
+                                onArchive: {
+                                    viewModel.archiveBranch(branch.id)
+                                },
+                                onDelete: {
+                                    viewModel.deleteBranch(branch.id)
                                 }
                             )
                             .frame(width: 600)
@@ -93,6 +108,57 @@ class BranchLayoutViewModel: ObservableObject {
         // Smooth scrolling to a branch requires ScrollViewProxy, which lives in the View layer.
         // The View's selectedBranchId @State drives .scrollTo(branchId) via onChange.
         // Nothing to do here — selection is already managed by the View's @State binding.
+    }
+
+    func createRootBranch() {
+        do {
+            let newBranch = try TreeStore.shared.createBranch(
+                treeId: treeId,
+                type: .conversation,
+                title: "New Branch"
+            )
+            visibleBranches.append(newBranch)
+        } catch {
+            canvasLog("[BranchLayout] Failed to create root branch: \(error)")
+        }
+    }
+
+    func renameBranch(_ id: String, title: String) {
+        do {
+            try TreeStore.shared.updateBranch(id, title: title)
+            if let idx = visibleBranches.firstIndex(where: { $0.id == id }) {
+                visibleBranches[idx].title = title
+            }
+        } catch {
+            canvasLog("[BranchLayout] Failed to rename branch \(id): \(error)")
+        }
+    }
+
+    func completeBranch(_ id: String) {
+        do {
+            try TreeStore.shared.updateBranch(id, status: .completed)
+            visibleBranches.removeAll { $0.id == id }
+        } catch {
+            canvasLog("[BranchLayout] Failed to complete branch \(id): \(error)")
+        }
+    }
+
+    func archiveBranch(_ id: String) {
+        do {
+            try TreeStore.shared.updateBranch(id, status: .archived)
+            visibleBranches.removeAll { $0.id == id }
+        } catch {
+            canvasLog("[BranchLayout] Failed to archive branch \(id): \(error)")
+        }
+    }
+
+    func deleteBranch(_ id: String) {
+        do {
+            try TreeStore.shared.deleteBranch(id)
+            visibleBranches.removeAll { $0.id == id }
+        } catch {
+            canvasLog("[BranchLayout] Failed to delete branch \(id): \(error)")
+        }
     }
 
     // MARK: - Organic Branching (Phase 8)

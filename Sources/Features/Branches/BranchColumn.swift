@@ -7,14 +7,25 @@ struct BranchColumn: View {
     let isSelected: Bool
     let onCreateBranch: (UUID) -> Void
     let onSelect: () -> Void
+    let onRename: (String) -> Void
+    let onComplete: () -> Void
+    let onArchive: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Branch header
-            BranchHeader(branch: branch, isSelected: isSelected)
-                .onTapGesture {
-                    onSelect()
-                }
+            BranchHeader(
+                branch: branch,
+                isSelected: isSelected,
+                onRename: onRename,
+                onComplete: onComplete,
+                onArchive: onArchive,
+                onDelete: onDelete
+            )
+            .onTapGesture {
+                onSelect()
+            }
 
             Divider()
 
@@ -49,13 +60,25 @@ struct BranchColumn: View {
 struct BranchHeader: View {
     let branch: Branch
     let isSelected: Bool
+    let onRename: (String) -> Void
+    let onComplete: () -> Void
+    let onArchive: () -> Void
+    let onDelete: () -> Void
 
     @State private var isEditing = false
     @State private var editedTitle: String
 
-    init(branch: Branch, isSelected: Bool) {
+    init(branch: Branch, isSelected: Bool,
+         onRename: @escaping (String) -> Void,
+         onComplete: @escaping () -> Void,
+         onArchive: @escaping () -> Void,
+         onDelete: @escaping () -> Void) {
         self.branch = branch
         self.isSelected = isSelected
+        self.onRename = onRename
+        self.onComplete = onComplete
+        self.onArchive = onArchive
+        self.onDelete = onDelete
         _editedTitle = State(initialValue: branch.displayTitle)
     }
 
@@ -80,7 +103,7 @@ struct BranchHeader: View {
                     TextField("Branch name", text: $editedTitle)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit {
-                            // TODO: Save title
+                            onRename(editedTitle)
                             isEditing = false
                         }
                 } else {
@@ -107,10 +130,10 @@ struct BranchHeader: View {
                 // Branch actions
                 Menu {
                     Button("Rename", action: { isEditing = true })
-                    Button("Complete", action: { /* TODO */ })
-                    Button("Archive", action: { /* TODO */ })
+                    Button("Complete", action: onComplete)
+                    Button("Archive", action: onArchive)
                     Divider()
-                    Button("Delete", role: .destructive, action: { /* TODO */ })
+                    Button("Delete", role: .destructive, action: onDelete)
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .font(.system(size: 16))
