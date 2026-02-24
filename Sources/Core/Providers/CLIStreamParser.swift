@@ -25,6 +25,10 @@ final class CLIStreamParser {
     /// Whether the CLI reported an error in the final result
     private(set) var isError: Bool = false
 
+    /// Token counts from the `result` event usage block
+    private(set) var inputTokens: Int = 0
+    private(set) var outputTokens: Int = 0
+
     /// Track tool_use IDs we've already emitted `.toolStart` for via stream_event,
     /// so we don't duplicate from the `assistant` fallback.
     /// Using IDs (not names) handles multiple calls to the same tool in one turn.
@@ -266,14 +270,19 @@ final class CLIStreamParser {
         return [.toolEnd(name: name, result: displayContent, isError: isError)]
     }
 
-    /// `{"type":"result","num_turns":1,"cost_usd":0.01,"session_id":"...","is_error":false}`
+    /// `{"type":"result","num_turns":1,"cost_usd":0.01,"session_id":"...","is_error":false,"usage":{...}}`
     private func parseResult(_ json: [String: Any]) -> [BridgeEvent]? {
         numTurns = json["num_turns"] as? Int ?? 0
-        costUSD = json["cost_usd"] as? Double ?? 0
+        costUSD = json["cost_usd"] as? Double ?? json["total_cost_usd"] as? Double ?? 0
         isError = json["is_error"] as? Bool ?? false
 
         if let sid = json["session_id"] as? String {
             cliSessionId = sid
+        }
+
+        if let usage = json["usage"] as? [String: Any] {
+            inputTokens = usage["input_tokens"] as? Int ?? 0
+            outputTokens = usage["output_tokens"] as? Int ?? 0
         }
 
         // Don't emit .done here — the provider emits .done on process termination

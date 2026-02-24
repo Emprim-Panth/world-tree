@@ -170,6 +170,22 @@ final class MessageStore {
         }
     }
 
+    // MARK: - Update
+
+    /// Update the content of an existing message in-place.
+    func updateMessageContent(id: String, content: String) {
+        do {
+            try db.write { db in
+                try db.execute(
+                    sql: "UPDATE messages SET content = ? WHERE id = ?",
+                    arguments: [content, id]
+                )
+            }
+        } catch {
+            canvasLog("[MessageStore] Failed to update message \(id): \(error)")
+        }
+    }
+
     /// Get the summary for a session (from existing summaries table)
     func getSessionSummary(sessionId: String) throws -> String? {
         try db.read { db in

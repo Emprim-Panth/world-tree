@@ -557,6 +557,11 @@ class DocumentEditorViewModel: ObservableObject {
         document.sections[index].content = content
         document.metadata.updatedAt = Date()
 
+        // Persist the edit to the database
+        if let messageId = document.sections[index].messageId {
+            MessageStore.shared.updateMessageContent(id: messageId, content: String(content.characters))
+        }
+
         // If editing user message, potentially create a branch
         if case .user = document.sections[index].author {
             // TODO: Implement automatic branching on edit

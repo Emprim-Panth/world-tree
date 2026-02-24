@@ -201,6 +201,14 @@ class SingleDocumentViewModel: ObservableObject {
                         """,
                     arguments: [sessionId, "canvas", workDir, "Canvas Session"]
                 )
+                try db.execute(
+                    sql: """
+                        INSERT OR IGNORE INTO canvas_branches
+                        (id, tree_id, session_id, branch_type, title, status, collapsed, created_at, updated_at)
+                        VALUES (?, ?, ?, 'conversation', 'Main', 'active', 0, datetime('now'), datetime('now'))
+                        """,
+                    arguments: [fallbackBranchId, treeId, sessionId]
+                )
             }
             self.mainBranchId = fallbackBranchId
             self.mainBranchSessionId = sessionId

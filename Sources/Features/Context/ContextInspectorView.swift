@@ -123,9 +123,16 @@ class ContextInspectorViewModel: ObservableObject {
     @Published var currentTokens: Int = 0
     @Published var maxTokens: Int = 200_000
     @Published var thresholdPercentage: Double = 75.0
-    @Published var autoCompactEnabled: Bool = true
+    @Published var autoCompactEnabled: Bool =
+        UserDefaults.standard.object(forKey: "cortana.autoCompactEnabled") as? Bool ?? true
 
     private let sessionId: String
+
+    /// Decoded source arrays — kept in sync with sections for write-back to canvas_api_state
+    private var cachedApiMessages: [APIMessage] = []
+    private var cachedSystemBlocks: [SystemBlock] = []
+    /// Number of leading sections that represent system blocks (vs. message turns)
+    private var systemBlockCount: Int = 0
 
     init(sessionId: String) {
         self.sessionId = sessionId
@@ -159,12 +166,15 @@ class ContextInspectorViewModel: ObservableObject {
 
         var builtSections: [ContextSection] = []
         var totalTokens = 0
+        var loadedBlocks: [SystemBlock] = []
+        var loadedMessages: [APIMessage] = []
 
         if let row {
             // System prompt blocks → one section per block
             if let systemStr: String = row["system_prompt"],
                let data = systemStr.data(using: .utf8),
                let blocks = try? decoder.decode([SystemBlock].self, from: data) {
+                loadedBlocks = blocks
                 for (i, block) in blocks.enumerated() {
                     let title = systemBlockTitle(for: block.text, index: i)
                     let snippet = String(block.text.prefix(120)).replacingOccurrences(of: "\n", with: " ")
@@ -186,7 +196,7 @@ class ContextInspectorViewModel: ObservableObject {
             if let msgStr: String = row["api_messages"],
                let data = msgStr.data(using: .utf8),
                let messages = try? decoder.decode([APIMessage].self, from: data) {
-                // Group consecutive messages into turns
+                loadedMessages = messages
                 var turnIndex = 0
                 var i = 0
                 while i < messages.count {
@@ -243,8 +253,32 @@ class ContextInspectorViewModel: ObservableObject {
             )]
         }
 
+        cachedSystemBlocks = loadedBlocks
+        cachedApiMessages = loadedMessages
+        systemBlockCount = loadedBlocks.count
         sections = builtSections
         currentTokens = totalTokens
+    }
+
+    /// Write current cachedApiMessages + cachedSystemBlocks back to canvas_api_state.
+    private func persistMutations() {
+        let encoder = JSONEncoder()
+        do {
+            let messagesJSON = String(data: try encoder.encode(cachedApiMessages), encoding: .utf8) ?? "[]"
+            let systemJSON = String(data: try encoder.encode(cachedSystemBlocks), encoding: .utf8) ?? "[]"
+            try DatabaseManager.shared.write { db in
+                try db.execute(
+                    sql: """
+                        UPDATE canvas_api_state
+                        SET api_messages = ?, system_prompt = ?, updated_at = datetime('now')
+                        WHERE session_id = ?
+                        """,
+                    arguments: [messagesJSON, systemJSON, sessionId]
+                )
+            }
+        } catch {
+            canvasLog("[ContextInspector] Failed to persist mutations: \(error)")
+        }
     }
 
     /// Derive a human-readable title from the content of a system block.
@@ -273,6 +307,16 @@ class ContextInspectorViewModel: ObservableObject {
     func togglePin(_ sectionId: UUID) {
         guard let index = sections.firstIndex(where: { $0.id == sectionId }) else { return }
         sections[index].isPinned.toggle()
+
+        // Sync to cached system blocks (message turns don't have a pin mechanism in the API)
+        if index < systemBlockCount {
+            if cachedSystemBlocks[index].cacheControl != nil {
+                cachedSystemBlocks[index].cacheControl = nil
+            } else {
+                cachedSystemBlocks[index].cacheControl = CacheControl(type: "ephemeral")
+            }
+            persistMutations()
+        }
     }
 
     func deleteSection(_ sectionId: UUID) {
@@ -280,8 +324,16 @@ class ContextInspectorViewModel: ObservableObject {
               sections[index].canDelete else { return }
 
         let tokenCount = sections[index].tokenCount
+
+        // Remove from cached messages (only message turns can be deleted — system blocks have canDelete: false)
+        let messageIndex = index - systemBlockCount
+        if messageIndex >= 0 && messageIndex < cachedApiMessages.count {
+            cachedApiMessages.remove(at: messageIndex)
+        }
+
         sections.remove(at: index)
         currentTokens -= tokenCount
+        persistMutations()
     }
 
     func compactNow() {
@@ -291,23 +343,40 @@ class ContextInspectorViewModel: ObservableObject {
 
         var tokensFreed = 0
         let targetTokens = Int(Double(maxTokens) * 0.6) // Compact to 60%
+        var sectionsToRemoveIds: [UUID] = []
 
         for section in unpinned {
-            if currentTokens - tokensFreed <= targetTokens {
-                break
-            }
-
-            if let index = sections.firstIndex(where: { $0.id == section.id }) {
-                tokensFreed += sections[index].tokenCount
-                sections.remove(at: index)
+            if currentTokens - tokensFreed <= targetTokens { break }
+            if let idx = sections.firstIndex(where: { $0.id == section.id }) {
+                tokensFreed += sections[idx].tokenCount
+                sectionsToRemoveIds.append(section.id)
             }
         }
 
+        guard !sectionsToRemoveIds.isEmpty else { return }
+
+        // Collect message indices before removing from sections (indices are still valid)
+        var messageIndicesToRemove: [Int] = []
+        for id in sectionsToRemoveIds {
+            if let idx = sections.firstIndex(where: { $0.id == id }) {
+                let msgIdx = idx - systemBlockCount
+                if msgIdx >= 0 { messageIndicesToRemove.append(msgIdx) }
+            }
+        }
+
+        sections.removeAll { sectionsToRemoveIds.contains($0.id) }
         currentTokens -= tokensFreed
+
+        for msgIdx in messageIndicesToRemove.sorted().reversed() {
+            if msgIdx < cachedApiMessages.count { cachedApiMessages.remove(at: msgIdx) }
+        }
+
+        persistMutations()
     }
 
     func toggleAutoCompact() {
         autoCompactEnabled.toggle()
+        UserDefaults.standard.set(autoCompactEnabled, forKey: "cortana.autoCompactEnabled")
     }
 }
 

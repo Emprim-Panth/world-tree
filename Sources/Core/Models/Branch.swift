@@ -34,6 +34,8 @@ struct Branch: Identifiable, Equatable, Hashable {
 
     /// Populated by TreeStore when loading the tree
     var children: [Branch] = []
+    var depth: Int = 0
+    var messageCount: Int = 0
 
     /// Display title: uses explicit title, or generates from type + creation
     var displayTitle: String {

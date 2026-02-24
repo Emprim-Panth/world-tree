@@ -70,9 +70,31 @@ final class TreeStore {
                 return nil
             }
 
-            let branches = try Branch.filter(Column("tree_id") == id)
+            var branches = try Branch.filter(Column("tree_id") == id)
                 .order(Column("created_at"))
                 .fetchAll(db)
+
+            // Populate message counts in one bulk query
+            let countRows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT b.id, COUNT(m.id) as msg_count
+                    FROM canvas_branches b
+                    LEFT JOIN messages m ON m.session_id = b.session_id
+                    WHERE b.tree_id = ?
+                    GROUP BY b.id
+                    """,
+                arguments: [id]
+            )
+            var messageCounts: [String: Int] = [:]
+            for row in countRows {
+                if let branchId: String = row["id"] {
+                    messageCounts[branchId] = row["msg_count"] ?? 0
+                }
+            }
+            for index in branches.indices {
+                branches[index].messageCount = messageCounts[branches[index].id] ?? 0
+            }
 
             tree.branches = Self.buildBranchTree(from: branches)
             return tree
@@ -402,25 +424,47 @@ final class TreeStore {
 
     // MARK: - Tree Building
 
-    /// Builds a tree hierarchy from a flat list of branches
+    /// Builds a tree hierarchy from a flat list of branches.
+    /// Uses a two-pass recursive approach to correctly nest grandchildren
+    /// and compute depth for each branch.
     static func buildBranchTree(from branches: [Branch]) -> [Branch] {
+        guard !branches.isEmpty else { return [] }
+
+        // Pass 1: compute depth by walking each branch's parent chain
+        var depthCache: [String: Int] = [:]
+        func computeDepth(id: String) -> Int {
+            if let d = depthCache[id] { return d }
+            let parent = branches.first { $0.id == id }?.parentBranchId
+            let d = parent.map { computeDepth(id: $0) + 1 } ?? 0
+            depthCache[id] = d
+            return d
+        }
+        branches.forEach { _ = computeDepth(id: $0.id) }
+
+        // Build lookup with depth stamped in
         var lookup: [String: Branch] = [:]
-        for branch in branches {
+        for var branch in branches {
+            branch.depth = depthCache[branch.id] ?? 0
             lookup[branch.id] = branch
         }
 
-        // Attach children to parents.
-        // Branch is a value type — must copy, mutate, then reassign back into the dictionary.
+        // Build children-IDs map
+        var childrenIds: [String: [String]] = [:]
         for branch in branches {
-            if let parentId = branch.parentBranchId, var parent = lookup[parentId] {
-                parent.children.append(branch)
-                lookup[parentId] = parent
+            if let parentId = branch.parentBranchId {
+                childrenIds[parentId, default: []].append(branch.id)
             }
         }
 
-        // Return root branches (no parent)
+        // Pass 2: recursively attach children (fixes struct value-type grandchild bug)
+        func attachChildren(to branchId: String) -> Branch? {
+            guard var branch = lookup[branchId] else { return nil }
+            branch.children = (childrenIds[branchId] ?? []).compactMap { attachChildren(to: $0) }
+            return branch
+        }
+
         return branches
             .filter { $0.parentBranchId == nil }
-            .compactMap { lookup[$0.id] }
+            .compactMap { attachChildren(to: $0.id) }
     }
 }

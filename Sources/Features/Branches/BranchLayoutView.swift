@@ -133,17 +133,3 @@ class BranchLayoutViewModel: ObservableObject {
     }
 }
 
-// MARK: - Branch Extensions
-
-extension Branch {
-    var depth: Int {
-        // Calculate depth by traversing parent chain
-        // For now, return 0 (will be populated by TreeStore)
-        0
-    }
-
-    var messageCount: Int {
-        // TODO: Load from database
-        0
-    }
-}

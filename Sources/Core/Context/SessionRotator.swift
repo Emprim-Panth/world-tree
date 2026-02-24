@@ -32,6 +32,11 @@ enum SessionRotator {
 
         guard level.shouldRotate else { return nil }
 
+        guard UserDefaults.standard.object(forKey: "cortana.autoCompactEnabled") as? Bool ?? true else {
+            canvasLog("[SessionRotator] Auto-compact disabled — skipping rotation")
+            return nil
+        }
+
         canvasLog("[SessionRotator] Pressure \(level.rawValue) (\(tokens) est. tokens) — rotating session \(sessionId)")
         return await performRotation(
             sessionId: sessionId,

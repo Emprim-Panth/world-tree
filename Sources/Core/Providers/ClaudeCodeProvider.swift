@@ -88,10 +88,6 @@ final class ClaudeCodeProvider: LLMProvider {
     // MARK: - Send
 
     func send(context: ProviderSendContext) -> AsyncStream<BridgeEvent> {
-        stateLock.lock()
-        _isRunning = true
-        stateLock.unlock()
-
         return AsyncStream { [weak self] continuation in
             guard let self else {
                 continuation.yield(.error("Provider deallocated"))
@@ -173,7 +169,10 @@ final class ClaudeCodeProvider: LLMProvider {
             proc.standardOutput = stdoutPipe
             proc.standardError = stderrPipe
 
+            // Set both _isRunning and _currentProcess atomically so cancel()
+            // can never observe isRunning=true with a nil process handle.
             self.stateLock.lock()
+            self._isRunning = true
             self._currentProcess = proc
             self.stateLock.unlock()
 
@@ -235,7 +234,10 @@ final class ClaudeCodeProvider: LLMProvider {
                         continuation.yield(.error("Session resume failed and retry produced no response. Please try again."))
                     }
 
-                    let usage = SessionTokenUsage()
+                    var usage = SessionTokenUsage()
+                    usage.totalInputTokens = parser.inputTokens
+                    usage.totalOutputTokens = parser.outputTokens
+                    usage.turnCount = parser.numTurns
                     continuation.yield(.done(usage: usage))
                     continuation.finish()
 
