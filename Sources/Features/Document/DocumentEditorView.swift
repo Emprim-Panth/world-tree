@@ -1357,19 +1357,30 @@ struct UserInputArea: View {
                     }
 
                     ZStack(alignment: .topLeading) {
+                        // Ghost text — invisible replica drives the ZStack height.
+                        // SwiftUI measures Text reliably; NSScrollView does not.
+                        // Uses a single space when empty so there's always 1 line of height.
+                        Text(text.isEmpty ? " " : text)
+                            .font(.system(.body))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .opacity(0)
+                            .allowsHitTesting(false)
+
                         if text.isEmpty && attachments.isEmpty {
                             Text("Message \(LocalAgentIdentity.name)… or drop images/files here")
                                 .font(.system(.body))
                                 .foregroundStyle(.tertiary)
                                 .padding(.horizontal, 8)
-                                .padding(.vertical, 10)
+                                .padding(.vertical, 6)
                                 .allowsHitTesting(false)
                         } else if text.isEmpty {
                             Text("Add a message…")
                                 .font(.system(.body))
                                 .foregroundStyle(.tertiary)
                                 .padding(.horizontal, 8)
-                                .padding(.vertical, 10)
+                                .padding(.vertical, 6)
                                 .allowsHitTesting(false)
                         }
 
@@ -1385,7 +1396,7 @@ struct UserInputArea: View {
                         )
                         .focused($editorFocused)
                     }
-                    .frame(minHeight: 36, maxHeight: 200)
+                    .frame(maxHeight: 160)
                     .background(isDragTargeted
                         ? Color.accentColor.opacity(0.08)
                         : Color(nsColor: .controlBackgroundColor))
