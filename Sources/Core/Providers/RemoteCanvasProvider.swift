@@ -90,9 +90,11 @@ final class RemoteCanvasProvider: LLMProvider {
     }
 
     func cancel() {
-        isCancelled = true
-        currentTask?.cancel()
-        currentTask = nil
+        Task { @MainActor [weak self] in
+            self?.isCancelled = true
+            self?.currentTask?.cancel()
+            self?.currentTask = nil
+        }
     }
 
     // MARK: - SSE Streaming

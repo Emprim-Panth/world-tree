@@ -40,6 +40,10 @@ actor DaemonSocket {
             throw DaemonError.connectionFailed(errno: errno)
         }
 
+        // Set receive timeout — prevents indefinite blocking if daemon hangs
+        var tv = timeval(tv_sec: 10, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
         // Send JSON command
         let data = try JSONEncoder().encode(command)
         guard let jsonString = String(data: data, encoding: .utf8).map({ $0 + "\n" }) else {

@@ -36,6 +36,7 @@ struct WorldTreeApp: App {
                     startCanvasServerIfEnabled()
                     startPluginServerIfEnabled()
                     PeekabooBridgeServer.shared.start()
+                    WTCommandBridge.shared.start()
                     // VoiceService configures lazily on first use — no startup call needed
                     Task {
                         // Recover any responses that were interrupted by a crash or SIGTERM

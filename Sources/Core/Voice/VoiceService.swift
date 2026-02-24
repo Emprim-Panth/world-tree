@@ -42,6 +42,7 @@ actor VoiceService {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private(set) var isListening = false
+    private var lastPartialText: String = ""
 
     // MARK: - Text-to-Speech (Output)
 
@@ -160,8 +161,16 @@ actor VoiceService {
     }
 
     /// Stop listening and finalize transcription.
+    /// Flushes any in-flight partial transcription as a final result before stopping —
+    /// catches the case where the user taps stop before a natural sentence boundary.
     func stopListening() {
         guard isListening else { return }
+
+        // Flush partial before tearing down so the user doesn't lose what they said
+        if !lastPartialText.isEmpty {
+            postTranscription(lastPartialText, isFinal: true)
+            lastPartialText = ""
+        }
 
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
@@ -178,6 +187,8 @@ actor VoiceService {
         if let result {
             let text = result.bestTranscription.formattedString
             let isFinal = result.isFinal
+            // Track partial so we can flush it if recognition times out
+            lastPartialText = isFinal ? "" : text
             postTranscription(text, isFinal: isFinal)
 
             if isFinal {
@@ -189,7 +200,11 @@ actor VoiceService {
             // Don't report cancellation as an error — that's normal stop behavior
             let nsError = error as NSError
             if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 216 {
-                // "Retry" — speech recognizer timed out, just stop cleanly
+                // Timeout — flush whatever was partially transcribed as final, then stop
+                if !lastPartialText.isEmpty {
+                    postTranscription(lastPartialText, isFinal: true)
+                    lastPartialText = ""
+                }
                 stopListening()
                 return
             }

@@ -452,8 +452,19 @@ final class ConversationStateManager {
             output += " | **Type:** TypeScript/JS"
         }
 
-        // Quick git branch check (async to avoid blocking MainActor)
+        // Quick git branch check (async to avoid blocking MainActor, 5s timeout)
         let gitBranch: String? = await withCheckedContinuation { continuation in
+            var hasResumed = false
+            let lock = NSLock()
+
+            func safeResume(_ value: String?) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !hasResumed else { return }
+                hasResumed = true
+                continuation.resume(returning: value)
+            }
+
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
             proc.arguments = ["rev-parse", "--abbrev-ref", "HEAD"]
@@ -462,20 +473,28 @@ final class ConversationStateManager {
             proc.standardOutput = pipe
             proc.standardError = FileHandle.nullDevice
 
+            let timeoutWork = DispatchWorkItem { [weak proc] in
+                if let proc, proc.isRunning { proc.terminate() }
+                safeResume(nil)
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(5), execute: timeoutWork)
+
             proc.terminationHandler = { process in
+                timeoutWork.cancel()
                 if process.terminationStatus == 0,
                    let branch = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines), !branch.isEmpty {
-                    continuation.resume(returning: branch)
+                    safeResume(branch)
                 } else {
-                    continuation.resume(returning: nil)
+                    safeResume(nil)
                 }
             }
 
             do {
                 try proc.run()
             } catch {
-                continuation.resume(returning: nil)
+                timeoutWork.cancel()
+                safeResume(nil)
             }
         }
         if let gitBranch {
@@ -499,19 +518,38 @@ final class ConversationStateManager {
         let outputPath = "\(home)/.cortana/state/session-context.md"
 
         let success: Bool = await withCheckedContinuation { continuation in
+            var hasResumed = false
+            let lock = NSLock()
+
+            func safeResume(_ value: Bool) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !hasResumed else { return }
+                hasResumed = true
+                continuation.resume(returning: value)
+            }
+
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: restorePath)
             proc.standardOutput = FileHandle.nullDevice
             proc.standardError = FileHandle.nullDevice
 
+            let timeoutWork = DispatchWorkItem { [weak proc] in
+                if let proc, proc.isRunning { proc.terminate() }
+                safeResume(false)
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(5), execute: timeoutWork)
+
             proc.terminationHandler = { process in
-                continuation.resume(returning: process.terminationStatus == 0)
+                timeoutWork.cancel()
+                safeResume(process.terminationStatus == 0)
             }
 
             do {
                 try proc.run()
             } catch {
-                continuation.resume(returning: false)
+                timeoutWork.cancel()
+                safeResume(false)
             }
         }
 

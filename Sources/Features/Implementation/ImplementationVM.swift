@@ -109,15 +109,19 @@ final class ImplementationVM: ObservableObject {
 
     private func watchForCompletion(taskId: String) {
         let markerPath = "\(CortanaConstants.completedMarkersDir)/completed-\(taskId)"
+        let maxPolls = 600  // 30 minutes at 3s intervals
 
-        watcherTask = Task {
-            while phase == .running {
+        // Poll for completion marker file — tracked so it can be cancelled
+        watcherTask = Task { [weak self] in
+            var polls = 0
+            while let self, self.phase == .running, !Task.isCancelled, polls < maxPolls {
                 try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
                 guard !Task.isCancelled else { return }
+                polls += 1
 
                 if FileManager.default.fileExists(atPath: markerPath) {
-                    await handleCompletion(taskId: taskId)
-                    break
+                    await self.handleCompletion(taskId: taskId)
+                    return
                 }
             }
         }

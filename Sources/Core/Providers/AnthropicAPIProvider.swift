@@ -256,10 +256,13 @@ final class AnthropicAPIProvider: LLMProvider {
     // MARK: - Cancel
 
     func cancel() {
-        isCancelled = true
-        currentTask?.cancel()
-        currentTask = nil
-        isRunning = false
+        // Schedule on MainActor to avoid data race on isCancelled/isRunning/currentTask
+        Task { @MainActor [weak self] in
+            self?.isCancelled = true
+            self?.currentTask?.cancel()
+            self?.currentTask = nil
+            self?.isRunning = false
+        }
     }
 
     // MARK: - State Manager
@@ -353,17 +356,40 @@ final class AnthropicAPIProvider: LLMProvider {
 
         do {
             try proc.run()
-            // Wait off the main thread — don't block the MainActor during KB lookup
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                proc.terminationHandler = { _ in continuation.resume() }
+
+            // Wait with a 5-second timeout — bun can hang if DB is locked
+            let result: String? = await withCheckedContinuation { continuation in
+                var hasResumed = false
+                let lock = NSLock()
+
+                func safeResume(_ value: String?) {
+                    lock.lock()
+                    defer { lock.unlock() }
+                    guard !hasResumed else { return }
+                    hasResumed = true
+                    continuation.resume(returning: value)
+                }
+
+                let timeoutWork = DispatchWorkItem { [weak proc] in
+                    if let proc, proc.isRunning {
+                        canvasLog("[AnthropicAPIProvider] KB query timed out after 5s — terminating")
+                        proc.terminate()
+                    }
+                    safeResume(nil)
+                }
+                DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(5), execute: timeoutWork)
+
+                proc.terminationHandler = { _ in
+                    timeoutWork.cancel()
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let output = String(data: data, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    safeResume(output)
+                }
             }
-            proc.terminationHandler = nil
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8),
-                  !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return ""
-            }
-            return String(output.prefix(2000))
+
+            guard let result, !result.isEmpty else { return "" }
+            return String(result.prefix(2000))
         } catch {
             return ""
         }

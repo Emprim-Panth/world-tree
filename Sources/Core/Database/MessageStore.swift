@@ -58,6 +58,21 @@ final class MessageStore {
 
     // MARK: - Write
 
+    /// Ensure a session row exists before inserting messages.
+    /// Guards against FK constraint failures when branches outlive their session rows
+    /// (e.g. DB migration, cortana-core session created outside World Tree).
+    func ensureSession(sessionId: String, workingDirectory: String) throws {
+        try db.write { db in
+            try db.execute(
+                sql: """
+                    INSERT OR IGNORE INTO sessions (id, terminal_id, working_directory, description, started_at)
+                    VALUES (?, 'canvas', ?, 'Canvas session', datetime('now'))
+                    """,
+                arguments: [sessionId, workingDirectory]
+            )
+        }
+    }
+
     /// Send a message (user or assistant) to a session.
     /// INSERT matches cortana-core's pattern for hook compatibility.
     func sendMessage(sessionId: String, role: MessageRole, content: String) throws -> Message {

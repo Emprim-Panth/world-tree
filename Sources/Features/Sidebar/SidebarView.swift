@@ -203,14 +203,8 @@ struct SidebarView: View {
                             ForEach(group.trees) { tree in
                                 treeRow(tree)
                                     .contextMenu { treeContextMenu(tree) }
-
-                                // Show branches under the selected tree
-                                if appState.selectedTreeId == tree.id {
-                                    ForEach(tree.branches) { branch in
-                                        TreeNodeView(branch: branch, treeId: tree.id)
-                                            .padding(.leading, 12)
-                                    }
-                                }
+                                // Branches are navigated from within the conversation
+                                // (branch badges on messages) — not listed in the sidebar.
                             }
 
                             Divider()

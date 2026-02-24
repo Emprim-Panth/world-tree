@@ -8,6 +8,14 @@ final class ClaudeService {
     private var apiKey: String?
     private let baseURL = "https://api.anthropic.com/v1"
 
+    /// Dedicated session with streaming-appropriate timeouts (300s inter-packet).
+    private let streamingSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 300  // 5 min between data packets
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: config)
+    }()
+
     private init() {
         loadAPIKey()
     }
@@ -71,7 +79,7 @@ final class ClaudeService {
 
                     request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    let (bytes, response) = try await streamingSession.bytes(for: request)
 
                     guard let httpResponse = response as? HTTPURLResponse else {
                         continuation.finish(throwing: ClaudeServiceError.apiError("Invalid response"))

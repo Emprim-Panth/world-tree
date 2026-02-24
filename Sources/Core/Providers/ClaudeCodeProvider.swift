@@ -18,6 +18,9 @@ final class ClaudeCodeProvider: LLMProvider {
     private let stateLock = NSLock()
     private var _isRunning = false
     private var _currentProcess: Process?
+    /// Per-process cancellation tracking — keyed by Process hash so concurrent
+    /// sessions don't clobber each other's cancelled state.
+    private var _cancelledProcesses = Set<Int>()
 
     var isRunning: Bool {
         stateLock.lock()
@@ -29,6 +32,10 @@ final class ClaudeCodeProvider: LLMProvider {
 
     /// Maps Canvas session IDs to CLI session IDs for --resume support
     private var cliSessionMap: [String: String] = [:]
+    /// Tracks when each session was last successfully used (CLI returned output).
+    /// Sessions older than this TTL are not resumed — the server has likely expired them.
+    private var cliSessionLastUsed: [String: Date] = [:]
+    private static let sessionTTL: TimeInterval = 30 * 60  // 30 minutes
     private let mapLock = NSLock()
 
     /// File-based session map — written synchronously on the parse queue so there
@@ -58,6 +65,17 @@ final class ClaudeCodeProvider: LLMProvider {
         }
 
         return await withCheckedContinuation { continuation in
+            var hasResumed = false
+            let lock = NSLock()
+
+            func safeResume(_ value: ProviderHealth) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !hasResumed else { return }
+                hasResumed = true
+                continuation.resume(returning: value)
+            }
+
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: cliPath)
             proc.arguments = ["--version"]
@@ -69,18 +87,27 @@ final class ClaudeCodeProvider: LLMProvider {
             env.removeValue(forKey: "CLAUDECODE")
             proc.environment = env
 
+            // 10s timeout — CLI can hang on startup (license check, update prompt)
+            let timeoutWork = DispatchWorkItem { [weak proc] in
+                if let proc, proc.isRunning { proc.terminate() }
+                safeResume(.degraded(reason: "CLI health check timed out"))
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(10), execute: timeoutWork)
+
             proc.terminationHandler = { process in
+                timeoutWork.cancel()
                 if process.terminationStatus == 0 {
-                    continuation.resume(returning: .available)
+                    safeResume(.available)
                 } else {
-                    continuation.resume(returning: .degraded(reason: "CLI exited with status \(process.terminationStatus)"))
+                    safeResume(.degraded(reason: "CLI exited with status \(process.terminationStatus)"))
                 }
             }
 
             do {
                 try proc.run()
             } catch {
-                continuation.resume(returning: .unavailable(reason: error.localizedDescription))
+                timeoutWork.cancel()
+                safeResume(.unavailable(reason: error.localizedDescription))
             }
         }
     }
@@ -180,6 +207,8 @@ final class ClaudeCodeProvider: LLMProvider {
             // Track whether any content event was yielded during this run.
             var yieldedContent = false
             var resumeFailedSilently = false
+            /// Accumulated stderr — read on termination for diagnostics.
+            var stderrData = Data()
 
             // Read stdout on serial parse queue for ordered access
             stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -205,10 +234,17 @@ final class ClaudeCodeProvider: LLMProvider {
                 }
             }
 
+            // Accumulate stderr for diagnostics on failure
+            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if !data.isEmpty { stderrData.append(data) }
+            }
+
             // Process termination on same serial queue for ordering
             proc.terminationHandler = { [weak self] process in
                 self?.parseQueue.async {
                     stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                    stderrPipe.fileHandleForReading.readabilityHandler = nil
 
                     let remaining = parser.flush()
                     for event in remaining {
@@ -216,17 +252,51 @@ final class ClaudeCodeProvider: LLMProvider {
                         continuation.yield(event)
                     }
 
+                    // Capture stderr for logging
+                    let stderrText = String(data: stderrData, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    if !stderrText.isEmpty {
+                        canvasLog("[ClaudeCodeProvider] stderr: \(stderrText.prefix(500))")
+                    }
+
+                    let procHash = ObjectIdentifier(process).hashValue
+                    let wasCancelled: Bool = {
+                        self?.stateLock.lock()
+                        defer { self?.stateLock.unlock() }
+                        let cancelled = self?._cancelledProcesses.contains(procHash) ?? false
+                        self?._cancelledProcesses.remove(procHash)
+                        return cancelled
+                    }()
+
                     if let sid = parser.cliSessionId, let self {
                         self.setCliSession(sid, for: context.sessionId)
                         Task { @MainActor [weak self] in
                             self?.persistSessionMap()
                         }
-                    } else {
-                        canvasLog("[ClaudeCodeProvider] ⚠️ Process exited without a session ID — next --resume will fail")
+                    } else if !wasCancelled {
+                        // No session ID and not cancelled — session is broken.
+                        // Rotate so next attempt starts fresh instead of resume-looping.
+                        canvasLog("[ClaudeCodeProvider] ⚠️ Process exited without a session ID — rotating session")
+                        self?.rotateSession(for: context.sessionId)
                     }
 
-                    if process.terminationStatus != 0 && !parser.isError {
-                        continuation.yield(.error("CLI exited with status \(process.terminationStatus)"))
+                    if process.terminationStatus != 0 && !parser.isError && !wasCancelled {
+                        // Non-zero exit that wasn't intentional cancellation.
+                        // Rotate the session so the next message starts clean
+                        // instead of trying to --resume a dead session.
+                        self?.rotateSession(for: context.sessionId)
+
+                        // Surface stderr if available — it's the actual reason.
+                        let reason: String
+                        if !stderrText.isEmpty {
+                            reason = stderrText.prefix(200).description
+                        } else if process.terminationStatus == 15 {
+                            reason = "Connection interrupted"
+                        } else {
+                            reason = "CLI exited with status \(process.terminationStatus)"
+                        }
+                        canvasLog("[ClaudeCodeProvider] CLI failed: status=\(process.terminationStatus), stderr=\(stderrText.prefix(200))")
+                        continuation.yield(.error("\(reason). Send another message to continue."))
                     } else if !yieldedContent && resumeFailedSilently {
                         // Resume silently started a new session but produced no content.
                         // Surface as an error so the caller can retry or surface to the user.
@@ -277,6 +347,7 @@ final class ClaudeCodeProvider: LLMProvider {
     func rotateSession(for canvasSessionId: String) {
         mapLock.lock()
         cliSessionMap.removeValue(forKey: canvasSessionId)
+        cliSessionLastUsed.removeValue(forKey: canvasSessionId)
         mapLock.unlock()
         canvasLog("[ClaudeCodeProvider] Rotated session mapping for \(canvasSessionId)")
     }
@@ -286,6 +357,9 @@ final class ClaudeCodeProvider: LLMProvider {
     func cancel() {
         stateLock.lock()
         let proc = _currentProcess
+        if let proc {
+            _cancelledProcesses.insert(ObjectIdentifier(proc).hashValue)
+        }
         _currentProcess = nil
         _isRunning = false
         stateLock.unlock()
@@ -297,12 +371,24 @@ final class ClaudeCodeProvider: LLMProvider {
     private func getCliSession(for canvasSessionId: String) -> String? {
         mapLock.lock()
         defer { mapLock.unlock() }
-        return cliSessionMap[canvasSessionId]
+        guard let sid = cliSessionMap[canvasSessionId] else { return nil }
+        // Don't resume sessions that are likely expired on the server.
+        // No timestamp = loaded from DB/file with unknown age = treat as stale.
+        guard let lastUsed = cliSessionLastUsed[canvasSessionId] else {
+            canvasLog("[ClaudeCodeProvider] Session \(sid.prefix(8))… has no timestamp — starting fresh")
+            return nil
+        }
+        if Date().timeIntervalSince(lastUsed) > Self.sessionTTL {
+            canvasLog("[ClaudeCodeProvider] Session \(sid.prefix(8))… expired (>\(Int(Self.sessionTTL/60))min) — starting fresh")
+            return nil
+        }
+        return sid
     }
 
     private func setCliSession(_ cliSessionId: String, for canvasSessionId: String) {
         mapLock.lock()
         cliSessionMap[canvasSessionId] = cliSessionId
+        cliSessionLastUsed[canvasSessionId] = Date()
         let snapshot = cliSessionMap
         mapLock.unlock()
         // Write to file synchronously — no MainActor/Task timing risk.

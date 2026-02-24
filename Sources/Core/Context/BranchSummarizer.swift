@@ -137,6 +137,7 @@ final class BranchSummarizer {
     // MARK: - CLI Execution
 
     /// Run the summarization via Claude CLI with max-turns 1.
+    /// Enforces a 120-second timeout to prevent indefinite hangs.
     private func runSummarization(prompt: String) async -> String? {
         let cliPath = "\(home)/.local/bin/claude"
         guard FileManager.default.fileExists(atPath: cliPath) else {
@@ -145,6 +146,17 @@ final class BranchSummarizer {
         }
 
         return await withCheckedContinuation { continuation in
+            var hasResumed = false
+            let lock = NSLock()
+
+            func safeResume(_ value: String?) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !hasResumed else { return }
+                hasResumed = true
+                continuation.resume(returning: value)
+            }
+
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: cliPath)
             proc.arguments = [
@@ -166,24 +178,34 @@ final class BranchSummarizer {
             proc.standardOutput = stdoutPipe
             proc.standardError = FileHandle.nullDevice
 
+            // Timeout watchdog — kill the process if it runs longer than 120s
+            let timeoutWork = DispatchWorkItem { [weak proc] in
+                guard let proc, proc.isRunning else { return }
+                canvasLog("[BranchSummarizer] CLI timed out after 120s — terminating")
+                proc.terminate()
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(120), execute: timeoutWork)
+
             proc.terminationHandler = { process in
+                timeoutWork.cancel()
                 let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
                 let output = String(data: data, encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
 
                 if process.terminationStatus == 0, let output, !output.isEmpty {
-                    continuation.resume(returning: output)
+                    safeResume(output)
                 } else {
                     canvasLog("[BranchSummarizer] CLI exited with status \(process.terminationStatus)")
-                    continuation.resume(returning: nil)
+                    safeResume(nil)
                 }
             }
 
             do {
                 try proc.run()
             } catch {
+                timeoutWork.cancel()
                 canvasLog("[BranchSummarizer] Failed to launch CLI: \(error)")
-                continuation.resume(returning: nil)
+                safeResume(nil)
             }
         }
     }

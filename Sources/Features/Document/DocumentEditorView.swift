@@ -43,47 +43,17 @@ struct DocumentEditorView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        // Empty state — shown before the first message
-                        if viewModel.document.sections.isEmpty && !viewModel.isProcessing {
-                            EmptyConversationView()
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 60)
-                        }
-
-                        // Document sections (replaces message bubbles)
-                        ForEach(viewModel.document.sections) { section in
-                            DocumentSectionView(
-                                section: section,
-                                isHovered: hoveredSectionId == section.id,
-                                showInferButton: !viewModel.isRootBranch,
-                                onEdit: { newContent in
-                                    viewModel.updateSection(section.id, content: newContent)
-                                },
-                                onBranch: {
-                                    viewModel.requestFork(from: section.id)
-                                },
-                                onInfer: {
-                                    viewModel.inferFinding(from: section.id)
-                                },
-                                onNavigateToBranch: { branchId in
-                                    guard let treeId = viewModel.treeId else { return }
-                                    AppState.shared.selectBranch(branchId, in: treeId)
-                                },
-                                onFixError: { failedCall in
-                                    viewModel.fixWithClaude(failedCall)
-                                }
-                            )
-                            .id(section.id)
-                            .onHover { hovering in
-                                hoveredSectionId = hovering ? section.id : nil
+            VStack(spacing: 0) {
+                // --- Scrollable message area ---
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            // Empty state — shown before the first message
+                            if viewModel.document.sections.isEmpty && !viewModel.isProcessing {
+                                EmptyConversationView()
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 60)
                             }
-                            .opacity(searchQuery.isEmpty ? 1.0 :
-                                (String(section.content.characters)
-                                    .localizedCaseInsensitiveContains(searchQuery) ? 1.0 : 0.3))
-                        }
 
                         // Live streaming section — tokens appear as they arrive (only once content exists)
                         if let streaming = viewModel.streamingContent, !streaming.isEmpty {
@@ -161,7 +131,6 @@ struct DocumentEditorView: View {
                                     onAcceptAll: { viewModel.spawnParallelBranches() },
                                     onDismiss: { viewModel.branchOpportunity = nil }
                                 )
-                                .transition(.opacity.combined(with: .move(edge: .bottom)))
                             }
                         }
                         .padding(.horizontal, 24)
@@ -263,6 +232,7 @@ struct DocumentEditorView: View {
                     viewModel.forkFromLastMessage()
                 }
             }
+            .background(Color(nsColor: .textBackgroundColor))
         }
     }
 }
@@ -278,7 +248,19 @@ class DocumentEditorViewModel: ObservableObject {
         }
     }
     @Published var pendingAttachments: [Attachment] = []
-    @Published var isProcessing = false
+    @Published var isProcessing = false {
+        didSet {
+            if isProcessing {
+                // Prevent sleep while Cortana is working — dropped connection mid-stream is a bad time
+                sleepAssertion = ProcessInfo.processInfo.beginActivity(
+                    options: .userInitiated, reason: "Cortana is working")
+            } else if let a = sleepAssertion {
+                ProcessInfo.processInfo.endActivity(a)
+                sleepAssertion = nil
+            }
+        }
+    }
+    private var sleepAssertion: NSObjectProtocol?
     @Published var branchOpportunity: BranchOpportunity?
     /// Live token stream content — shown in the chat as Cortana types.
     /// Nil when not streaming; cleared once the full response is persisted.
@@ -781,6 +763,9 @@ class DocumentEditorViewModel: ObservableObject {
         let content = messageText ?? String(section.content.characters)
 
         streamTask = Task {
+            // 0. Ensure session row exists — guards against FK failures on orphaned branches
+            try? MessageStore.shared.ensureSession(sessionId: sessionId, workingDirectory: workingDirectory)
+
             // 1. Persist user message to DB
             // Evaluate isNew BEFORE inserting — it must reflect whether the session had
             // prior messages, not whether the message we're about to insert exists yet.
@@ -808,7 +793,7 @@ class DocumentEditorViewModel: ObservableObject {
             //            where --resume silently fails on a consecutive message — Claude
             //            always has at minimum the previous exchange.
             //
-            // • Stale:   last 8 turns injected when first send after launch or >15 min gap.
+            // • Stale:   last 4 turns injected when first send after launch or >15 min gap.
             //            Covers session expiry after leaving the app.
             let now = Date()
             let isSessionStale = lastSendTimestamp.map {
@@ -925,12 +910,18 @@ class DocumentEditorViewModel: ObservableObject {
             streamingContent = nil     // Stream complete — persisted section takes over
             hasNewStreamContent = false
 
+            watchdog.cancel()
+
             // If cancelled, skip persist — the interruption handler already saved the partial
             guard !Task.isCancelled else { return }
             // If stream ended with no output and no explicit error, the CLI silently failed.
+            // Rotate the session so the next attempt starts clean.
             if fullResponse.isEmpty && !hadExplicitError {
-                fullResponse = "⚠️ No response received. The request may have been rate-limited or timed out. Please try again."
-                canvasLog("[DocumentEditor] Stream ended with no output — surfacing silent failure to user")
+                fullResponse = "⚠️ No response received — the session may have expired. Send another message to continue."
+                canvasLog("[DocumentEditor] Stream ended with no output — rotating session for recovery")
+                if let cliProvider = ProviderManager.shared.activeProvider as? ClaudeCodeProvider {
+                    cliProvider.rotateSession(for: sessionId)
+                }
             }
 
             // 5. Persist assistant response, THEN clear streaming so there's never a gap
@@ -1326,8 +1317,7 @@ struct UserInputArea: View {
     @State private var isDragTargeted = false
     @State private var isListening = false
     @State private var liveTranscription = ""
-    /// Tracks the NSTextView's measured content height. Default 44 ≈ 2 lines.
-    @State private var inputHeight: CGFloat = 44
+    @State private var editorContentHeight: CGFloat = 20
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1359,6 +1349,17 @@ struct UserInputArea: View {
                     }
 
                     ZStack(alignment: .topLeading) {
+                        // Ghost text — invisible replica drives the ZStack height.
+                        // SwiftUI measures Text reliably; NSScrollView does not.
+                        // Uses a single space when empty so there's always 1 line of height.
+                        Text(text.isEmpty ? " " : text)
+                            .font(.system(.body))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .opacity(0)
+                            .allowsHitTesting(false)
+
                         if text.isEmpty && attachments.isEmpty {
                             Text("Message \(LocalAgentIdentity.name)… or drop images/files here")
                                 .font(.system(.body))
@@ -1377,23 +1378,18 @@ struct UserInputArea: View {
 
                         KeyboardHandlingTextEditor(
                             text: $text,
+                            contentHeight: $editorContentHeight,
                             onTabKey: onTabKey,
                             onShiftTabKey: onShiftTabKey,
                             onCmdReturnKey: onCmdReturnKey,
                             onSubmit: {
                                 let hasContent = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 if hasContent || !attachments.isEmpty { onSubmit() }
-                            },
-                            onHeightChange: { h in
-                                let clamped = min(h, 160)
-                                if abs(clamped - inputHeight) > 1 {
-                                    withAnimation(.linear(duration: 0.1)) { inputHeight = clamped }
-                                }
                             }
                         )
                         .focused($editorFocused)
                     }
-                    .frame(height: inputHeight)
+                    .frame(maxHeight: 160)
                     .background(isDragTargeted
                         ? Color.accentColor.opacity(0.08)
                         : Color(nsColor: .controlBackgroundColor))
