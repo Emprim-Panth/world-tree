@@ -42,7 +42,9 @@ actor DaemonSocket {
 
         // Send JSON command
         let data = try JSONEncoder().encode(command)
-        let jsonString = String(data: data, encoding: .utf8)! + "\n"
+        guard let jsonString = String(data: data, encoding: .utf8).map({ $0 + "\n" }) else {
+            throw DaemonError.sendFailed(errno: EILSEQ)
+        }
         let sent = jsonString.withCString { ptr in
             Darwin.send(fd, ptr, jsonString.utf8.count, 0)
         }

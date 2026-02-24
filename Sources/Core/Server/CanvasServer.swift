@@ -56,8 +56,12 @@ final class CanvasServer: ObservableObject {
         }
 
         do {
-            let listener = try NWListener(
-                using: .tcp, on: NWEndpoint.Port(rawValue: Self.port)!)
+            guard let nwPort = NWEndpoint.Port(rawValue: Self.port) else {
+                lastError = "Invalid port: \(Self.port)"
+                canvasLog("[CanvasServer] Cannot start: invalid port \(Self.port)")
+                return
+            }
+            let listener = try NWListener(using: .tcp, on: nwPort)
             self.listener = listener
 
             configureBonjour(on: listener)
@@ -314,13 +318,7 @@ final class CanvasServer: ObservableObject {
     }
 
     private nonisolated static func extractContentLength(from headers: String) -> Int {
-        for line in headers.components(separatedBy: "\r\n") {
-            if line.lowercased().hasPrefix("content-length:") {
-                let val = line.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)
-                return Int(val) ?? 0
-            }
-        }
-        return 0
+        extractHTTPContentLength(from: headers)
     }
 
     // MARK: - Request Processing (MainActor)
@@ -502,15 +500,13 @@ final class CanvasServer: ObservableObject {
             canvasLog("[CanvasServer] Failed to persist user message: \(error)")
         }
 
-        // Notify UI about external message source (e.g. Telegram)
+        // Notify UI about external message source (e.g. Telegram) — already @MainActor
         if let source, !source.isEmpty {
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: .canvasServerExternalMessage,
-                    object: nil,
-                    userInfo: ["source": source, "sessionId": resolved.sessionId]
-                )
-            }
+            NotificationCenter.default.post(
+                name: .canvasServerExternalMessage,
+                object: nil,
+                userInfo: ["source": source, "sessionId": resolved.sessionId]
+            )
         }
 
         // Open SSE stream
@@ -679,7 +675,7 @@ final class CanvasServer: ObservableObject {
                      "Content-Length: \(bodyBytes.count)\r\n" +
                      "Access-Control-Allow-Origin: *\r\n" +
                      "Connection: close\r\n\r\n"
-        var resp = header.data(using: .utf8)!
+        var resp = Data(header.utf8)
         resp.append(bodyBytes)
         connection.send(content: resp, completion: .contentProcessed { _ in connection.cancel() })
     }
@@ -712,13 +708,7 @@ final class CanvasServer: ObservableObject {
          503: "Service Unavailable"][code] ?? "Unknown"
     }
 
-    private func esc(_ s: String) -> String {
-        s.replacingOccurrences(of: "\\", with: "\\\\")
-         .replacingOccurrences(of: "\"", with: "\\\"")
-         .replacingOccurrences(of: "\n", with: "\\n")
-         .replacingOccurrences(of: "\r", with: "\\r")
-         .replacingOccurrences(of: "\t", with: "\\t")
-    }
+    private func esc(_ s: String) -> String { escapeJSONString(s) }
 }
 
 // MARK: - WebSocket Client

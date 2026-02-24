@@ -421,6 +421,6 @@ final class TreeStore {
         // Return root branches (no parent)
         return branches
             .filter { $0.parentBranchId == nil }
-            .map { lookup[$0.id]! }
+            .compactMap { lookup[$0.id] }
     }
 }

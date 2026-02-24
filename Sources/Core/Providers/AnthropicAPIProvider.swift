@@ -23,6 +23,18 @@ final class AnthropicAPIProvider: LLMProvider {
     private let home = FileManager.default.homeDirectoryForCurrentUser.path
     private let maxToolLoopIterations = 25
 
+    /// Resolved bun executable — searched at startup from common install locations.
+    private static let bunExecutable: String = {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let candidates = [
+            "/opt/homebrew/bin/bun",          // Apple Silicon Homebrew
+            "/usr/local/bin/bun",              // Intel Homebrew
+            "\(home)/.bun/bin/bun",            // bun install default
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+            ?? "/opt/homebrew/bin/bun"
+    }()
+
     init(apiKey: String) {
         self.apiClient = AnthropicClient(apiKey: apiKey)
     }
@@ -68,7 +80,7 @@ final class AnthropicAPIProvider: LLMProvider {
                     state.addUserMessage(context.message, attachments: context.attachments)
 
                     let selectedModel = context.model ?? CortanaConstants.defaultModel
-                    let cwd = self.resolveWorkingDirectory(context.workingDirectory, project: context.project)
+                    let cwd = resolveWorkingDirectory(context.workingDirectory, project: context.project)
                     // Pass the branch's tmux session name so bash tool calls run visibly in the terminal
                     let tmuxSession = await MainActor.run {
                         BranchTerminalManager.shared.sessionName(for: context.branchId)
@@ -219,7 +231,8 @@ final class AnthropicAPIProvider: LLMProvider {
             }
 
             continuation.onTermination = { [weak self] _ in
-                self?.cancel()
+                // onTermination can fire on any thread; cancel() touches @MainActor state
+                Task { @MainActor [weak self] in self?.cancel() }
             }
         }
     }
@@ -304,32 +317,12 @@ final class AnthropicAPIProvider: LLMProvider {
 
     // MARK: - Helpers
 
-    private func resolveWorkingDirectory(_ explicit: String?, project: String?) -> String {
-        if let dir = explicit, FileManager.default.fileExists(atPath: dir) {
-            return dir
-        }
-        if let project {
-            let devRoot = "\(home)/Development"
-            let candidates = [
-                "\(devRoot)/\(project)",
-                "\(devRoot)/\(project.lowercased())",
-                "\(devRoot)/\(project.replacingOccurrences(of: " ", with: "-"))",
-            ]
-            for path in candidates {
-                if FileManager.default.fileExists(atPath: path) {
-                    return path
-                }
-            }
-        }
-        return "\(home)/Development"
-    }
-
     private func queryKnowledgeBase(message: String) async -> String {
         let kbCli = "\(home)/.cortana/bin/cortana-kb"
         guard FileManager.default.fileExists(atPath: kbCli) else { return "" }
 
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/bun")
+        proc.executableURL = URL(fileURLWithPath: Self.bunExecutable)
         proc.arguments = [kbCli, "search", message]
         proc.currentDirectoryURL = URL(fileURLWithPath: "\(home)/Development/cortana-core")
 

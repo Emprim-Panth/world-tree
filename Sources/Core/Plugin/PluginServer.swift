@@ -49,8 +49,12 @@ final class PluginServer: ObservableObject {
         guard !isRunning else { return }
 
         do {
-            let listener = try NWListener(
-                using: .tcp, on: NWEndpoint.Port(rawValue: Self.port)!)
+            guard let nwPort = NWEndpoint.Port(rawValue: Self.port) else {
+                lastError = "Invalid port: \(Self.port)"
+                canvasLog("[PluginServer] Cannot start: invalid port \(Self.port)")
+                return
+            }
+            let listener = try NWListener(using: .tcp, on: nwPort)
             self.listener = listener
 
             listener.newConnectionHandler = { [weak self] connection in
@@ -158,13 +162,7 @@ final class PluginServer: ObservableObject {
     }
 
     private nonisolated static func extractContentLength(from headers: String) -> Int {
-        for line in headers.components(separatedBy: "\r\n") {
-            if line.lowercased().hasPrefix("content-length:") {
-                let val = line.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)
-                return Int(val) ?? 0
-            }
-        }
-        return 0
+        extractHTTPContentLength(from: headers)
     }
 
     // MARK: - Request Dispatch (MainActor)
@@ -391,7 +389,7 @@ final class PluginServer: ObservableObject {
                      "Content-Length: \(bodyBytes.count)\r\n" +
                      "Access-Control-Allow-Origin: *\r\n" +
                      "Connection: close\r\n\r\n"
-        var resp = header.data(using: .utf8)!
+        var resp = Data(header.utf8)
         resp.append(bodyBytes)
         connection.send(content: resp, completion: .contentProcessed { _ in connection.cancel() })
     }
@@ -409,11 +407,5 @@ final class PluginServer: ObservableObject {
 
     // MARK: - String Escaping
 
-    private func esc(_ s: String) -> String {
-        s.replacingOccurrences(of: "\\", with: "\\\\")
-         .replacingOccurrences(of: "\"", with: "\\\"")
-         .replacingOccurrences(of: "\n", with: "\\n")
-         .replacingOccurrences(of: "\r", with: "\\r")
-         .replacingOccurrences(of: "\t", with: "\\t")
-    }
+    private func esc(_ s: String) -> String { escapeJSONString(s) }
 }

@@ -1,8 +1,11 @@
 import Foundation
 
+/// Shared formatter — ISO8601DateFormatter is expensive to allocate; reuse across all canvasLog calls.
+private let _logFormatter: ISO8601DateFormatter = ISO8601DateFormatter()
+
 /// Debug logger that writes to a file (print() doesn't work in GUI apps launched outside Xcode)
 func canvasLog(_ msg: String) {
-    let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(msg)\n"
+    let line = "[\(_logFormatter.string(from: Date()))] \(msg)\n"
     let path = FileManager.default.homeDirectoryForCurrentUser.path + "/.cortana/logs/canvas-debug.log"
     if let handle = FileHandle(forWritingAtPath: path) {
         handle.seekToEndOfFile()

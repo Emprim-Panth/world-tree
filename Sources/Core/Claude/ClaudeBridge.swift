@@ -208,24 +208,4 @@ final class ClaudeBridge {
         return (messages?.count ?? 0) > 0
     }
 
-    /// Resolve working directory from project name
-    private func resolveWorkingDirectory(_ explicit: String?, project: String?) -> String {
-        if let dir = explicit, FileManager.default.fileExists(atPath: dir) {
-            return dir
-        }
-        if let project {
-            let devRoot = "\(home)/Development"
-            let candidates = [
-                "\(devRoot)/\(project)",
-                "\(devRoot)/\(project.lowercased())",
-                "\(devRoot)/\(project.replacingOccurrences(of: " ", with: "-"))",
-            ]
-            for path in candidates {
-                if FileManager.default.fileExists(atPath: path) {
-                    return path
-                }
-            }
-        }
-        return "\(home)/Development"
-    }
 }
