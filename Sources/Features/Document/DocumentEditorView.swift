@@ -1326,6 +1326,8 @@ struct UserInputArea: View {
     @State private var isDragTargeted = false
     @State private var isListening = false
     @State private var liveTranscription = ""
+    /// Tracks the NSTextView's measured content height. Default 44 ≈ 2 lines.
+    @State private var inputHeight: CGFloat = 44
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1357,17 +1359,6 @@ struct UserInputArea: View {
                     }
 
                     ZStack(alignment: .topLeading) {
-                        // Ghost text — invisible replica drives the ZStack height.
-                        // SwiftUI measures Text reliably; NSScrollView does not.
-                        // Uses a single space when empty so there's always 1 line of height.
-                        Text(text.isEmpty ? " " : text)
-                            .font(.system(.body))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .opacity(0)
-                            .allowsHitTesting(false)
-
                         if text.isEmpty && attachments.isEmpty {
                             Text("Message \(LocalAgentIdentity.name)… or drop images/files here")
                                 .font(.system(.body))
@@ -1392,11 +1383,17 @@ struct UserInputArea: View {
                             onSubmit: {
                                 let hasContent = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 if hasContent || !attachments.isEmpty { onSubmit() }
+                            },
+                            onHeightChange: { h in
+                                let clamped = min(h, 160)
+                                if abs(clamped - inputHeight) > 1 {
+                                    withAnimation(.linear(duration: 0.1)) { inputHeight = clamped }
+                                }
                             }
                         )
                         .focused($editorFocused)
                     }
-                    .frame(maxHeight: 160)
+                    .frame(height: inputHeight)
                     .background(isDragTargeted
                         ? Color.accentColor.opacity(0.08)
                         : Color(nsColor: .controlBackgroundColor))

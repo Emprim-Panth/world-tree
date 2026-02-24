@@ -1,13 +1,18 @@
 import SwiftUI
 import AppKit
 
-/// TextEditor wrapper with custom keyboard handling
+/// TextEditor wrapper with custom keyboard handling.
+/// Reports its needed height via `onHeightChange` so the parent can drive
+/// an explicit `.frame(height:)` — the only reliable way to size an
+/// NSScrollView inside SwiftUI without it filling all available space.
 struct KeyboardHandlingTextEditor: NSViewRepresentable {
     @Binding var text: String
     var onTabKey: (() -> Bool)?
     var onShiftTabKey: (() -> Bool)?
     var onCmdReturnKey: (() -> Bool)?
     var onSubmit: (() -> Void)?
+    /// Called whenever content height changes. Parent clamps and stores in @State.
+    var onHeightChange: ((CGFloat) -> Void)?
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
@@ -35,11 +40,15 @@ struct KeyboardHandlingTextEditor: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         if textView.string != text {
             textView.string = text
+            // Re-measure after programmatic update (e.g. clear after submit)
+            let coordinator = context.coordinator
+            DispatchQueue.main.async { coordinator.reportHeight(from: textView) }
         }
         context.coordinator.onTabKey = onTabKey
         context.coordinator.onShiftTabKey = onShiftTabKey
         context.coordinator.onCmdReturnKey = onCmdReturnKey
         context.coordinator.onSubmit = onSubmit
+        context.coordinator.onHeightChange = onHeightChange
     }
 
     func makeCoordinator() -> Coordinator {
@@ -52,6 +61,7 @@ struct KeyboardHandlingTextEditor: NSViewRepresentable {
         var onShiftTabKey: (() -> Bool)?
         var onCmdReturnKey: (() -> Bool)?
         var onSubmit: (() -> Void)?
+        var onHeightChange: ((CGFloat) -> Void)?
 
         init(text: Binding<String>) {
             _text = text
@@ -60,38 +70,37 @@ struct KeyboardHandlingTextEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             text = textView.string
+            reportHeight(from: textView)
+        }
+
+        /// Compute the NSTextView's natural content height and forward it to the parent.
+        /// Minimum 44 pt (≈ 2 lines) so the box never collapses below a comfortable size.
+        func reportHeight(from textView: NSTextView) {
+            guard let container = textView.textContainer,
+                  let manager = textView.layoutManager else { return }
+            manager.ensureLayout(for: container)
+            let used = manager.usedRect(for: container).height
+            let inset = textView.textContainerInset
+            let natural = used + inset.height * 2 + 4
+            onHeightChange?(max(44, natural))
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            // Check for Tab
             if commandSelector == #selector(NSResponder.insertTab(_:)) {
-                if let handler = onTabKey, handler() {
-                    return true // Handled
-                }
+                if let handler = onTabKey, handler() { return true }
             }
-
-            // Check for Shift+Tab
             if commandSelector == #selector(NSResponder.insertBacktab(_:)) {
-                if let handler = onShiftTabKey, handler() {
-                    return true
-                }
+                if let handler = onShiftTabKey, handler() { return true }
             }
-
-            // Check for Return (Submit)
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                // Check if Cmd is pressed
                 if NSEvent.modifierFlags.contains(.command) {
-                    if let handler = onCmdReturnKey, handler() {
-                        return true
-                    }
+                    if let handler = onCmdReturnKey, handler() { return true }
                 } else {
-                    // Regular return - submit
                     onSubmit?()
                     return true
                 }
             }
-
-            return false // Not handled, use default behavior
+            return false
         }
     }
 }
