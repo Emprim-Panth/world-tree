@@ -224,6 +224,12 @@ final class SidebarViewModel: ObservableObject {
         allProjectGroups = result
     }
 
+    deinit {
+        if let observer = projectObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
     func loadTrees() {
         isLoading = true
         do {
@@ -268,9 +274,9 @@ final class SidebarViewModel: ObservableObject {
             }
         }
 
-        self.observation = observation.start(in: dbPool, onError: { error in
-            Task { @MainActor in
-                self.error = error.localizedDescription
+        self.observation = observation.start(in: dbPool, onError: { [weak self] error in
+            Task { @MainActor [weak self] in
+                self?.error = error.localizedDescription
             }
         }, onChange: { [weak self] trees in
             Task { @MainActor in

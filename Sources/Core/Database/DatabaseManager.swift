@@ -45,18 +45,13 @@ final class DatabaseManager {
             return override
         }
 
-        let dropbox = CortanaConstants.dropboxDatabasePath
-        if FileManager.default.fileExists(atPath: dropbox) {
-            return dropbox
-        }
-
-        let fallback = CortanaConstants.fallbackDatabasePath
-        let dir = (fallback as NSString).deletingLastPathComponent
+        let path = CortanaConstants.dropboxDatabasePath
+        let dir = (path as NSString).deletingLastPathComponent
         try? FileManager.default.createDirectory(
             atPath: dir,
             withIntermediateDirectories: true
         )
-        return fallback
+        return path
     }
 
     /// Read-only access (preferred for browsing)

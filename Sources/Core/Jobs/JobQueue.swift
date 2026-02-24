@@ -17,7 +17,9 @@ actor JobQueue {
         // This is safe because dbPool is set once during setup and never changes
         return _dbPool
     }
-    private static var _sharedDbPool: DatabasePool?
+    // nonisolated(unsafe): written once from @MainActor (configure()), then only read from
+    // nonisolated methods. The one-time-write pattern makes this safe without a lock.
+    nonisolated(unsafe) private static var _sharedDbPool: DatabasePool?
     private var _dbPool: DatabasePool? { Self._sharedDbPool }
 
     /// Call from main actor after DatabaseManager.setup()

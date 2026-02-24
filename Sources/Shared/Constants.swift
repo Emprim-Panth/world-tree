@@ -1,14 +1,8 @@
 import Foundation
 
 enum CortanaConstants {
-    // MARK: - Database (Phase 2: Unified with Gateway)
-    // Friday test database — isolated from production friday.db
+    // MARK: - Database
     static let dropboxDatabasePath: String = {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.openclaude/state/world-tree.db"
-    }()
-
-    static let fallbackDatabasePath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/.openclaude/state/world-tree.db"
     }()

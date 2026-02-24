@@ -288,9 +288,11 @@ struct DocumentEditorView: View {
 @MainActor
 class DocumentEditorViewModel: ObservableObject {
     @Published var document: ConversationDocument
+    private var branchAnalysisTask: Task<Void, Never>?
     @Published var currentInput = "" {
         didSet {
-            Task { await analyzeForBranchOpportunities() }
+            branchAnalysisTask?.cancel()
+            branchAnalysisTask = Task { await analyzeForBranchOpportunities() }
         }
     }
     @Published var pendingAttachments: [Attachment] = []
@@ -404,7 +406,8 @@ class DocumentEditorViewModel: ObservableObject {
         guard let dbPool = DatabaseManager.shared.dbPool else {
             // Database not ready yet (app cold start — child .onAppear fires before
             // WorldTreeApp.onAppear calls setupDatabase). Retry shortly.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(250))
                 self?.loadDocument()
             }
             return
@@ -977,25 +980,6 @@ class DocumentEditorViewModel: ObservableObject {
         currentInput = ""
     }
 
-    func showBranchView() {
-        // TODO: Show branch navigation UI
-    }
-
-    func showContextControl() {
-        // TODO: Show context management UI
-    }
-
-    func exportMarkdown() {
-        // TODO: Export document as Markdown
-    }
-
-    func exportPDF() {
-        // TODO: Export document as PDF
-    }
-
-    func share() {
-        // TODO: Share document
-    }
 }
 
 // MARK: - Empty Conversation State

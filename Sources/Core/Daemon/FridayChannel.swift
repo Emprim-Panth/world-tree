@@ -40,7 +40,7 @@ actor FridayChannel {
         sessionId: String?
     ) -> AsyncStream<BridgeEvent> {
         AsyncStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     guard let url = URL(string: "\(self.apiURL)/api/v1/canvas/message") else {
                         continuation.yield(.error("Invalid daemon URL: \(self.apiURL)"))
@@ -100,6 +100,7 @@ actor FridayChannel {
                     continuation.finish()
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 }

@@ -62,11 +62,16 @@ final class BranchTerminalManager: ObservableObject {
     /// tmux session name per branch — persisted in DB, survives app restarts
     private var tmuxNames: [String: String] = [:]
 
+    /// Retained token for the willTerminate observer. Must be stored or the observer
+    /// is immediately deregistered (block-based addObserver returns a token that
+    /// must be kept alive). Singleton lives for app lifetime so no removeObserver needed.
+    private var terminationObserver: NSObjectProtocol?
+
     private init() {
         // Clean up all PTY processes when the app is about to quit.
         // This ensures zsh children receive SIGHUP gracefully rather than being
         // forcefully killed when the process exits. Registered once, never removed.
-        NotificationCenter.default.addObserver(
+        terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main

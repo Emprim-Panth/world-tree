@@ -44,7 +44,7 @@ final class ClaudeService {
     /// Stream a completion from Claude
     func streamCompletion(
         messages: [ClaudeMessage],
-        model: String = "claude-sonnet-4-5-20250929",
+        model: String = CortanaConstants.defaultModel,
         maxTokens: Int = 4096
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in

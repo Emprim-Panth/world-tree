@@ -199,7 +199,7 @@ extension DocumentSection {
         let author: Author
         switch message.role {
         case .user:
-            author = .user(name: "Evan")
+            author = .user(name: "You")
         case .assistant:
             author = .assistant
         case .system:

@@ -18,12 +18,14 @@ final class ProjectRefreshService {
         stopAutoRefresh()
         
         canvasLog("[ProjectRefreshService] Starting auto-refresh (every \(Int(interval))s)")
-        
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+
+        let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task {
                 await self?.refresh()
             }
         }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
         
         // Trigger immediate refresh
         Task {
@@ -63,10 +65,8 @@ final class ProjectRefreshService {
             
             canvasLog("[ProjectRefreshService] Refresh complete: \(updated) updated, \(pruned) pruned")
             
-            // Post notification for UI updates
-            await MainActor.run {
-                NotificationCenter.default.post(name: .projectCacheUpdated, object: nil)
-            }
+            // Post notification for UI updates (already on @MainActor)
+            NotificationCenter.default.post(name: .projectCacheUpdated, object: nil)
             
             return .success(updated)
         } catch {

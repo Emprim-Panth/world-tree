@@ -18,8 +18,8 @@ final class ImplementationVM: ObservableObject {
 
     private let branch: Branch
     private var logTailer: LogTailer?
-    private var completionWatcher: DispatchSourceFileSystemObject?
     private var logTask: Task<Void, Never>?
+    private var watcherTask: Task<Void, Never>?
 
     init(branch: Branch) {
         self.branch = branch
@@ -27,6 +27,7 @@ final class ImplementationVM: ObservableObject {
 
     deinit {
         logTask?.cancel()
+        watcherTask?.cancel()
         logTailer?.stop()
     }
 
@@ -109,10 +110,10 @@ final class ImplementationVM: ObservableObject {
     private func watchForCompletion(taskId: String) {
         let markerPath = "\(CortanaConstants.completedMarkersDir)/completed-\(taskId)"
 
-        // Poll for completion marker file
-        Task {
+        watcherTask = Task {
             while phase == .running {
                 try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+                guard !Task.isCancelled else { return }
 
                 if FileManager.default.fileExists(atPath: markerPath) {
                     await handleCompletion(taskId: taskId)
@@ -175,6 +176,7 @@ final class ImplementationVM: ObservableObject {
 
     func stop() {
         logTask?.cancel()
+        watcherTask?.cancel()
         logTailer?.stop()
         logTailer = nil
     }
