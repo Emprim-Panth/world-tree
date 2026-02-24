@@ -75,9 +75,18 @@ final class MessageStore {
 
     /// Send a message (user or assistant) to a session.
     /// INSERT matches cortana-core's pattern for hook compatibility.
+    /// Also touches canvas_trees.updated_at so the sidebar sorts by last activity.
     func sendMessage(sessionId: String, role: MessageRole, content: String) throws -> Message {
         try db.write { db in
-            try Message.insert(db: db, sessionId: sessionId, role: role, content: content)
+            let message = try Message.insert(db: db, sessionId: sessionId, role: role, content: content)
+            try db.execute(
+                sql: """
+                    UPDATE canvas_trees SET updated_at = datetime('now')
+                    WHERE id = (SELECT tree_id FROM canvas_branches WHERE session_id = ? LIMIT 1)
+                    """,
+                arguments: [sessionId]
+            )
+            return message
         }
     }
 
