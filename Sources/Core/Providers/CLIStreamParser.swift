@@ -32,6 +32,10 @@ final class CLIStreamParser {
     private var currentToolId: String?
     private var currentToolName: String?
 
+    /// Accumulated input JSON for the current tool block — built from input_json_delta events.
+    /// Emitted as the `.toolStart` input when content_block_stop fires.
+    private var toolInputAccumulator = ""
+
     /// Track whether we've emitted text via stream_event deltas,
     /// so the assistant fallback doesn't duplicate the full message.
     private var hasEmittedText: Bool = false
@@ -137,6 +141,15 @@ final class CLIStreamParser {
         case "content_block_delta":
             return parseContentBlockDelta(eventWrapper)
         case "content_block_stop":
+            // Emit deferred toolStart with the fully accumulated input JSON
+            if let name = currentToolName, let id = currentToolId {
+                let input = toolInputAccumulator.isEmpty ? "{}" : toolInputAccumulator
+                emittedToolIds.insert(id)
+                currentToolName = nil
+                currentToolId = nil
+                toolInputAccumulator = ""
+                return [.toolStart(name: name, input: input)]
+            }
             currentToolName = nil
             currentToolId = nil
             return nil
@@ -159,8 +172,9 @@ final class CLIStreamParser {
             let id = contentBlock["id"] as? String ?? UUID().uuidString
             currentToolName = name
             currentToolId = id
-            emittedToolIds.insert(id)
-            return [.toolStart(name: name, input: "{}")]
+            toolInputAccumulator = ""
+            // Don't emit .toolStart yet — accumulate input_json_delta first,
+            // then emit at content_block_stop with the complete input JSON.
         }
 
         return nil
@@ -180,7 +194,10 @@ final class CLIStreamParser {
                 return [.text(text)]
             }
         case "input_json_delta":
-            // Tool input streaming — we already emitted toolStart, input accumulates on CLI side
+            // Accumulate partial input JSON — emitted as toolStart at content_block_stop
+            if let partial = delta["partial_json"] as? String {
+                toolInputAccumulator += partial
+            }
             return nil
         default:
             break

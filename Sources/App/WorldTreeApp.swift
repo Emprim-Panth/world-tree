@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 @main
 struct WorldTreeApp: App {
@@ -30,6 +31,8 @@ struct WorldTreeApp: App {
                     validateRestoredSelection()
                     startProjectRefresh()
                     requestNotificationPermission()
+                    Task { await ProviderManager.shared.refreshHealth() }
+                    Task { EventStore.shared.prune() }
                     startCanvasServerIfEnabled()
                     startPluginServerIfEnabled()
                     PeekabooBridgeServer.shared.start()
@@ -127,6 +130,7 @@ struct WorldTreeApp: App {
     }
 
     private func requestNotificationPermission() {
+        UNUserNotificationCenter.current().delegate = NotificationDelegate.shared
         Task {
             await NotificationManager.shared.requestAuthorization()
         }

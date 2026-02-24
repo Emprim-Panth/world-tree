@@ -42,8 +42,15 @@ final class AnthropicAPIProvider: LLMProvider {
     // MARK: - Health Check
 
     func checkHealth() async -> ProviderHealth {
-        // A simple HEAD or tiny request would be ideal,
-        // but just check that the key looks valid
+        // A key being present doesn't guarantee validity, but absent means all requests will fail.
+        let envKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
+        if !envKey.isEmpty { return .available }
+        let keyFile = "\(home)/.anthropic/api_key"
+        let fileKey = (try? String(contentsOfFile: keyFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
+        guard !fileKey.isEmpty else {
+            return .unavailable(reason: "Anthropic API key not configured")
+        }
         return .available
     }
 

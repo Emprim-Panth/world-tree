@@ -72,94 +72,63 @@ class BranchLayoutViewModel: ObservableObject {
     }
 
     func createBranch(from sectionId: UUID, in parentBranchId: String) {
-        // TODO: Implement branch creation
-        // 1. Create new branch in database
-        // 2. Copy conversation up to sectionId
-        // 3. Add to visibleBranches at appropriate position
-        // 4. Animate slide-in from right
-
-        let newBranch = Branch(
-            id: UUID().uuidString,
-            treeId: treeId,
-            sessionId: UUID().uuidString,
-            parentBranchId: parentBranchId,
-            forkFromMessageId: nil,
-            branchType: .exploration,
-            title: "New Branch",
-            status: .active,
-            summary: nil,
-            model: nil,
-            daemonTaskId: nil,
-            contextSnapshot: nil,
-            collapsed: false,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        // Insert after parent
-        if let parentIndex = visibleBranches.firstIndex(where: { $0.id == parentBranchId }) {
-            visibleBranches.insert(newBranch, at: parentIndex + 1)
-        } else {
-            visibleBranches.append(newBranch)
+        do {
+            let newBranch = try TreeStore.shared.createBranch(
+                treeId: treeId,
+                parentBranch: parentBranchId,
+                type: .exploration,
+                title: "New Branch"
+            )
+            if let parentIndex = visibleBranches.firstIndex(where: { $0.id == parentBranchId }) {
+                visibleBranches.insert(newBranch, at: parentIndex + 1)
+            } else {
+                visibleBranches.append(newBranch)
+            }
+        } catch {
+            canvasLog("[BranchLayout] Failed to create branch: \(error)")
         }
     }
 
     func scrollToBranch(_ branchId: String) {
-        // TODO: Implement smooth scrolling to branch
+        // Smooth scrolling to a branch requires ScrollViewProxy, which lives in the View layer.
+        // The View's selectedBranchId @State drives .scrollTo(branchId) via onChange.
+        // Nothing to do here — selection is already managed by the View's @State binding.
     }
 
     // MARK: - Organic Branching (Phase 8)
 
     func createBranchFromSuggestion(_ suggestion: BranchSuggestion, userInput: String) {
-        // Create a new branch based on the suggestion
-        let newBranch = Branch(
-            id: UUID().uuidString,
-            treeId: treeId,
-            sessionId: UUID().uuidString,
-            parentBranchId: visibleBranches.first?.id,
-            forkFromMessageId: nil,
-            branchType: suggestion.branchType,
-            title: suggestion.title,
-            status: .active,
-            summary: suggestion.preview,
-            model: nil,
-            daemonTaskId: nil,
-            contextSnapshot: userInput,
-            collapsed: false,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        // Add to visible branches (side-by-side)
-        visibleBranches.append(newBranch)
-
-        canvasLog("[BranchLayout] Created branch: \(suggestion.title)")
+        do {
+            let newBranch = try TreeStore.shared.createBranch(
+                treeId: treeId,
+                parentBranch: visibleBranches.first?.id,
+                type: suggestion.branchType,
+                title: suggestion.title,
+                contextSnapshot: userInput
+            )
+            visibleBranches.append(newBranch)
+            canvasLog("[BranchLayout] Created branch: \(suggestion.title)")
+        } catch {
+            canvasLog("[BranchLayout] Failed to create branch from suggestion: \(error)")
+        }
     }
 
     func spawnParallelBranches(_ suggestions: [BranchSuggestion], userInput: String) {
-        // Create multiple branches at once for parallel exploration
+        let parentId = visibleBranches.first?.id
         for suggestion in suggestions {
-            let newBranch = Branch(
-                id: UUID().uuidString,
-                treeId: treeId,
-                sessionId: UUID().uuidString,
-                parentBranchId: visibleBranches.first?.id,
-                forkFromMessageId: nil,
-                branchType: suggestion.branchType,
-                title: suggestion.title,
-                status: .active,
-                summary: suggestion.preview,
-                model: nil,
-                daemonTaskId: nil,
-                contextSnapshot: userInput,
-                collapsed: false,
-                createdAt: Date(),
-                updatedAt: Date()
-            )
-
-            visibleBranches.append(newBranch)
+            do {
+                let newBranch = try TreeStore.shared.createBranch(
+                    treeId: treeId,
+                    parentBranch: parentId,
+                    type: suggestion.branchType,
+                    title: suggestion.title,
+                    contextSnapshot: userInput
+                )
+                visibleBranches.append(newBranch)
+            } catch {
+                canvasLog("[BranchLayout] Failed to spawn branch '\(suggestion.title)': \(error)")
+            }
         }
-
         canvasLog("[BranchLayout] Spawned \(suggestions.count) parallel branches")
     }
 }

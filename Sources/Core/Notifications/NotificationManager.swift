@@ -1,5 +1,56 @@
 import Foundation
+import AppKit
 import UserNotifications
+
+// MARK: - Notification Delegate
+
+/// Handles notification action responses (COPY, VIEW) delivered by UNUserNotificationCenter.
+/// Stored as a long-lived singleton and set as UNUserNotificationCenter.delegate on launch.
+final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationDelegate()
+
+    private override init() { super.init() }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        defer { completionHandler() }
+
+        switch response.actionIdentifier {
+        case "COPY":
+            let userInfo = response.notification.request.content.userInfo
+            guard let jobId = userInfo["jobId"] as? String else { return }
+            Task { @MainActor in
+                if let job = try? DatabaseManager.shared.read({ db in
+                    try CanvasJob.fetchOne(db, key: jobId)
+                }) {
+                    let text = job.output ?? job.command
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+            }
+
+        case "VIEW", UNNotificationDefaultActionIdentifier:
+            NSApp.activate(ignoringOtherApps: true)
+
+        default:
+            break
+        }
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        // Show banner + sound even when app is in foreground
+        completionHandler([.banner, .sound])
+    }
+}
+
+// MARK: - Notification Manager
 
 /// Manages macOS notifications for Canvas events.
 actor NotificationManager {
