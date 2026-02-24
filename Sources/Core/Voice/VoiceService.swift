@@ -43,25 +43,40 @@ actor VoiceService {
     // MARK: - Permissions
 
     /// Request microphone + speech recognition permissions. Returns true if both granted.
+    /// Only shows system dialogs when status is .notDetermined — already granted/denied are fast-paths.
     func requestPermissions() async -> Bool {
-        let micGranted = await withCheckedContinuation { continuation in
-            AVCaptureDevice.requestAccess(for: .audio) { granted in
-                continuation.resume(returning: granted)
+        // Microphone
+        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch micStatus {
+        case .authorized:
+            break // already granted
+        case .notDetermined:
+            let granted = await withCheckedContinuation { continuation in
+                AVCaptureDevice.requestAccess(for: .audio) { continuation.resume(returning: $0) }
             }
-        }
-
-        guard micGranted else {
+            guard granted else {
+                postError("Microphone access denied. Enable it in System Settings > Privacy & Security > Microphone.")
+                return false
+            }
+        default:
             postError("Microphone access denied. Enable it in System Settings > Privacy & Security > Microphone.")
             return false
         }
 
-        let speechGranted = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
-                continuation.resume(returning: status == .authorized)
+        // Speech recognition
+        let speechStatus = SFSpeechRecognizer.authorizationStatus()
+        switch speechStatus {
+        case .authorized:
+            break // already granted
+        case .notDetermined:
+            let granted = await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0 == .authorized) }
             }
-        }
-
-        guard speechGranted else {
+            guard granted else {
+                postError("Speech recognition denied. Enable it in System Settings > Privacy & Security > Speech Recognition.")
+                return false
+            }
+        default:
             postError("Speech recognition denied. Enable it in System Settings > Privacy & Security > Speech Recognition.")
             return false
         }

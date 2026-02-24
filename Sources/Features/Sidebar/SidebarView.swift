@@ -564,9 +564,12 @@ struct SidebarView: View {
                     panel.canChooseDirectories = true
                     panel.canChooseFiles = false
                     panel.allowsMultipleSelection = false
-                    panel.directoryURL = URL(fileURLWithPath: "\(FileManager.default.homeDirectoryForCurrentUser.path)/Development")
+                    let lastDir = UserDefaults.standard.string(forKey: "lastWorkingDirectory")
+                        ?? "\(FileManager.default.homeDirectoryForCurrentUser.path)/Development"
+                    panel.directoryURL = URL(fileURLWithPath: lastDir)
                     if panel.runModal() == .OK, let url = panel.url {
                         newTreeWorkingDir = url.path
+                        UserDefaults.standard.set(url.path, forKey: "lastWorkingDirectory")
                     }
                 }
                 .controlSize(.small)

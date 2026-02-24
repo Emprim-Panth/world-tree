@@ -10,13 +10,27 @@ actor NotificationManager {
     // MARK: - Setup
 
     /// Request notification permissions. Call on app launch.
+    /// Only shows the system dialog when status is .notDetermined — skips the prompt if already decided.
     func requestAuthorization() async {
         let center = UNUserNotificationCenter.current()
-        do {
-            isAuthorized = try await center.requestAuthorization(options: [.alert, .sound, .badge])
-            canvasLog("[NotificationManager] authorization: \(isAuthorized)")
-        } catch {
-            canvasLog("[NotificationManager] auth error: \(error)")
+        let settings = await center.notificationSettings()
+
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            isAuthorized = true
+            canvasLog("[NotificationManager] authorization: already granted")
+        case .denied:
+            isAuthorized = false
+            canvasLog("[NotificationManager] authorization: denied")
+        case .notDetermined:
+            do {
+                isAuthorized = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+                canvasLog("[NotificationManager] authorization: \(isAuthorized)")
+            } catch {
+                canvasLog("[NotificationManager] auth error: \(error)")
+            }
+        @unknown default:
+            isAuthorized = false
         }
 
         // Register action categories
