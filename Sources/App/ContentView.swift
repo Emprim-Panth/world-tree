@@ -25,6 +25,9 @@ struct ContentView: View {
                 }
             )
         }
+        .sheet(item: $approvalCoordinator.pendingFileDiff) { request in
+            FileDiffSheet(request: request)
+        }
     }
 
     private var advancedView: some View {

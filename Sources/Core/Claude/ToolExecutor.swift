@@ -128,6 +128,19 @@ actor ToolExecutor {
 
         let resolvedPath = resolvePath(path)
 
+        // Diff review: show before/after and wait for user approval when enabled
+        if UserDefaults.standard.bool(forKey: "fileWriteReviewEnabled") {
+            let oldContent = (try? String(contentsOfFile: resolvedPath, encoding: .utf8)) ?? ""
+            let approved = await ApprovalCoordinator.shared.requestFileDiffApproval(
+                filePath: resolvedPath,
+                oldContent: oldContent,
+                newContent: content
+            )
+            if !approved {
+                return ToolResult(content: "File write rejected by user: \(resolvedPath)", isError: true)
+            }
+        }
+
         do {
             // Create parent directories
             let dir = (resolvedPath as NSString).deletingLastPathComponent
@@ -191,6 +204,19 @@ actor ToolExecutor {
             }
 
             let updated = content.replacingOccurrences(of: oldString, with: newString)
+
+            // Diff review: show before/after and wait for user approval when enabled
+            if UserDefaults.standard.bool(forKey: "fileWriteReviewEnabled") {
+                let approved = await ApprovalCoordinator.shared.requestFileDiffApproval(
+                    filePath: resolvedPath,
+                    oldContent: content,
+                    newContent: updated
+                )
+                if !approved {
+                    return ToolResult(content: "File edit rejected by user: \(resolvedPath)", isError: true)
+                }
+            }
+
             try updated.write(toFile: resolvedPath, atomically: true, encoding: .utf8)
 
             var result = "Edited \(resolvedPath): replaced 1 occurrence"

@@ -9,6 +9,17 @@ struct ApprovalRequest: Identifiable {
     fileprivate let continuation: CheckedContinuation<Bool, Never>
 }
 
+// MARK: - File Diff Request
+
+/// Suspend-until-reviewed request for a file write/edit operation.
+struct FileDiffRequest: Identifiable {
+    let id = UUID()
+    let filePath: String
+    let oldContent: String
+    let newContent: String
+    fileprivate let continuation: CheckedContinuation<Bool, Never>
+}
+
 // MARK: - Approval Coordinator
 
 /// @MainActor singleton that bridges ToolExecutor (actor) to the SwiftUI approval sheet.
@@ -18,6 +29,7 @@ final class ApprovalCoordinator: ObservableObject {
     static let shared = ApprovalCoordinator()
 
     @Published var pendingRequest: ApprovalRequest?
+    @Published var pendingFileDiff: FileDiffRequest?
 
     private init() {}
 
@@ -46,6 +58,29 @@ final class ApprovalCoordinator: ObservableObject {
             PermissionStore.shared.approve(reason: request.assessment.reason)
             canvasLog("[ApprovalCoordinator] Permanently approved: \(request.assessment.reason)")
         }
+        request.continuation.resume(returning: approved)
+    }
+
+    // MARK: - File Diff Review
+
+    /// Present a diff review sheet and suspend until the user accepts or rejects.
+    /// Only called when Settings → "Review File Writes" is enabled.
+    func requestFileDiffApproval(filePath: String, oldContent: String, newContent: String) async -> Bool {
+        return await withCheckedContinuation { continuation in
+            pendingFileDiff = FileDiffRequest(
+                filePath: filePath,
+                oldContent: oldContent,
+                newContent: newContent,
+                continuation: continuation
+            )
+        }
+    }
+
+    /// Called by the diff review sheet.
+    func resolveFileDiff(approved: Bool) {
+        guard let request = pendingFileDiff else { return }
+        pendingFileDiff = nil
+        canvasLog("[ApprovalCoordinator] File diff \(approved ? "accepted" : "rejected"): \(request.filePath)")
         request.continuation.resume(returning: approved)
     }
 }

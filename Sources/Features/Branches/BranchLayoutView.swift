@@ -4,6 +4,7 @@ import SwiftUI
 struct BranchLayoutView: View {
     @StateObject private var viewModel: BranchLayoutViewModel
     @State private var selectedBranchId: String?
+    @State private var showSynthesisSheet = false
 
     init(treeId: String) {
         _viewModel = StateObject(wrappedValue: BranchLayoutViewModel(treeId: treeId))
@@ -20,9 +21,30 @@ struct BranchLayoutView: View {
                 },
                 onCreateRootBranch: {
                     viewModel.createRootBranch()
+                },
+                onSynthesize: {
+                    showSynthesisSheet = true
                 }
             )
             .frame(height: 80)
+            .sheet(isPresented: $showSynthesisSheet) {
+                if let currentId = selectedBranchId ?? viewModel.visibleBranches.first?.id {
+                    BranchSynthesisView(
+                        treeId: viewModel.treeId,
+                        allBranches: viewModel.visibleBranches,
+                        currentBranchId: currentId,
+                        onCreated: { newBranchId in
+                            showSynthesisSheet = false
+                            guard !newBranchId.isEmpty else { return }
+                            if let branch = try? TreeStore.shared.getBranch(newBranchId) {
+                                viewModel.visibleBranches.append(branch)
+                                selectedBranchId = newBranchId
+                                viewModel.scrollToBranch(newBranchId)
+                            }
+                        }
+                    )
+                }
+            }
 
             Divider()
 
@@ -72,7 +94,7 @@ struct BranchLayoutView: View {
 class BranchLayoutViewModel: ObservableObject {
     @Published var visibleBranches: [Branch] = []
 
-    private let treeId: String
+    let treeId: String
 
     init(treeId: String) {
         self.treeId = treeId

@@ -6,6 +6,7 @@ struct BranchNavigatorView: View {
     @Binding var selectedBranchId: String?
     let onSelectBranch: (String) -> Void
     let onCreateRootBranch: () -> Void
+    var onSynthesize: (() -> Void)? = nil
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -19,6 +20,30 @@ struct BranchNavigatorView: View {
                         selectedBranchId = branch.id
                         onSelectBranch(branch.id)
                     }
+                }
+
+                // Synthesize button — only when 2+ branches with messages exist
+                if branches.filter({ $0.messageCount > 0 }).count >= 2, let onSynthesize {
+                    Button(action: onSynthesize) {
+                        VStack(spacing: 4) {
+                            Image(systemName: "arrow.triangle.merge")
+                                .font(.system(size: 22))
+                                .foregroundColor(.purple)
+                            Text("Synthesize")
+                                .font(.caption2)
+                                .foregroundColor(.purple)
+                        }
+                        .frame(width: 120, height: 60)
+                        .background(Color.purple.opacity(0.08))
+                        .cornerRadius(8)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.purple.opacity(0.4),
+                                              style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Synthesize selected branches into a unified recommendation")
                 }
 
                 // Add new branch button

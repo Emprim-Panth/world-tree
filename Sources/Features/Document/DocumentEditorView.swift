@@ -26,12 +26,14 @@ struct DocumentEditorView: View {
     @State private var isAtBottom = true
 
     let branchId: String
+    let sessionId: String
     var parentBranchLayout: BranchLayoutViewModel?
 
     init(sessionId: String,
          branchId: String,
          workingDirectory: String,
          parentBranchLayout: BranchLayoutViewModel? = nil) {
+        self.sessionId = sessionId
         self.branchId = branchId
         self.parentBranchLayout = parentBranchLayout
         _viewModel = StateObject(wrappedValue: DocumentEditorViewModel(
@@ -185,6 +187,16 @@ struct DocumentEditorView: View {
                     isFocused = true
                     viewModel.loadDocument()
                     viewModel.parentBranchLayout = parentBranchLayout
+                    // Auto-send pending synthesis prompt (set by SynthesisService)
+                    let synthKey = "pending_synthesis_\(sessionId)"
+                    if let prompt = UserDefaults.standard.string(forKey: synthKey) {
+                        UserDefaults.standard.removeObject(forKey: synthKey)
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(600))
+                            viewModel.currentInput = prompt
+                            viewModel.submitInput()
+                        }
+                    }
                 }
                 .sheet(item: $viewModel.pendingForkMessage) { message in
                     ForkMenu(
@@ -880,6 +892,7 @@ class DocumentEditorViewModel: ObservableObject {
                 URL(fileURLWithPath: $0).lastPathComponent
             } ?? cachedProject
 
+            let extendedThinking = UserDefaults.standard.bool(forKey: "extendedThinkingEnabled")
             let ctx = ProviderSendContext(
                 message: content,
                 sessionId: sessionId,
@@ -890,7 +903,8 @@ class DocumentEditorViewModel: ObservableObject {
                 parentSessionId: cachedParentSessionId,
                 isNewSession: isNew,
                 attachments: attachments,
-                recentContext: recentContext
+                recentContext: recentContext,
+                extendedThinking: extendedThinking
             )
 
             // 4. Stream response through ClaudeBridge — routes via daemon channel if available,

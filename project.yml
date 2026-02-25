@@ -60,6 +60,7 @@ targets:
       - package: GRDB
       - package: SwiftTerm
       - package: CortanaCore
+      - sdk: Carbon.framework
     entitlements:
       path: WorldTree.entitlements
     postBuildScripts:

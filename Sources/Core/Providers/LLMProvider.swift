@@ -120,6 +120,10 @@ struct ProviderSendContext {
     /// when server-side --resume silently fails (session expiry, CLI restart, etc.).
     var recentContext: String?
 
+    /// When true, extended thinking is enabled. Claude reasons internally before responding.
+    /// Significantly improves quality on complex architectural and debugging tasks.
+    var extendedThinking: Bool
+
     init(
         message: String,
         sessionId: String,
@@ -131,7 +135,8 @@ struct ProviderSendContext {
         isNewSession: Bool = false,
         checkpointContext: String? = nil,
         attachments: [Attachment] = [],
-        recentContext: String? = nil
+        recentContext: String? = nil,
+        extendedThinking: Bool = false
     ) {
         self.message = message
         self.sessionId = sessionId
@@ -144,5 +149,6 @@ struct ProviderSendContext {
         self.checkpointContext = checkpointContext
         self.attachments = attachments
         self.recentContext = recentContext
+        self.extendedThinking = extendedThinking
     }
 }

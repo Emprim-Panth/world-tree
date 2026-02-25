@@ -2,6 +2,18 @@ import Foundation
 
 // MARK: - Request Types
 
+/// Extended thinking configuration. When set, Claude reasons internally before responding.
+/// Requires model support (claude-sonnet-4-6 and newer). Budget tokens count against max_tokens.
+struct ThinkingConfig: Encodable {
+    let type: String = "enabled"
+    let budgetTokens: Int
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case budgetTokens = "budget_tokens"
+    }
+}
+
 struct AnthropicRequest: Encodable {
     let model: String
     let maxTokens: Int
@@ -9,11 +21,26 @@ struct AnthropicRequest: Encodable {
     let tools: [ToolSchema]
     let messages: [APIMessage]
     let stream: Bool
+    let thinking: ThinkingConfig?
 
     enum CodingKeys: String, CodingKey {
         case model
         case maxTokens = "max_tokens"
-        case system, tools, messages, stream
+        case system, tools, messages, stream, thinking
+    }
+
+    // Custom encode: omit thinking when nil
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(model, forKey: .model)
+        try container.encode(maxTokens, forKey: .maxTokens)
+        try container.encode(system, forKey: .system)
+        try container.encode(tools, forKey: .tools)
+        try container.encode(messages, forKey: .messages)
+        try container.encode(stream, forKey: .stream)
+        if let thinking {
+            try container.encode(thinking, forKey: .thinking)
+        }
     }
 }
 

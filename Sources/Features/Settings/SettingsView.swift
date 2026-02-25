@@ -157,6 +157,7 @@ struct SettingsView: View {
     // MARK: - General
 
     @StateObject private var appState = AppState.shared
+    @AppStorage("globalHotKeyEnabled") private var globalHotKeyEnabled = true
 
     private var generalTab: some View {
         Form {
@@ -181,6 +182,25 @@ struct SettingsView: View {
                 Stepper("Messages on fork: \(contextDepth)", value: $contextDepth, in: 3...50)
             }
 
+            Section("Global Hotkey") {
+                Toggle(isOn: $globalHotKeyEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Enable ⌘⇧Space")
+                            .fontWeight(.medium)
+                        Text("Bring World Tree to the front from any app. Takes effect on next launch.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .onChange(of: globalHotKeyEnabled) { _, enabled in
+                    if enabled {
+                        GlobalHotKey.shared.register()
+                    } else {
+                        GlobalHotKey.shared.unregister()
+                    }
+                }
+            }
+
             Section("Build") {
                 let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
                 let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
@@ -196,6 +216,8 @@ struct SettingsView: View {
 
     @State private var apiKeyInput = ""
     @State private var showAPIKey = false
+    @AppStorage("extendedThinkingEnabled") private var extendedThinkingEnabled = false
+    @AppStorage("fileWriteReviewEnabled") private var fileWriteReviewEnabled = false
 
     private var apiTab: some View {
         Form {
@@ -250,6 +272,28 @@ struct SettingsView: View {
                 Text("Get your API key from: https://console.anthropic.com")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Intelligence") {
+                Toggle(isOn: $extendedThinkingEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Extended Thinking")
+                            .fontWeight(.medium)
+                        Text("Claude reasons internally before responding. Improves quality on complex tasks. Uses more tokens (32K budget).")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Toggle(isOn: $fileWriteReviewEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Review File Writes")
+                            .fontWeight(.medium)
+                        Text("Show a diff and require your approval before any file is written or edited. Adds one step but gives full control over every change.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
         }
         .formStyle(.grouped)

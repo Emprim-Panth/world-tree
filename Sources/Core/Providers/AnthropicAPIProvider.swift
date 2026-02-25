@@ -68,9 +68,11 @@ final class AnthropicAPIProvider: LLMProvider {
     func send(context: ProviderSendContext) -> AsyncStream<BridgeEvent> {
         isCancelled = false
         isRunning = true
+        WakeLock.shared.acquire()
 
         return AsyncStream { [weak self] continuation in
             guard let self else {
+                WakeLock.shared.release()
                 continuation.yield(.error("Provider deallocated"))
                 continuation.finish()
                 return
@@ -110,13 +112,21 @@ final class AnthropicAPIProvider: LLMProvider {
                     for _ in 0..<self.maxToolLoopIterations {
                         if self.isCancelled { break }
 
+                        // Extended thinking: 10K budget tokens, total budget must exceed it.
+                        // Base max raised to 16K; 32K when thinking is active.
+                        let thinkingConfig: ThinkingConfig? = context.extendedThinking
+                            ? ThinkingConfig(budgetTokens: 10_000)
+                            : nil
+                        let maxTokens = context.extendedThinking ? 32_000 : 16_384
+
                         let request = AnthropicRequest(
                             model: selectedModel,
-                            maxTokens: 8192,
+                            maxTokens: maxTokens,
                             system: state.systemBlocks,
                             tools: CanvasTools.definitions(),
                             messages: state.messagesForAPI(),
-                            stream: true
+                            stream: true,
+                            thinking: thinkingConfig
                         )
 
                         var textAccumulator = ""
@@ -234,10 +244,12 @@ final class AnthropicAPIProvider: LLMProvider {
                     state.recordUsage(cumulativeUsage)
                     try? state.persist()
                     let finalUsage = state.tokenUsage
+                    WakeLock.shared.release()
                     continuation.yield(.done(usage: finalUsage))
                     continuation.finish()
                 } catch {
                     canvasLog("[AnthropicAPIProvider] ERROR: \(error)")
+                    WakeLock.shared.release()
                     continuation.yield(.error(error.localizedDescription))
                     continuation.finish()
                 }
@@ -262,6 +274,7 @@ final class AnthropicAPIProvider: LLMProvider {
             self?.currentTask?.cancel()
             self?.currentTask = nil
             self?.isRunning = false
+            WakeLock.shared.release()
         }
     }
 

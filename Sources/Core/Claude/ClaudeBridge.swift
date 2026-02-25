@@ -196,6 +196,8 @@ final class ClaudeBridge {
         let parentSessionId = resolveParentSessionId(branchId: branchId)
         let isNewSession = !hasExistingSession(sessionId: sessionId)
 
+        let thinkingEnabled = UserDefaults.standard.bool(forKey: "extendedThinkingEnabled")
+
         var context = ProviderSendContext(
             message: message,
             sessionId: sessionId,
@@ -204,7 +206,8 @@ final class ClaudeBridge {
             workingDirectory: workingDirectory ?? resolveWorkingDirectory(nil, project: project),
             project: project,
             parentSessionId: parentSessionId,
-            isNewSession: isNewSession
+            isNewSession: isNewSession,
+            extendedThinking: thinkingEnabled
         )
         context.checkpointContext = checkpointContext
 
