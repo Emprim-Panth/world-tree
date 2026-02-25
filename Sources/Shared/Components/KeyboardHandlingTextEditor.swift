@@ -42,7 +42,9 @@ struct KeyboardHandlingTextEditor: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         if textView.string != text {
             textView.string = text
-            context.coordinator.recalcHeight(textView)
+            DispatchQueue.main.async {
+                context.coordinator.recalcHeight(textView)
+            }
         }
         context.coordinator.onTabKey = onTabKey
         context.coordinator.onShiftTabKey = onShiftTabKey

@@ -40,10 +40,11 @@ final class TreeStore {
                 SELECT t.*,
                     COALESCE(msg_agg.message_count, 0) as message_count,
                     COALESCE(br_agg.branch_count, 0) as branch_count,
-                    last_msg.content as last_message_snippet
+                    last_msg.content as last_message_snippet,
+                    msg_agg.last_message_at as last_message_at
                 FROM canvas_trees t
                 LEFT JOIN (
-                    SELECT b.tree_id, COUNT(m.id) as message_count
+                    SELECT b.tree_id, COUNT(m.id) as message_count, MAX(m.timestamp) as last_message_at
                     FROM canvas_branches b
                     JOIN messages m ON m.session_id = b.session_id
                     GROUP BY b.tree_id
@@ -63,7 +64,7 @@ final class TreeStore {
                     HAVING m.timestamp = MAX(m.timestamp)
                 ) last_msg ON last_msg.tree_id = t.id
                 \(archiveFilter)
-                ORDER BY t.updated_at DESC
+                ORDER BY COALESCE(msg_agg.last_message_at, t.updated_at) DESC
                 """
 
             return try Row.fetchAll(db, sql: sql).map { row in

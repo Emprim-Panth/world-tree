@@ -111,14 +111,10 @@ actor JobQueue {
 
         // Async wait with timeout — does not block the actor thread during job execution
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            var hasResumed = false
-            let lock = NSLock()
+            let resumeGuard = OneShotGuard()
 
             @Sendable func safeResume() {
-                lock.lock()
-                defer { lock.unlock() }
-                guard !hasResumed else { return }
-                hasResumed = true
+                guard resumeGuard.tryFire() else { return }
                 continuation.resume()
             }
 

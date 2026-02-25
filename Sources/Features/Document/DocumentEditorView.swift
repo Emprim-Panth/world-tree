@@ -55,6 +55,25 @@ struct DocumentEditorView: View {
                                     .padding(.vertical, 60)
                             }
 
+                            // Persisted messages — rendered in order of arrival
+                            ForEach(viewModel.document.sections) { section in
+                                DocumentSectionView(
+                                    section: section,
+                                    isHovered: hoveredSectionId == section.id,
+                                    showInferButton: !viewModel.isRootBranch,
+                                    onEdit: { newContent in viewModel.updateSection(section.id, content: newContent) },
+                                    onBranch: { viewModel.requestFork(from: section.id) },
+                                    onInfer: { viewModel.inferFinding(from: section.id) },
+                                    onNavigateToBranch: { branchId in
+                                        if let treeId = viewModel.treeId {
+                                            AppState.shared.selectBranch(branchId, in: treeId)
+                                        }
+                                    }
+                                )
+                                .onHover { hovered in hoveredSectionId = hovered ? section.id : nil }
+                                .id(section.id)
+                            }
+
                         // Live streaming section — tokens appear as they arrive (only once content exists)
                         if let streaming = viewModel.streamingContent, !streaming.isEmpty {
                             StreamingSectionView(content: streaming)

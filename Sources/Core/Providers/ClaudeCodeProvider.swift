@@ -65,14 +65,10 @@ final class ClaudeCodeProvider: LLMProvider {
         }
 
         return await withCheckedContinuation { continuation in
-            var hasResumed = false
-            let lock = NSLock()
+            let resumeGuard = OneShotGuard()
 
             @Sendable func safeResume(_ value: ProviderHealth) {
-                lock.lock()
-                defer { lock.unlock() }
-                guard !hasResumed else { return }
-                hasResumed = true
+                guard resumeGuard.tryFire() else { return }
                 continuation.resume(returning: value)
             }
 
