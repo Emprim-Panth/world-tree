@@ -8,14 +8,14 @@ struct ForkMenu: View {
     let onCreated: (String) -> Void
 
     @State private var title: String = ""
-    @State private var selectedModel: String = CortanaConstants.defaultModel
+    @State private var selectedModel: String = AppConstants.defaultModel
     @State private var implementationNote: String = ""
     @State private var workingDirectory: String = ""
     @State private var isCreating: Bool = false
     @State private var error: String?
 
     private let models = [
-        ("Auto", CortanaConstants.defaultModel),
+        ("Auto", AppConstants.defaultModel),
         ("Opus", "claude-opus-4-6"),
         ("Sonnet", "claude-sonnet-4-6"),
         ("Haiku", "claude-haiku-4-5-20251001"),

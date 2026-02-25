@@ -97,7 +97,7 @@ final class AnthropicAPIProvider: LLMProvider {
                     // Add user message (with any image/file attachments)
                     state.addUserMessage(context.message, attachments: context.attachments)
 
-                    let selectedModel = context.model ?? CortanaConstants.defaultModel
+                    let selectedModel = context.model ?? AppConstants.defaultModel
                     let cwd = resolveWorkingDirectory(context.workingDirectory, project: context.project)
                     // Pass the branch's tmux session name so bash tool calls run visibly in the terminal
                     let tmuxSession = BranchTerminalManager.shared.sessionName(for: context.branchId)

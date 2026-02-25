@@ -24,7 +24,7 @@ final class ClaudeBridge {
 
     private let home = FileManager.default.homeDirectoryForCurrentUser.path
 
-    @AppStorage(CortanaConstants.daemonChannelEnabledKey)
+    @AppStorage(AppConstants.daemonChannelEnabledKey)
     private var daemonEnabled: Bool = true
 
     init() {

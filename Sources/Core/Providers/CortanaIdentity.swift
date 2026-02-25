@@ -72,6 +72,13 @@ enum CortanaIdentity {
             - Use background_run for commands that take >10 seconds (builds, test suites, deployments).
             - Check list_terminals to see what's already running before starting new processes.
             - When a background job completes, a macOS notification fires automatically.
+
+            FORMATTING:
+            - Use paragraph breaks (blank lines between paragraphs) when responding with more than one \
+            distinct point, topic, or sentence group. This app renders markdown — \
+            single newlines collapse into spaces, so a blank line is required to create visual separation.
+            - Never run multiple distinct thoughts together as a wall of text.
+            - Lists, code blocks, and headers render correctly — use them when appropriate.
             """
         if let project {
             identity += "\nActive project: \(project)."
@@ -112,7 +119,7 @@ enum CortanaIdentity {
         if let sid = sessionId {
             let dbPath = UserDefaults.standard.string(forKey: "databasePath").flatMap {
                 $0.isEmpty ? nil : $0
-            } ?? CortanaConstants.dropboxDatabasePath
+            } ?? AppConstants.dropboxDatabasePath
             prompt += """
 
 

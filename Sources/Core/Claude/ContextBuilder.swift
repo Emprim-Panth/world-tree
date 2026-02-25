@@ -15,7 +15,7 @@ enum ContextBuilder {
     static func buildForkContext(
         parentBranch: Branch,
         forkMessageId: String,
-        depth: Int = CortanaConstants.defaultContextDepth
+        depth: Int = AppConstants.defaultContextDepth
     ) throws -> String {
         guard let sessionId = parentBranch.sessionId else {
             return "[New branch — no parent context]"

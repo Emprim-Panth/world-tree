@@ -1,6 +1,6 @@
 import Foundation
 
-enum CortanaConstants {
+enum AppConstants {
     // MARK: - Database
     static let dropboxDatabasePath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path

@@ -32,7 +32,7 @@ final class PluginServer: ObservableObject {
     static let pluginID = "world-tree"
     static let pluginName = "World Tree"
     static let pluginVersion = "1.0.0"
-    static let enabledKey = CortanaConstants.pluginServerEnabledKey
+    static let enabledKey = AppConstants.pluginServerEnabledKey
 
     @Published private(set) var isRunning = false
     @Published private(set) var startedAt: Date?
@@ -102,7 +102,7 @@ final class PluginServer: ObservableObject {
     /// Drops ~/.openclaude/state/plugins/world-tree.json so the daemon
     /// discovers this plugin at next startup without manual config.json edits.
     private func writeManifestFile() {
-        let pluginsDir = URL(fileURLWithPath: CortanaConstants.pluginManifestDir)
+        let pluginsDir = URL(fileURLWithPath: AppConstants.pluginManifestDir)
         let manifestFile = pluginsDir.appendingPathComponent("world-tree.json")
         try? FileManager.default.createDirectory(at: pluginsDir, withIntermediateDirectories: true)
 

@@ -23,7 +23,6 @@ struct DocumentEditorView: View {
     @State private var forkBranchType: BranchType = .conversation
     @State private var showSearch = false
     @State private var searchQuery = ""
-    @State private var isAtBottom = true
 
     let branchId: String
     let sessionId: String
@@ -90,10 +89,8 @@ struct DocumentEditorView: View {
                                 .padding(.vertical, 8)
                         }
 
-                        // Scroll anchor — tracks whether user is near bottom
+                        // Scroll anchor — used by proxy.scrollTo("scroll-bottom")
                         Color.clear.frame(height: 1).id("scroll-bottom")
-                            .onAppear { isAtBottom = true }
-                            .onDisappear { isAtBottom = false }
                     }
                     .padding(.horizontal, max(24, (geometry.size.width - 800) / 2))
                     .padding(.vertical, 24)
@@ -210,7 +207,7 @@ struct DocumentEditorView: View {
                 // If the user scrolled up to read, we show a "new messages" indicator instead.
                 .onChange(of: viewModel.document.sections.count) { _, _ in
                     guard viewModel.streamingContent == nil, !viewModel.isProcessing else { return }
-                    if isAtBottom { proxy.scrollTo("scroll-bottom") }
+                    if viewModel.isScrolledToBottom { proxy.scrollTo("scroll-bottom") }
                 }
                 .onChange(of: viewModel.streamingContent) { _, content in
                     if content != nil {
@@ -244,7 +241,11 @@ struct DocumentEditorView: View {
                 .animation(.easeInOut(duration: 0.2),
                            value: viewModel.hasNewStreamContent && !viewModel.isScrolledToBottom)
                 .onChange(of: viewModel.isProcessing) { _, processing in
-                    if processing && viewModel.streamingContent == nil && isAtBottom {
+                    if processing && viewModel.streamingContent == nil {
+                        proxy.scrollTo("scroll-bottom")
+                    }
+                    // Snap to bottom when the response finishes committing
+                    if !processing && viewModel.isScrolledToBottom {
                         proxy.scrollTo("scroll-bottom")
                     }
                 }
@@ -818,7 +819,7 @@ class DocumentEditorViewModel: ObservableObject {
             }
 
             // 2. Route through ClaudeCodeProvider
-            let model = UserDefaults.standard.string(forKey: "defaultModel") ?? CortanaConstants.defaultModel
+            let model = UserDefaults.standard.string(forKey: "defaultModel") ?? AppConstants.defaultModel
 
             // Context injection strategy — two tiers to handle both cold starts and
             // back-to-back --resume failures:

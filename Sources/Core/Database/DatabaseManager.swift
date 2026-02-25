@@ -45,7 +45,7 @@ final class DatabaseManager {
             return override
         }
 
-        let dropboxPath = CortanaConstants.dropboxDatabasePath
+        let dropboxPath = AppConstants.dropboxDatabasePath
         if FileManager.default.fileExists(atPath: dropboxPath) {
             return dropboxPath
         }

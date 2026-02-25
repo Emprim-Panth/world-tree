@@ -151,10 +151,10 @@ struct WorldTreeApp: App {
     /// Users can disable via Settings → Plugin Server, or set cortana.pluginEnabled = false.
     private func startPluginServerIfEnabled() {
         let defaults = UserDefaults.standard
-        if defaults.object(forKey: CortanaConstants.pluginServerEnabledKey) == nil {
-            defaults.set(true, forKey: CortanaConstants.pluginServerEnabledKey) // default on
+        if defaults.object(forKey: AppConstants.pluginServerEnabledKey) == nil {
+            defaults.set(true, forKey: AppConstants.pluginServerEnabledKey) // default on
         }
-        guard defaults.bool(forKey: CortanaConstants.pluginServerEnabledKey) else { return }
+        guard defaults.bool(forKey: AppConstants.pluginServerEnabledKey) else { return }
         PluginServer.shared.start()
     }
 }

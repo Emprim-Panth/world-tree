@@ -5,7 +5,7 @@ import Foundation
 actor DaemonSocket {
     private let socketPath: String
 
-    init(socketPath: String = CortanaConstants.daemonSocketPath) {
+    init(socketPath: String = AppConstants.daemonSocketPath) {
         self.socketPath = socketPath
     }
 

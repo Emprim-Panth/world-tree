@@ -52,7 +52,7 @@ final class ClaudeService {
     /// Stream a completion from Claude
     func streamCompletion(
         messages: [ClaudeMessage],
-        model: String = CortanaConstants.defaultModel,
+        model: String = AppConstants.defaultModel,
         maxTokens: Int = 4096
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
