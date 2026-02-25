@@ -1,7 +1,7 @@
 import Foundation
 
 /// Static JSON Schema definitions for the tools Canvas gives Claude.
-enum CanvasTools {
+enum WorldTreeTools {
 
     /// All tool definitions. The last one carries cache_control for prompt caching.
     static func definitions() -> [ToolSchema] {

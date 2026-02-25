@@ -106,7 +106,7 @@ actor DaemonChannel {
                     continuation.yield(.done(usage: SessionTokenUsage()))
                     continuation.finish()
                 } catch {
-                    canvasLog("[DaemonChannel] Connection failed: \(error.localizedDescription)")
+                    wtLog("[DaemonChannel] Connection failed: \(error.localizedDescription)")
                     continuation.yield(.error("Daemon channel not available — using direct provider"))
                     continuation.finish()
                 }

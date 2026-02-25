@@ -46,7 +46,7 @@ final class PeekabooBridgeServer {
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
-            canvasLog("[PeekabooBridge] socket() failed errno=\(errno)")
+            wtLog("[PeekabooBridge] socket() failed errno=\(errno)")
             return
         }
 
@@ -66,11 +66,11 @@ final class PeekabooBridgeServer {
             }
         }
         guard bindRC == 0 else {
-            canvasLog("[PeekabooBridge] bind() failed errno=\(errno)")
+            wtLog("[PeekabooBridge] bind() failed errno=\(errno)")
             close(fd); return
         }
         guard listen(fd, 8) == 0 else {
-            canvasLog("[PeekabooBridge] listen() failed errno=\(errno)")
+            wtLog("[PeekabooBridge] listen() failed errno=\(errno)")
             close(fd); return
         }
 
@@ -79,7 +79,7 @@ final class PeekabooBridgeServer {
         isRunning = true
         lock.unlock()
 
-        canvasLog("[PeekabooBridge] Ready at \(socketPath)")
+        wtLog("[PeekabooBridge] Ready at \(socketPath)")
 
         Thread.detachNewThread { [weak self] in self?.acceptLoop() }
     }
@@ -93,7 +93,7 @@ final class PeekabooBridgeServer {
 
         if fdToClose >= 0 { close(fdToClose) }
         try? FileManager.default.removeItem(atPath: socketPath)
-        canvasLog("[PeekabooBridge] Stopped")
+        wtLog("[PeekabooBridge] Stopped")
     }
 
     // MARK: - Accept Loop  (background thread)
@@ -124,7 +124,7 @@ final class PeekabooBridgeServer {
 
     private func handleClient(fd: Int32) {
         defer { connectionSemaphore.signal(); close(fd) }
-        canvasLog("[PeekabooBridge] Client connected fd=\(fd)")
+        wtLog("[PeekabooBridge] Client connected fd=\(fd)")
 
         var buffer = Data()
         var chunk = [UInt8](repeating: 0, count: 65_536)
@@ -148,7 +148,7 @@ final class PeekabooBridgeServer {
             if n == 0 { break }  // peer closed
         }
 
-        canvasLog("[PeekabooBridge] Client disconnected fd=\(fd)")
+        wtLog("[PeekabooBridge] Client disconnected fd=\(fd)")
     }
 
     private func tryDispatch(_ json: [String: Any], fd: Int32) {
@@ -156,7 +156,7 @@ final class PeekabooBridgeServer {
         let keys = json.keys.sorted().joined(separator: ", ")
         let logLine = "[PeekabooBridge] ← \(keys)\n"
         try? logLine.appendToFile(atPath: "/tmp/peekaboo_bridge.log")
-        canvasLog("[PeekabooBridge] ← \(keys)")
+        wtLog("[PeekabooBridge] ← \(keys)")
 
         guard let responseData = dispatch(json) else { return }
         var toSend = responseData
@@ -183,7 +183,7 @@ final class PeekabooBridgeServer {
             let bid = inner["appBundleIdentifier"] as? String
             return captureSync(windowID: wid, bundleID: bid)
         }
-        canvasLog("[PeekabooBridge] Unhandled request keys: \(json.keys.sorted().joined(separator: ", "))")
+        wtLog("[PeekabooBridge] Unhandled request keys: \(json.keys.sorted().joined(separator: ", "))")
         return nil
     }
 
@@ -210,7 +210,7 @@ final class PeekabooBridgeServer {
                 ],
             ],
         ]
-        canvasLog("[PeekabooBridge] Handshake complete — bridge active")
+        wtLog("[PeekabooBridge] Handshake complete — bridge active")
         return try? JSONSerialization.data(withJSONObject: payload)
     }
 
@@ -243,7 +243,7 @@ final class PeekabooBridgeServer {
                 result = self.encodeCapture(cgImage)
             } catch {
                 let msg = "[PeekabooBridge] SCK capture error: \(error)"
-                canvasLog(msg)
+                wtLog(msg)
                 try? (msg + "\n").appendToFile(atPath: "/tmp/peekaboo_bridge.log")
                 result = self.respondError("captureFailed", error.localizedDescription)
             }
@@ -252,7 +252,7 @@ final class PeekabooBridgeServer {
 
         let timeout = DispatchTime.now() + .seconds(15)
         if sem.wait(timeout: timeout) == .timedOut {
-            canvasLog("[PeekabooBridge] Capture timed out after 15 s")
+            wtLog("[PeekabooBridge] Capture timed out after 15 s")
             return respondError("captureFailed", "Capture timed out")
         }
         return result
@@ -306,13 +306,13 @@ final class PeekabooBridgeServer {
             mutableData, "public.png" as CFString, 1, nil)
         else {
             let m = "[PeekabooBridge] CGImageDestination creation failed"
-            canvasLog(m); try? (m + "\n").appendToFile(atPath: "/tmp/peekaboo_bridge.log")
+            wtLog(m); try? (m + "\n").appendToFile(atPath: "/tmp/peekaboo_bridge.log")
             return respondError("encodingFailed", m)
         }
         CGImageDestinationAddImage(dest, cgImage, nil)
         guard CGImageDestinationFinalize(dest) else {
             let m = "[PeekabooBridge] CGImageDestination finalize failed"
-            canvasLog(m); try? (m + "\n").appendToFile(atPath: "/tmp/peekaboo_bridge.log")
+            wtLog(m); try? (m + "\n").appendToFile(atPath: "/tmp/peekaboo_bridge.log")
             return respondError("encodingFailed", m)
         }
         let pngData = mutableData as Data
@@ -333,7 +333,7 @@ final class PeekabooBridgeServer {
             ],
         ]
         let msg = "[PeekabooBridge] Captured \(cgImage.width)×\(cgImage.height) → \(tmpPath)"
-        canvasLog(msg)
+        wtLog(msg)
         try? (msg + "\n").appendToFile(atPath: "/tmp/peekaboo_bridge.log")
         return try? JSONSerialization.data(withJSONObject: payload)
     }

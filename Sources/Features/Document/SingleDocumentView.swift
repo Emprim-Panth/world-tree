@@ -6,6 +6,7 @@ struct SingleDocumentView: View {
     @StateObject private var viewModel: SingleDocumentViewModel
     @EnvironmentObject private var appState: AppState
     @State private var showTerminal = false
+    @State private var showTreeMap = false
 
     /// branchId: if provided, loads that specific branch as the main document.
     /// If nil (or the branch isn't found), falls back to the tree's root branch.
@@ -101,6 +102,17 @@ struct SingleDocumentView: View {
                 ModelPickerButton()
             }
 
+            // Tree map — visualize conversation branches
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showTreeMap = true
+                } label: {
+                    Label("Tree Map", systemImage: "arrow.triangle.branch")
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .help("View conversation tree (⌘⇧T)")
+            }
+
             // Terminal toggle
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -113,6 +125,15 @@ struct SingleDocumentView: View {
                 .keyboardShortcut("`", modifiers: .command)
                 .help("Open Claude terminal (⌘`)")
             }
+        }
+        .sheet(isPresented: $showTreeMap) {
+            ConversationTreeMapView(
+                treeId: treeId,
+                currentBranchId: viewModel.mainBranchId,
+                onNavigate: { branchId in
+                    AppState.shared.selectBranch(branchId, in: treeId)
+                }
+            )
         }
         .onAppear {
             // Pre-warm the main branch terminal so it's ready when user opens it.
@@ -204,7 +225,7 @@ class SingleDocumentViewModel: ObservableObject {
                         INSERT INTO sessions (id, terminal_id, working_directory, description, started_at)
                         VALUES (?, ?, ?, ?, datetime('now'))
                         """,
-                    arguments: [sessionId, "canvas", workDir, "Canvas Session"]
+                    arguments: [sessionId, "canvas", workDir, "World Tree Session"]
                 )
                 try db.execute(
                     sql: """

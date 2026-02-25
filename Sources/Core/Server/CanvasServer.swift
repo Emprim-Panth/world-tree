@@ -1,18 +1,18 @@
 import Foundation
 import Network
 
-// MARK: - CanvasServer
+// MARK: - WorldTreeServer
 
 /// HTTP/SSE server that exposes Canvas sessions to external clients.
 ///
 /// Telegram bot and MacBook Canvas (remote mode) POST messages and receive
 /// Claude tokens as Server-Sent Events. All endpoints except `/health`
-/// require the `x-canvas-token` header.
+/// require the `x-worldtree-token` header.
 ///
 /// Port 5865. Token stored in UserDefaults under `cortana.serverToken`.
 @MainActor
-final class CanvasServer: ObservableObject {
-    static let shared = CanvasServer()
+final class WorldTreeServer: ObservableObject {
+    static let shared = WorldTreeServer()
 
     static let port: UInt16 = 5865
     /// Native WebSocket port (NWProtocolWebSocket) — iOS connects here.
@@ -53,14 +53,14 @@ final class CanvasServer: ObservableObject {
         guard !isRunning else { return }
         guard !configuredToken.isEmpty else {
             lastError = "No server token — set it in Settings → Server"
-            canvasLog("[CanvasServer] Cannot start: no token configured")
+            wtLog("[WorldTreeServer] Cannot start: no token configured")
             return
         }
 
         do {
             guard let nwPort = NWEndpoint.Port(rawValue: Self.port) else {
                 lastError = "Invalid port: \(Self.port)"
-                canvasLog("[CanvasServer] Cannot start: invalid port \(Self.port)")
+                wtLog("[WorldTreeServer] Cannot start: invalid port \(Self.port)")
                 return
             }
             let listener = try NWListener(using: .tcp, on: nwPort)
@@ -82,7 +82,7 @@ final class CanvasServer: ObservableObject {
                         self.startedAt = Date()
                         self.lastError = nil
                         self.writeStateFile(ngrokURL: nil)
-                        canvasLog("[CanvasServer] Ready on port \(Self.port)")
+                        wtLog("[WorldTreeServer] Ready on port \(Self.port)")
                         // Discover ngrok tunnel URL (if running) after a short delay
                         Task { @MainActor [weak self] in
                             try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s
@@ -91,14 +91,14 @@ final class CanvasServer: ObservableObject {
                     case .failed(let error):
                         self.isRunning = false
                         self.lastError = error.localizedDescription
-                        canvasLog("[CanvasServer] Failed: \(error) — restarting in 5s")
+                        wtLog("[WorldTreeServer] Failed: \(error) — restarting in 5s")
                         Task { @MainActor [weak self] in
                             try? await Task.sleep(for: .seconds(5))
                             self?.start()
                         }
                     case .cancelled:
                         self.isRunning = false
-                        canvasLog("[CanvasServer] Stopped")
+                        wtLog("[WorldTreeServer] Stopped")
                     default:
                         break
                     }
@@ -109,7 +109,7 @@ final class CanvasServer: ObservableObject {
             startNativeWSListener()
         } catch {
             lastError = error.localizedDescription
-            canvasLog("[CanvasServer] Listener init failed: \(error)")
+            wtLog("[WorldTreeServer] Listener init failed: \(error)")
         }
     }
 
@@ -153,7 +153,7 @@ final class CanvasServer: ObservableObject {
     /// Sets `bonjourServiceName` so callers can confirm advertising is active.
     func configureBonjour(on listener: NWListener) {
         guard isBonjourEnabled else {
-            canvasLog("[CanvasServer] Bonjour disabled — skipping advertisement")
+            wtLog("[WorldTreeServer] Bonjour disabled — skipping advertisement")
             return
         }
 
@@ -170,7 +170,7 @@ final class CanvasServer: ObservableObject {
             txtRecord: txt
         )
         bonjourServiceName = name
-        canvasLog("[CanvasServer] Bonjour advertising as '\(name)' (_worldtree._tcp.)")
+        wtLog("[WorldTreeServer] Bonjour advertising as '\(name)' (_worldtree._tcp.)")
     }
 
     // MARK: - State File (for external clients like Telegram bot)
@@ -191,7 +191,7 @@ final class CanvasServer: ObservableObject {
         ]
         if let ngrok = ngrokURL {
             state["ngrok_url"] = ngrok
-            canvasLog("[CanvasServer] ngrok URL: \(ngrok)")
+            wtLog("[WorldTreeServer] ngrok URL: \(ngrok)")
         }
         if let data = try? JSONSerialization.data(withJSONObject: state, options: .prettyPrinted) {
             try? data.write(to: stateFile)
@@ -227,7 +227,7 @@ final class CanvasServer: ObservableObject {
                 try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s between retries
             }
         }
-        canvasLog("[CanvasServer] No ngrok tunnel detected — remote access unavailable")
+        wtLog("[WorldTreeServer] No ngrok tunnel detected — remote access unavailable")
     }
 
     private func parseNgrokURL(from data: Data) -> String? {
@@ -288,11 +288,11 @@ final class CanvasServer: ObservableObject {
         token: String,
         remoteIP: String,
         accumulated: Data,
-        server: CanvasServer
+        server: WorldTreeServer
     ) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { chunk, _, isComplete, error in
             if let error {
-                canvasLog("[CanvasServer] Receive error: \(error)")
+                wtLog("[WorldTreeServer] Receive error: \(error)")
                 connection.cancel()
                 return
             }
@@ -302,7 +302,7 @@ final class CanvasServer: ObservableObject {
 
             // Reject oversized requests (1 MB limit) to prevent memory exhaustion
             if buffer.count > 1_048_576 {
-                canvasLog("[CanvasServer] Request too large (\(buffer.count) bytes) — dropping")
+                wtLog("[WorldTreeServer] Request too large (\(buffer.count) bytes) — dropping")
                 connection.cancel()
                 return
             }
@@ -355,7 +355,7 @@ final class CanvasServer: ObservableObject {
 
         // Check if this IP is already rate-limited before attempting auth.
         if req.path != "/health" && rateLimiter.isBlocked(ip: remoteIP) {
-            canvasLog("[CanvasServer] Rate-limited request from \(remoteIP)")
+            wtLog("[WorldTreeServer] Rate-limited request from \(remoteIP)")
             sendResponse(connection, status: 429, body: #"{"error":"too many failed auth attempts — try again later"}"#)
             return
         }
@@ -365,7 +365,7 @@ final class CanvasServer: ObservableObject {
            req.headers["upgrade"]?.lowercased() == "websocket",
            req.headers["connection"]?.lowercased().contains("upgrade") == true {
             // Auth: accept token from query parameter or header
-            let token = req.queryParam("token") ?? req.headers["x-canvas-token"] ?? ""
+            let token = req.queryParam("token") ?? req.headers["x-worldtree-token"] ?? ""
             guard token == expectedToken else {
                 let nowBlocked = rateLimiter.recordFailure(ip: remoteIP)
                 let status = nowBlocked ? 429 : 401
@@ -380,7 +380,7 @@ final class CanvasServer: ObservableObject {
         }
 
         if req.path != "/health" {
-            guard (req.headers["x-canvas-token"] ?? "") == expectedToken else {
+            guard (req.headers["x-worldtree-token"] ?? "") == expectedToken else {
                 let nowBlocked = rateLimiter.recordFailure(ip: remoteIP)
                 let status = nowBlocked ? 429 : 401
                 let body = nowBlocked
@@ -392,7 +392,7 @@ final class CanvasServer: ObservableObject {
         }
 
         requestCount += 1
-        canvasLog("[CanvasServer] \(req.method) \(req.path)")
+        wtLog("[WorldTreeServer] \(req.method) \(req.path)")
 
         switch (req.method, req.path) {
         case ("GET", "/health"):
@@ -491,9 +491,9 @@ final class CanvasServer: ObservableObject {
             do {
                 _ = try MessageStore.shared.sendMessage(
                     sessionId: resolved.sessionId, role: .system, content: summary)
-                canvasLog("[CanvasServer] Injected Telegram context summary (\(summary.count) chars)")
+                wtLog("[WorldTreeServer] Injected Telegram context summary (\(summary.count) chars)")
             } catch {
-                canvasLog("[CanvasServer] Failed to inject context summary: \(error)")
+                wtLog("[WorldTreeServer] Failed to inject context summary: \(error)")
             }
         }
 
@@ -503,7 +503,7 @@ final class CanvasServer: ObservableObject {
                 name: .canvasServerRequestedTerminalOpen,
                 object: resolved.branchId
             )
-            canvasLog("[CanvasServer] Requested terminal open for branch \(resolved.branchId)")
+            wtLog("[WorldTreeServer] Requested terminal open for branch \(resolved.branchId)")
         }
 
         // Persist user message
@@ -511,7 +511,7 @@ final class CanvasServer: ObservableObject {
             _ = try MessageStore.shared.sendMessage(
                 sessionId: resolved.sessionId, role: .user, content: content)
         } catch {
-            canvasLog("[CanvasServer] Failed to persist user message: \(error)")
+            wtLog("[WorldTreeServer] Failed to persist user message: \(error)")
         }
 
         // Notify UI about external message source (e.g. Telegram) — already @MainActor
@@ -546,7 +546,7 @@ final class CanvasServer: ObservableObject {
 
         let eventStream: AsyncStream<BridgeEvent>
         if daemonEnabled && daemonConnected {
-            canvasLog("[CanvasServer] Routing through daemon channel")
+            wtLog("[WorldTreeServer] Routing through daemon channel")
             eventStream = await DaemonChannel.shared.send(
                 text: content,
                 project: project,
@@ -560,7 +560,7 @@ final class CanvasServer: ObservableObject {
                 sendSSEClose(connection)
                 return
             }
-            canvasLog("[CanvasServer] Using provider: \(provider.identifier)")
+            wtLog("[WorldTreeServer] Using provider: \(provider.identifier)")
             eventStream = provider.send(context: ctx)
         }
 
@@ -576,7 +576,7 @@ final class CanvasServer: ObservableObject {
                         sessionId: resolved.sessionId, role: .assistant, content: fullResponse)
                     try TreeStore.shared.updateTreeTimestamp(resolved.treeId)
                 } catch {
-                    canvasLog("[CanvasServer] Failed to persist assistant message: \(error)")
+                    wtLog("[WorldTreeServer] Failed to persist assistant message: \(error)")
                 }
                 sendSSEChunk(connection, #"{"done":true,"response":"\#(esc(fullResponse))"}"#)
                 sendSSEClose(connection)
@@ -622,7 +622,7 @@ final class CanvasServer: ObservableObject {
         let branch = try TreeStore.shared.createBranch(
             treeId: tree.id, title: String(firstMessage.prefix(60)))
         guard let sid = branch.sessionId else {
-            throw NSError(domain: "CanvasServer", code: -1,
+            throw NSError(domain: "WorldTreeServer", code: -1,
                           userInfo: [NSLocalizedDescriptionKey: "Branch \(branch.id) has no sessionId — session continuity would be broken"])
         }
         return (sessionId: sid, branchId: branch.id, treeId: tree.id, isNew: true)
@@ -741,7 +741,7 @@ struct WebSocketClient {
 
 // MARK: - WebSocket Upgrade & Management
 
-extension CanvasServer {
+extension WorldTreeServer {
 
     /// Handle the WebSocket upgrade handshake (called from handleRawRequest).
     func handleWebSocketUpgrade(_ connection: NWConnection, request: ParsedRequest) async {
@@ -752,25 +752,25 @@ extension CanvasServer {
         }
 
         // Validate required WebSocket headers
-        canvasLog("[CanvasServer] WS upgrade headers: \(request.headers)")
+        wtLog("[WorldTreeServer] WS upgrade headers: \(request.headers)")
         guard let wsKey = request.headers["sec-websocket-key"], !wsKey.isEmpty else {
             sendResponse(connection, status: 400, body: #"{"error":"missing Sec-WebSocket-Key"}"#)
             return
         }
 
         guard request.headers["sec-websocket-version"] == "13" else {
-            canvasLog("[CanvasServer] WS upgrade rejected: version='\(request.headers["sec-websocket-version"] ?? "nil")'")
+            wtLog("[WorldTreeServer] WS upgrade rejected: version='\(request.headers["sec-websocket-version"] ?? "nil")'")
             sendResponse(connection, status: 400, body: #"{"error":"unsupported WebSocket version"}"#)
             return
         }
 
         // Send 101 Switching Protocols
         let acceptKey = WebSocketCodec.acceptKey(for: wsKey)
-        canvasLog("[CanvasServer] WS upgrade: key='\(wsKey)' accept='\(acceptKey)'")
+        wtLog("[WorldTreeServer] WS upgrade: key='\(wsKey)' accept='\(acceptKey)'")
         let upgradeData = WebSocketCodec.upgradeResponse(for: wsKey)
         connection.send(content: upgradeData, completion: .contentProcessed { [weak self] error in
             if let error {
-                canvasLog("[CanvasServer] WebSocket upgrade send failed: \(error)")
+                wtLog("[WorldTreeServer] WebSocket upgrade send failed: \(error)")
                 connection.cancel()
                 return
             }
@@ -781,7 +781,7 @@ extension CanvasServer {
         })
 
         requestCount += 1
-        canvasLog("[CanvasServer] WebSocket upgrade → /ws")
+        wtLog("[WorldTreeServer] WebSocket upgrade → /ws")
     }
 
     /// Register a new WebSocket client after successful upgrade.
@@ -798,7 +798,7 @@ extension CanvasServer {
         )
 
         webSocketClients[clientId] = client
-        canvasLog("[CanvasServer] WebSocket client connected: \(clientId) (total: \(webSocketClients.count))")
+        wtLog("[WorldTreeServer] WebSocket client connected: \(clientId) (total: \(webSocketClients.count))")
 
         // Set up callbacks
         wsConn.onMessage = { [weak self] text in
@@ -829,7 +829,7 @@ extension CanvasServer {
     /// Remove a WebSocket client (disconnect or close).
     private func removeWebSocketClient(_ clientId: String, code: UInt16, reason: String?) {
         guard webSocketClients.removeValue(forKey: clientId) != nil else { return }
-        canvasLog("[CanvasServer] WebSocket client disconnected: \(clientId) (code: \(code), remaining: \(webSocketClients.count))")
+        wtLog("[WorldTreeServer] WebSocket client disconnected: \(clientId) (code: \(code), remaining: \(webSocketClients.count))")
 
         // Stop ping timer if no clients remain
         if webSocketClients.isEmpty {
@@ -850,7 +850,7 @@ extension CanvasServer {
             return
         }
 
-        canvasLog("[CanvasServer] WS[\(clientId.prefix(8))] → \(msg.type)")
+        wtLog("[WorldTreeServer] WS[\(clientId.prefix(8))] → \(msg.type)")
 
         // Route by message type (protocol handling will be implemented in FRD-003 phase)
         // For now, acknowledge the message types and respond with appropriate structures
@@ -900,7 +900,7 @@ extension CanvasServer {
         client.subscribedBranchId = sub.branchId
         webSocketClients[clientId] = client
 
-        canvasLog("[CanvasServer] WS[\(clientId.prefix(8))] subscribed to tree:\(sub.treeId.prefix(8)) branch:\(sub.branchId.prefix(8))")
+        wtLog("[WorldTreeServer] WS[\(clientId.prefix(8))] subscribed to tree:\(sub.treeId.prefix(8)) branch:\(sub.branchId.prefix(8))")
 
         // Acknowledge
         let ack = WSMessage(type: "subscribed", id: message.id)
@@ -1041,7 +1041,7 @@ extension CanvasServer {
             return
         }
 
-        canvasLog("[CanvasServer] WS[\(clientId.prefix(8))] send_message to branch:\(req.branchId.prefix(8))")
+        wtLog("[WorldTreeServer] WS[\(clientId.prefix(8))] send_message to branch:\(req.branchId.prefix(8))")
 
         // Persist user message — if this fails, do NOT dispatch to LLM
         guard let _ = try? MessageStore.shared.sendMessage(sessionId: sessionId, role: .user, content: req.content) else {
@@ -1095,7 +1095,7 @@ extension CanvasServer {
 
         if let branchId {
             TokenBroadcaster.shared.cancel(branchId: branchId)
-            canvasLog("[CanvasServer] WS[\(clientId.prefix(8))] stream cancelled for branch:\(branchId.prefix(8))")
+            wtLog("[WorldTreeServer] WS[\(clientId.prefix(8))] stream cancelled for branch:\(branchId.prefix(8))")
         }
 
         let ack = WSMessage(type: "stream_cancelled", id: message.id)
@@ -1203,7 +1203,7 @@ extension CanvasServer {
         for (id, client) in webSocketClients {
             // If last pong was more than 40s ago (30s ping interval + 10s grace), connection is dead
             if now.timeIntervalSince(client.lastPongAt) > 40 {
-                canvasLog("[CanvasServer] WebSocket client \(id.prefix(8)) pong timeout — closing")
+                wtLog("[WorldTreeServer] WebSocket client \(id.prefix(8)) pong timeout — closing")
                 client.wsConnection?.sendCloseAndDisconnect(code: 1001, reason: "Pong timeout")
                 toRemove.append(id)
             } else {
@@ -1235,7 +1235,7 @@ extension CanvasServer {
         params.defaultProtocolStack.applicationProtocols.insert(wsOptions, at: 0)
 
         guard let wsPort = NWEndpoint.Port(rawValue: Self.wsPort) else {
-            canvasLog("[CanvasServer] Invalid WebSocket port: \(Self.wsPort)")
+            wtLog("[WorldTreeServer] Invalid WebSocket port: \(Self.wsPort)")
             return
         }
         do {
@@ -1250,15 +1250,15 @@ extension CanvasServer {
                 Task { @MainActor [weak self] in
                     switch state {
                     case .ready:
-                        canvasLog("[CanvasServer] Native WS ready on port \(Self.wsPort)")
+                        wtLog("[WorldTreeServer] Native WS ready on port \(Self.wsPort)")
                     case .failed(let error):
-                        canvasLog("[CanvasServer] Native WS failed: \(error) — restarting in 5s")
+                        wtLog("[WorldTreeServer] Native WS failed: \(error) — restarting in 5s")
                         Task { @MainActor [weak self] in
                             try? await Task.sleep(for: .seconds(5))
                             self?.startNativeWSListener()
                         }
                     case .cancelled:
-                        canvasLog("[CanvasServer] Native WS stopped")
+                        wtLog("[WorldTreeServer] Native WS stopped")
                     default:
                         break
                     }
@@ -1267,7 +1267,7 @@ extension CanvasServer {
 
             wsl.start(queue: networkQueue)
         } catch {
-            canvasLog("[CanvasServer] Native WS listener init failed: \(error)")
+            wtLog("[WorldTreeServer] Native WS listener init failed: \(error)")
         }
     }
 
@@ -1289,7 +1289,7 @@ extension CanvasServer {
                     self?.registerNativeWSClient(connection)
                 }
             case .failed(let error):
-                canvasLog("[CanvasServer] Native WS handshake failed: \(error)")
+                wtLog("[WorldTreeServer] Native WS handshake failed: \(error)")
                 connection.cancel()
             case .cancelled:
                 break
@@ -1314,7 +1314,7 @@ extension CanvasServer {
         )
 
         webSocketClients[clientId] = client
-        canvasLog("[CanvasServer] Native WS client connected: \(clientId.prefix(8)) (total: \(webSocketClients.count))")
+        wtLog("[WorldTreeServer] Native WS client connected: \(clientId.prefix(8)) (total: \(webSocketClients.count))")
 
         wsConn.onMessage = { [weak self] text in
             Task { @MainActor [weak self] in

@@ -34,14 +34,14 @@ final class ClaudeService {
             return
         }
 
-        canvasLog("[ClaudeService] No API key found - user needs to set it")
+        wtLog("[ClaudeService] No API key found - user needs to set it")
     }
 
     /// Set API key and save to Keychain
     func setAPIKey(_ key: String) {
         apiKey = key
         KeychainHelper.save(key: "anthropic_api_key", value: key)
-        canvasLog("[ClaudeService] API key configured")
+        wtLog("[ClaudeService] API key configured")
     }
 
     /// Check if API key is configured

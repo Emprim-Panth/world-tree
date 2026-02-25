@@ -244,7 +244,7 @@ actor ToolExecutor {
         let plainInput = input.mapValues { $0.value as Any }
         let assessment = ToolGuard.assess(toolName: "bash", input: plainInput)
         if assessment.requiresApproval {
-            canvasLog("[ToolGuard] Approval required: \(assessment.reason) — command: \(command.prefix(100))")
+            wtLog("[ToolGuard] Approval required: \(assessment.reason) — command: \(command.prefix(100))")
             let approved = await ApprovalCoordinator.shared.requestApproval(
                 assessment: assessment,
                 command: command
@@ -328,7 +328,7 @@ actor ToolExecutor {
         let plainInput = input.mapValues { $0.value as Any }
         let assessment = ToolGuard.assess(toolName: "bash", input: plainInput)
         if assessment.requiresApproval {
-            canvasLog("[ToolGuard] Approval required: \(assessment.reason) — command: \(command.prefix(100))")
+            wtLog("[ToolGuard] Approval required: \(assessment.reason) — command: \(command.prefix(100))")
             let approved = await ApprovalCoordinator.shared.requestApproval(
                 assessment: assessment,
                 command: command
@@ -358,7 +358,7 @@ actor ToolExecutor {
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o755 as NSNumber], ofItemAtPath: scriptPath)
         } catch {
-            canvasLog("[ToolExecutor] bashViaTmux: failed to write script — \(error)")
+            wtLog("[ToolExecutor] bashViaTmux: failed to write script — \(error)")
             return await bash(input) // fallback to direct execution
         }
 
@@ -860,7 +860,7 @@ actor ToolExecutor {
             return ToolResult(content: "No canvas checkpoints found", isError: false)
         }
 
-        var output = "Canvas Checkpoints:\n"
+        var output = "Cortana Checkpoints:\n"
         for (i, stash) in canvasStashes.enumerated() {
             output += "  [\(i)] \(stash)\n"
         }
@@ -922,7 +922,7 @@ actor ToolExecutor {
         // 3. Canvas background jobs
         let activeJobs = JobQueue.shared.activeJobs()
         if !activeJobs.isEmpty {
-            output += "\n## Canvas Background Jobs\n"
+            output += "\n## Background Jobs\n"
             for job in activeJobs {
                 output += "  [\(job.status.rawValue)] \(job.displayCommand) (id: \(job.id.prefix(8)))\n"
             }

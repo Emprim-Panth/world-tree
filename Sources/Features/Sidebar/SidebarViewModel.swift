@@ -235,11 +235,18 @@ final class SidebarViewModel: ObservableObject {
             let sql = """
                 SELECT t.*,
                     COALESCE(msg_agg.message_count, 0) as message_count,
-                    msg_agg.last_message_at
+                    msg_agg.last_message_at,
+                    msg_agg.last_message_snippet
                 FROM canvas_trees t
                 LEFT JOIN (
                     SELECT b.tree_id, COUNT(m.id) as message_count,
-                           MAX(m.timestamp) as last_message_at
+                           MAX(m.timestamp) as last_message_at,
+                           (SELECT m2.content
+                            FROM messages m2
+                            JOIN canvas_branches b2 ON b2.session_id = m2.session_id
+                            WHERE b2.tree_id = b.tree_id AND m2.role = 'assistant'
+                            ORDER BY m2.timestamp DESC
+                            LIMIT 1) as last_message_snippet
                     FROM canvas_branches b
                     JOIN messages m ON m.session_id = b.session_id
                     GROUP BY b.tree_id

@@ -141,7 +141,7 @@ final class BranchSummarizer {
     private func runSummarization(prompt: String) async -> String? {
         let cliPath = "\(home)/.local/bin/claude"
         guard FileManager.default.fileExists(atPath: cliPath) else {
-            canvasLog("[BranchSummarizer] Claude CLI not found")
+            wtLog("[BranchSummarizer] Claude CLI not found")
             return nil
         }
 
@@ -177,7 +177,7 @@ final class BranchSummarizer {
             // Timeout watchdog — kill the process if it runs longer than 120s
             let timeoutWork = DispatchWorkItem { [weak proc] in
                 guard let proc, proc.isRunning else { return }
-                canvasLog("[BranchSummarizer] CLI timed out after 120s — terminating")
+                wtLog("[BranchSummarizer] CLI timed out after 120s — terminating")
                 proc.terminate()
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(120), execute: timeoutWork)
@@ -191,7 +191,7 @@ final class BranchSummarizer {
                 if process.terminationStatus == 0, let output, !output.isEmpty {
                     safeResume(output)
                 } else {
-                    canvasLog("[BranchSummarizer] CLI exited with status \(process.terminationStatus)")
+                    wtLog("[BranchSummarizer] CLI exited with status \(process.terminationStatus)")
                     safeResume(nil)
                 }
             }
@@ -200,7 +200,7 @@ final class BranchSummarizer {
                 try proc.run()
             } catch {
                 timeoutWork.cancel()
-                canvasLog("[BranchSummarizer] Failed to launch CLI: \(error)")
+                wtLog("[BranchSummarizer] Failed to launch CLI: \(error)")
                 safeResume(nil)
             }
         }

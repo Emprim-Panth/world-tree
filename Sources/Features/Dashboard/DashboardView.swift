@@ -104,7 +104,7 @@ struct DashboardView: View {
             treeCount = recentTrees.count
             recentTrees = Array(recentTrees.prefix(10))
         } catch {
-            canvasLog("[Dashboard] Failed to load trees: \(error)")
+            wtLog("[Dashboard] Failed to load trees: \(error)")
         }
     }
 

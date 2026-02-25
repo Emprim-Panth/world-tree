@@ -6,7 +6,7 @@ import SwiftUI
 /// Each lane displays tool executions and text outputs as colored blocks.
 struct SwimLaneView: View {
     let branchId: String
-    @State private var events: [CanvasEvent] = []
+    @State private var events: [WorldTreeEvent] = []
     @State private var agents: [String] = []
 
     var body: some View {
@@ -56,7 +56,7 @@ struct SwimLaneView: View {
         }
     }
 
-    private func extractAgent(from event: CanvasEvent) -> String {
+    private func extractAgent(from event: WorldTreeEvent) -> String {
         guard let data = event.eventData,
               let json = try? JSONSerialization.jsonObject(with: Data(data.utf8)) as? [String: Any],
               let agent = json["agent"] as? String else {
@@ -71,7 +71,7 @@ struct SwimLaneView: View {
 /// Single horizontal lane showing activity blocks for one agent.
 struct AgentLane: View {
     let agentName: String
-    let events: [CanvasEvent]
+    let events: [WorldTreeEvent]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -94,14 +94,14 @@ struct AgentLane: View {
         .frame(height: 24)
     }
 
-    private func eventBlock(for event: CanvasEvent) -> some View {
+    private func eventBlock(for event: WorldTreeEvent) -> some View {
         RoundedRectangle(cornerRadius: 2)
             .fill(colorForEvent(event))
             .frame(width: blockWidth(for: event), height: 16)
             .help("\(event.eventType.rawValue) at \(event.timestamp.formatted(date: .omitted, time: .shortened))")
     }
 
-    private func colorForEvent(_ event: CanvasEvent) -> Color {
+    private func colorForEvent(_ event: WorldTreeEvent) -> Color {
         switch event.eventType {
         case .textChunk: return .cyan.opacity(0.6)
         case .toolStart: return .orange.opacity(0.8)
@@ -114,7 +114,7 @@ struct AgentLane: View {
         }
     }
 
-    private func blockWidth(for event: CanvasEvent) -> CGFloat {
+    private func blockWidth(for event: WorldTreeEvent) -> CGFloat {
         switch event.eventType {
         case .toolStart, .toolEnd, .toolError: return 12
         case .textChunk: return 4

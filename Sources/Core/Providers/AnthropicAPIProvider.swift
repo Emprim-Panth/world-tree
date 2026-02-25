@@ -82,10 +82,10 @@ final class AnthropicAPIProvider: LLMProvider {
                 guard let self else { return }
 
                 do {
-                    canvasLog("[AnthropicAPIProvider] send() started for session=\(context.sessionId)")
+                    wtLog("[AnthropicAPIProvider] send() started for session=\(context.sessionId)")
 
                     let state = try await self.getOrCreateStateManager(context: context)
-                    canvasLog("[AnthropicAPIProvider] state manager ready, system blocks=\(state.systemBlocks.count)")
+                    wtLog("[AnthropicAPIProvider] state manager ready, system blocks=\(state.systemBlocks.count)")
 
                     // Refresh terminal context (captures latest PTY output before each message)
                     state.refreshTerminalContext()
@@ -123,7 +123,7 @@ final class AnthropicAPIProvider: LLMProvider {
                             model: selectedModel,
                             maxTokens: maxTokens,
                             system: state.systemBlocks,
-                            tools: CanvasTools.definitions(),
+                            tools: WorldTreeTools.definitions(),
                             messages: state.messagesForAPI(),
                             stream: true,
                             thinking: thinkingConfig
@@ -185,7 +185,7 @@ final class AnthropicAPIProvider: LLMProvider {
                                 break
 
                             case .error(let apiError):
-                                canvasLog("[AnthropicAPIProvider] API error: \(apiError.errorMessage)")
+                                wtLog("[AnthropicAPIProvider] API error: \(apiError.errorMessage)")
                                 continuation.yield(.error(apiError.errorMessage))
                             }
                         }
@@ -248,7 +248,7 @@ final class AnthropicAPIProvider: LLMProvider {
                     continuation.yield(.done(usage: finalUsage))
                     continuation.finish()
                 } catch {
-                    canvasLog("[AnthropicAPIProvider] ERROR: \(error)")
+                    wtLog("[AnthropicAPIProvider] ERROR: \(error)")
                     WakeLock.shared.release()
                     continuation.yield(.error(error.localizedDescription))
                     continuation.finish()
@@ -333,7 +333,7 @@ final class AnthropicAPIProvider: LLMProvider {
         // Already warm for this session
         if let existing = stateManager, existing.sessionId == sessionId { return }
 
-        canvasLog("[AnthropicAPIProvider] warming context for session=\(sessionId)")
+        wtLog("[AnthropicAPIProvider] warming context for session=\(sessionId)")
 
         let context = ProviderSendContext(
             message: "",
@@ -344,7 +344,7 @@ final class AnthropicAPIProvider: LLMProvider {
         )
 
         _ = try? await getOrCreateStateManager(context: context)
-        canvasLog("[AnthropicAPIProvider] context warm for session=\(sessionId)")
+        wtLog("[AnthropicAPIProvider] context warm for session=\(sessionId)")
     }
 
     // MARK: - Helpers
@@ -381,7 +381,7 @@ final class AnthropicAPIProvider: LLMProvider {
 
                 let timeoutWork = DispatchWorkItem { [weak proc] in
                     if let proc, proc.isRunning {
-                        canvasLog("[AnthropicAPIProvider] KB query timed out after 5s — terminating")
+                        wtLog("[AnthropicAPIProvider] KB query timed out after 5s — terminating")
                         proc.terminate()
                     }
                     safeResume(nil)

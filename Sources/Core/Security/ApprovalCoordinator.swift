@@ -37,7 +37,7 @@ final class ApprovalCoordinator: ObservableObject {
     /// the sheet only if the pattern hasn't been permanently approved.
     func requestApproval(assessment: ToolGuard.Assessment, command: String) async -> Bool {
         if PermissionStore.shared.isApproved(reason: assessment.reason) {
-            canvasLog("[ApprovalCoordinator] Auto-approved (remembered): \(assessment.reason)")
+            wtLog("[ApprovalCoordinator] Auto-approved (remembered): \(assessment.reason)")
             return true
         }
 
@@ -56,7 +56,7 @@ final class ApprovalCoordinator: ObservableObject {
         pendingRequest = nil
         if approved && remember {
             PermissionStore.shared.approve(reason: request.assessment.reason)
-            canvasLog("[ApprovalCoordinator] Permanently approved: \(request.assessment.reason)")
+            wtLog("[ApprovalCoordinator] Permanently approved: \(request.assessment.reason)")
         }
         request.continuation.resume(returning: approved)
     }
@@ -80,7 +80,7 @@ final class ApprovalCoordinator: ObservableObject {
     func resolveFileDiff(approved: Bool) {
         guard let request = pendingFileDiff else { return }
         pendingFileDiff = nil
-        canvasLog("[ApprovalCoordinator] File diff \(approved ? "accepted" : "rejected"): \(request.filePath)")
+        wtLog("[ApprovalCoordinator] File diff \(approved ? "accepted" : "rejected"): \(request.filePath)")
         request.continuation.resume(returning: approved)
     }
 }

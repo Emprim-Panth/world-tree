@@ -562,7 +562,7 @@ final class ConversationStateManager {
         // Safety: if system blocks have grown beyond reasonable bounds, strip KB duplicates
         let maxExpectedBlocks = 10
         if systemBlocks.count > maxExpectedBlocks {
-            canvasLog("[ConversationStateManager] persist: block count \(systemBlocks.count) exceeds \(maxExpectedBlocks), cleaning KB duplicates")
+            wtLog("[ConversationStateManager] persist: block count \(systemBlocks.count) exceeds \(maxExpectedBlocks), cleaning KB duplicates")
             systemBlocks.removeAll { $0.text.hasPrefix("[Relevant knowledge]") }
         }
 
@@ -608,7 +608,7 @@ final class ConversationStateManager {
             if let decoded = try? decoder.decode([APIMessage].self, from: jsonData) {
                 manager.apiMessages = decoded
             } else {
-                canvasLog("[ConversationStateManager] WARNING: Failed to decode api_messages for session \(sessionId) — resetting to empty")
+                wtLog("[ConversationStateManager] WARNING: Failed to decode api_messages for session \(sessionId) — resetting to empty")
                 manager.apiMessages = []
             }
         }
@@ -619,7 +619,7 @@ final class ConversationStateManager {
             if let decoded = try? decoder.decode([SystemBlock].self, from: jsonData) {
                 blocks = decoded
             } else {
-                canvasLog("[ConversationStateManager] WARNING: Failed to decode system_prompt for session \(sessionId) — resetting to empty")
+                wtLog("[ConversationStateManager] WARNING: Failed to decode system_prompt for session \(sessionId) — resetting to empty")
                 blocks = []
             }
             // Always strip ALL KB context blocks on restore — appendKBContext will
@@ -628,7 +628,7 @@ final class ConversationStateManager {
             let beforeCount = blocks.count
             blocks.removeAll { $0.text.hasPrefix("[Relevant knowledge]") }
             if blocks.count != beforeCount {
-                canvasLog("[ConversationStateManager] restore: cleaned \(beforeCount - blocks.count) stale KB blocks")
+                wtLog("[ConversationStateManager] restore: cleaned \(beforeCount - blocks.count) stale KB blocks")
             }
             manager.systemBlocks = blocks
         }
@@ -638,7 +638,7 @@ final class ConversationStateManager {
             if let decoded = try? decoder.decode(SessionTokenUsage.self, from: jsonData) {
                 manager.tokenUsage = decoded
             } else {
-                canvasLog("[ConversationStateManager] WARNING: Failed to decode token_usage for session \(sessionId) — resetting")
+                wtLog("[ConversationStateManager] WARNING: Failed to decode token_usage for session \(sessionId) — resetting")
                 manager.tokenUsage = .init()
             }
         }

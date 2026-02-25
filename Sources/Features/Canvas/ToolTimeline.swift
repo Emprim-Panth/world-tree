@@ -5,7 +5,7 @@ import SwiftUI
 /// Expandable timeline showing all tool calls with durations for a branch.
 /// Each entry shows tool name, status, duration, and truncated result.
 struct ToolTimeline: View {
-    let events: [CanvasEvent]
+    let events: [WorldTreeEvent]
     @State private var isExpanded = false
 
     /// Pair up toolStart + toolEnd events to compute durations.

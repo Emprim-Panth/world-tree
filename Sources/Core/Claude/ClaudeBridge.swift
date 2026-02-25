@@ -19,7 +19,7 @@ enum BridgeEvent {
 /// Maintains the same `send()` interface that BranchViewModel expects.
 @MainActor
 final class ClaudeBridge {
-    /// Shared instance for callers (e.g. CanvasServer WS handler) that don't own a lifecycle.
+    /// Shared instance for callers (e.g. WorldTreeServer WS handler) that don't own a lifecycle.
     static let shared = ClaudeBridge()
 
     private let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -28,7 +28,7 @@ final class ClaudeBridge {
     private var daemonEnabled: Bool = true
 
     init() {
-        canvasLog("[ClaudeBridge] initialized, active provider: \(ProviderManager.shared.activeProviderName)")
+        wtLog("[ClaudeBridge] initialized, active provider: \(ProviderManager.shared.activeProviderName)")
     }
 
     var isRunning: Bool { ProviderManager.shared.isRunning }
@@ -52,7 +52,7 @@ final class ClaudeBridge {
     /// Daemon path forwards core fields; daemon handles its own context enrichment.
     func send(context: ProviderSendContext) -> AsyncStream<BridgeEvent> {
         if daemonEnabled && DaemonService.shared.isConnected {
-            canvasLog("[ClaudeBridge] routing to daemon, session=\(context.sessionId)")
+            wtLog("[ClaudeBridge] routing to daemon, session=\(context.sessionId)")
             return wrapDaemonWithFallback(
                 message: context.message,
                 sessionId: context.sessionId,
@@ -65,11 +65,11 @@ final class ClaudeBridge {
             )
         }
 
-        canvasLog("[ClaudeBridge] routing direct to \(ProviderManager.shared.activeProviderName), session=\(context.sessionId)")
+        wtLog("[ClaudeBridge] routing direct to \(ProviderManager.shared.activeProviderName), session=\(context.sessionId)")
         return ProviderManager.shared.send(context: context)
     }
 
-    /// Legacy parameter-based entry point — used by CanvasServer and other callers
+    /// Legacy parameter-based entry point — used by WorldTreeServer and other callers
     /// that construct context inline.
     func send(
         message: String,
@@ -84,7 +84,7 @@ final class ClaudeBridge {
         // Skip daemon entirely when isConnected = false — no need to attempt
         // a connection that will fail and delay the direct-provider fallback.
         if daemonEnabled && DaemonService.shared.isConnected {
-            canvasLog("[ClaudeBridge] routing to daemon, session=\(sessionId)")
+            wtLog("[ClaudeBridge] routing to daemon, session=\(sessionId)")
             return wrapDaemonWithFallback(
                 message: message,
                 sessionId: sessionId,
@@ -111,7 +111,7 @@ final class ClaudeBridge {
 
     /// When `fullContext` is provided (primary send path), the fallback uses it directly
     /// so attachments, recentContext, parentSessionId, and other fields are preserved.
-    /// Legacy callers (CanvasServer) omit `fullContext` and fall back via sendDirect().
+    /// Legacy callers (WorldTreeServer) omit `fullContext` and fall back via sendDirect().
     private func wrapDaemonWithFallback(
         message: String,
         sessionId: String,
@@ -136,7 +136,7 @@ final class ClaudeBridge {
                     switch event {
                     case .error where !receivedContent:
                         // Daemon reported an error before producing any text — fall through immediately.
-                        canvasLog("[ClaudeBridge] Daemon error before content — falling back to direct provider")
+                        wtLog("[ClaudeBridge] Daemon error before content — falling back to direct provider")
                         break
                     case .text:
                         // Only mark content received for actual text tokens.
@@ -145,7 +145,7 @@ final class ClaudeBridge {
                         continue
                     case .done where !receivedContent:
                         // Daemon stream ended with no text (silent empty run) — fall through below.
-                        canvasLog("[ClaudeBridge] Daemon produced no content — falling back to direct provider")
+                        wtLog("[ClaudeBridge] Daemon produced no content — falling back to direct provider")
                         break
                     default:
                         continuation.yield(event)
@@ -157,7 +157,7 @@ final class ClaudeBridge {
 
                 if !receivedContent {
                     // Daemon didn't produce text — route to direct provider, preserving full context.
-                    canvasLog("[ClaudeBridge] Falling back to direct provider for session=\(sessionId)")
+                    wtLog("[ClaudeBridge] Falling back to direct provider for session=\(sessionId)")
                     let directStream: AsyncStream<BridgeEvent>
                     if let ctx = fullContext {
                         directStream = ProviderManager.shared.send(context: ctx)
@@ -211,7 +211,7 @@ final class ClaudeBridge {
         )
         context.checkpointContext = checkpointContext
 
-        canvasLog("[ClaudeBridge] routing to \(ProviderManager.shared.activeProviderName), session=\(sessionId), parent=\(parentSessionId ?? "none")")
+        wtLog("[ClaudeBridge] routing to \(ProviderManager.shared.activeProviderName), session=\(sessionId), parent=\(parentSessionId ?? "none")")
         return ProviderManager.shared.send(context: context)
     }
 

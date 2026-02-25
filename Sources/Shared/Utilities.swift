@@ -41,7 +41,7 @@ func resolveWorkingDirectory(_ explicit: String?, project: String?) -> String {
     return "\(FileManager.default.homeDirectoryForCurrentUser.path)/Development"
 }
 
-// MARK: - HTTP Helpers (shared by CanvasServer + PluginServer)
+// MARK: - HTTP Helpers (shared by WorldTreeServer + PluginServer)
 
 /// Extract the Content-Length value from raw HTTP headers.
 func extractHTTPContentLength(from headers: String) -> Int {

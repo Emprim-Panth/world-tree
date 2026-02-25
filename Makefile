@@ -1,6 +1,6 @@
-APP_NAME     = Cortana Canvas
-SCHEME       = CortanaCanvas
-BUILD_DIR    = /tmp/canvas-release-build
+APP_NAME     = World Tree
+SCHEME       = WorldTree
+BUILD_DIR    = /tmp/worldtree-release-build
 INSTALL_PATH = /Applications/$(APP_NAME).app
 
 .PHONY: generate build install update open clean
@@ -25,6 +25,7 @@ install: build
 	@killall "$(APP_NAME)" 2>/dev/null; sleep 1; true
 	@echo "→ Installing to /Applications..."
 	@cp -R "$(BUILD_DIR)/Build/Products/Release/$(APP_NAME).app" /Applications/
+	@touch /tmp/.worldtree-updated
 	@echo "✓ Installed: $(INSTALL_PATH)"
 
 ## Full update cycle: build + install + relaunch

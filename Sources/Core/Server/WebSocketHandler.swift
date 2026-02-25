@@ -271,7 +271,7 @@ final class WebSocketConnection: @unchecked Sendable {
             guard let self else { return }
 
             if let error {
-                canvasLog("[WebSocket:\(self.id)] Read error: \(error)")
+                wtLog("[WebSocket:\(self.id)] Read error: \(error)")
                 self.handleClose(code: 1006, reason: nil)
                 return
             }
@@ -314,7 +314,7 @@ final class WebSocketConnection: @unchecked Sendable {
         lock.unlock()
 
         if let error = decodeError {
-            canvasLog("[WebSocket:\(id)] Frame error: \(error)")
+            wtLog("[WebSocket:\(id)] Frame error: \(error)")
             sendCloseAndDisconnect(code: 1002, reason: error.localizedDescription)
             return
         }
@@ -331,7 +331,7 @@ final class WebSocketConnection: @unchecked Sendable {
                 // Complete single-frame message
                 if fragmentOpcode != nil {
                     // We were in the middle of a fragmented message — protocol error
-                    canvasLog("[WebSocket:\(id)] New data frame while fragments pending")
+                    wtLog("[WebSocket:\(id)] New data frame while fragments pending")
                     sendCloseAndDisconnect(code: 1002, reason: "Unexpected data frame during fragmentation")
                     return
                 }
@@ -436,7 +436,7 @@ final class WebSocketConnection: @unchecked Sendable {
 // MARK: - WSClientSendable
 
 /// Unified send interface shared by WebSocketConnection (manual RFC 6455) and
-/// NativeWebSocketConnection (NWProtocolWebSocket). Lets CanvasServer treat both identically.
+/// NativeWebSocketConnection (NWProtocolWebSocket). Lets WorldTreeServer treat both identically.
 protocol WSClientSendable: AnyObject {
     func send(text: String)
     func sendPing()
@@ -476,7 +476,7 @@ final class NativeWebSocketConnection: @unchecked Sendable {
             guard let self else { return }
 
             if let error {
-                canvasLog("[NativeWS:\(self.id.prefix(8))] read error: \(error)")
+                wtLog("[NativeWS:\(self.id.prefix(8))] read error: \(error)")
                 self.doClose(code: 1006)
                 return
             }

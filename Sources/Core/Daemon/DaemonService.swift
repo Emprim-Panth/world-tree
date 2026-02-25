@@ -103,24 +103,24 @@ final class DaemonService: ObservableObject {
         message: String,
         project: String,
         priority: String = "normal",
-        canvasSessionId: String? = nil
+        sessionId: String? = nil
     ) async -> String? {
         do {
             let command = DaemonCommand.dispatch(
                 message: message,
                 project: project,
                 priority: priority,
-                canvasSessionId: canvasSessionId
+                sessionId: sessionId
             )
             let response = try await socket.send(command)
             lastError = response.error
             if let err = response.error {
-                canvasLog("[DaemonService] dispatch error: \(err)")
+                wtLog("[DaemonService] dispatch error: \(err)")
             }
             return response.taskId
         } catch {
             lastError = error.localizedDescription
-            canvasLog("[DaemonService] dispatch failed: \(error)")
+            wtLog("[DaemonService] dispatch failed: \(error)")
             return nil
         }
     }
@@ -132,7 +132,7 @@ final class DaemonService: ObservableObject {
             let response = try await socket.send(.sessions)
             lastError = response.error
             if let err = response.error {
-                canvasLog("[DaemonService] sessions error: \(err)")
+                wtLog("[DaemonService] sessions error: \(err)")
             }
 
             // Parse sessions from response.data (array of dictionaries)
@@ -145,7 +145,7 @@ final class DaemonService: ObservableObject {
             activeSessions = rawArray.compactMap { parseDaemonSession(from: $0) }
         } catch {
             lastError = error.localizedDescription
-            canvasLog("[DaemonService] refreshSessions failed: \(error)")
+            wtLog("[DaemonService] refreshSessions failed: \(error)")
         }
     }
 
@@ -248,7 +248,7 @@ final class DaemonService: ObservableObject {
         // If it's something else (like "bash" running a subcommand), skip.
         guard session.currentCommand?.lowercased() == "claude" else { return }
 
-        canvasLog("[DaemonService] Auto-compacting tmux session '\(session.name)' — pressure \(session.pressureLevel?.rawValue ?? "unknown") (\(session.estimatedTokens ?? 0) tokens)")
+        wtLog("[DaemonService] Auto-compacting tmux session '\(session.name)' — pressure \(session.pressureLevel?.rawValue ?? "unknown") (\(session.estimatedTokens ?? 0) tokens)")
 
         // Send /compact to trigger Claude's built-in context compaction
         let sent = Self.sendToTmux(session: session.name, keys: "/compact")

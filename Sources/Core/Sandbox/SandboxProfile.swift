@@ -129,7 +129,7 @@ struct SandboxProfile {
             try generateSeatbeltProfile().write(to: profileURL, atomically: true, encoding: .utf8)
             return profileURL
         } catch {
-            canvasLog("[SandboxProfile] Failed to write profile: \(error)")
+            wtLog("[SandboxProfile] Failed to write profile: \(error)")
             return nil
         }
     }

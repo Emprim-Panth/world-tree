@@ -57,10 +57,10 @@ struct DaemonCommand: Codable {
     var project: String?
     var priority: String?
     var taskId: String?
-    var canvasSessionId: String?  // For Canvas integration
+    var sessionId: String?
 
-    static func dispatch(message: String, project: String, priority: String = "normal", canvasSessionId: String? = nil) -> DaemonCommand {
-        DaemonCommand(action: "dispatch", message: message, project: project, priority: priority, canvasSessionId: canvasSessionId)
+    static func dispatch(message: String, project: String, priority: String = "normal", sessionId: String? = nil) -> DaemonCommand {
+        DaemonCommand(action: "dispatch", message: message, project: project, priority: priority, sessionId: sessionId)
     }
 
     static let status = DaemonCommand(action: "status")
@@ -73,7 +73,7 @@ struct DaemonCommand: Codable {
     enum CodingKeys: String, CodingKey {
         case action, message, project, priority
         case taskId = "task_id"
-        case canvasSessionId = "canvas_session_id"
+        case sessionId = "canvas_session_id"  // JSON key kept for daemon protocol compat
     }
 }
 

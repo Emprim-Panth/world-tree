@@ -9,7 +9,7 @@ import Foundation
 /// - Provides O(1) branchId → [clientId] lookup for broadcasting.
 /// - Cleans up all state when a client disconnects.
 ///
-/// MainActor-confined because it is exclusively called from CanvasServer, which is @MainActor.
+/// MainActor-confined because it is exclusively called from WorldTreeServer, which is @MainActor.
 @MainActor
 final class SubscriptionManager {
     static let shared = SubscriptionManager()

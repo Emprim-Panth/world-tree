@@ -24,9 +24,9 @@ final class WakeLock {
             )
             isHeld = result == kIOReturnSuccess
             if isHeld {
-                canvasLog("[WakeLock] acquired (assertionID=\(assertionID))")
+                wtLog("[WakeLock] acquired (assertionID=\(assertionID))")
             } else {
-                canvasLog("[WakeLock] acquire failed (result=\(result))")
+                wtLog("[WakeLock] acquire failed (result=\(result))")
             }
         }
     }
@@ -36,7 +36,7 @@ final class WakeLock {
         lock.withLock {
             guard isHeld else { return }
             IOPMAssertionRelease(assertionID)
-            canvasLog("[WakeLock] released")
+            wtLog("[WakeLock] released")
             isHeld = false
             assertionID = 0
         }

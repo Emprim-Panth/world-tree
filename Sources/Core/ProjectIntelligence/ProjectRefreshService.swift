@@ -17,7 +17,7 @@ final class ProjectRefreshService {
     func startAutoRefresh(interval: TimeInterval = 300) {
         stopAutoRefresh()
         
-        canvasLog("[ProjectRefreshService] Starting auto-refresh (every \(Int(interval))s)")
+        wtLog("[ProjectRefreshService] Starting auto-refresh (every \(Int(interval))s)")
 
         let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task {
@@ -43,19 +43,19 @@ final class ProjectRefreshService {
     @discardableResult
     func refresh() async -> Result<Int, Error> {
         guard !isRefreshing else {
-            canvasLog("[ProjectRefreshService] Refresh already in progress, skipping")
+            wtLog("[ProjectRefreshService] Refresh already in progress, skipping")
             return .failure(ProjectRefreshError.alreadyRefreshing)
         }
         
         isRefreshing = true
         defer { isRefreshing = false }
         
-        canvasLog("[ProjectRefreshService] Starting manual refresh")
+        wtLog("[ProjectRefreshService] Starting manual refresh")
         
         do {
             // Scan filesystem
             let discovered = try await scanner.scanDevelopmentDirectory()
-            canvasLog("[ProjectRefreshService] Discovered \(discovered.count) projects")
+            wtLog("[ProjectRefreshService] Discovered \(discovered.count) projects")
             
             // Update cache
             let updated = try cache.update(with: discovered)
@@ -63,14 +63,14 @@ final class ProjectRefreshService {
             // Prune stale projects
             let pruned = try cache.prune()
             
-            canvasLog("[ProjectRefreshService] Refresh complete: \(updated) updated, \(pruned) pruned")
+            wtLog("[ProjectRefreshService] Refresh complete: \(updated) updated, \(pruned) pruned")
             
             // Post notification for UI updates (already on @MainActor)
             NotificationCenter.default.post(name: .projectCacheUpdated, object: nil)
             
             return .success(updated)
         } catch {
-            canvasLog("[ProjectRefreshService] Refresh failed: \(error)")
+            wtLog("[ProjectRefreshService] Refresh failed: \(error)")
             return .failure(error)
         }
     }

@@ -51,10 +51,10 @@ enum CortanaConstants {
     static let defaultModel = "claude-sonnet-4-6"
     static let defaultProvider = "claude-code"
 
-    // MARK: - Remote Canvas (MacBook client mode)
-    static let remoteCanvasEnabledKey = "cortana.remoteCanvasEnabled"
-    static let remoteCanvasURLKey = "cortana.remoteCanvasURL"
-    static let remoteCanvasTokenKey = "cortana.remoteCanvasToken"
+    // MARK: - Remote Studio (MacBook client mode)
+    static let remoteEnabledKey = "cortana.remoteCanvasEnabled"  // string kept for UserDefaults compat
+    static let remoteURLKey = "cortana.remoteCanvasURL"
+    static let remoteTokenKey = "cortana.remoteCanvasToken"
 
     // MARK: - CLI
     static let claudeCliPath: String = {

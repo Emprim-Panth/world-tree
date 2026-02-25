@@ -49,7 +49,27 @@ struct DocumentEditorView: View {
                 // --- Scrollable message area ---
                 ScrollViewReader { proxy in
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            // Pagination trigger — loads older messages when visible
+                            if viewModel.hasMoreMessages {
+                                Button {
+                                    let firstId = viewModel.document.sections.first?.id
+                                    Task {
+                                        await viewModel.loadOlderMessages()
+                                        if let id = firstId {
+                                            proxy.scrollTo(id, anchor: .top)
+                                        }
+                                    }
+                                } label: {
+                                    Text("Load earlier messages")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.vertical, 12)
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.plain)
+                            }
+
                             // Empty state — shown before the first message
                             if viewModel.document.sections.isEmpty && !viewModel.isProcessing {
                                 EmptyConversationView()
@@ -99,6 +119,7 @@ struct DocumentEditorView: View {
                     .padding(.vertical, 24)
                     .environment(\.conversationHPad, max(24, (geometry.size.width - 800) / 2))
                 }
+                .defaultScrollAnchor(.bottom)
                 .safeAreaInset(edge: .top, spacing: 0) {
                     if showSearch {
                         ConversationSearchBar(query: $searchQuery, onDismiss: {
@@ -206,12 +227,8 @@ struct DocumentEditorView: View {
                         }
                     )
                 }
-                // Unified scroll handler — only auto-scrolls when user is at the bottom.
-                // If the user scrolled up to read, we show a "new messages" indicator instead.
-                .onChange(of: viewModel.document.sections.count) { _, _ in
-                    guard viewModel.streamingContent == nil, !viewModel.isProcessing else { return }
-                    if isAtBottom { proxy.scrollTo("scroll-bottom") }
-                }
+                // Streaming and FAB scroll handler — defaultScrollAnchor(.bottom) handles
+                // initial load and branch switches natively.
                 .onChange(of: viewModel.streamingContent) { _, content in
                     if content != nil {
                         // Only auto-scroll while streaming if user hasn't scrolled up
@@ -316,6 +333,12 @@ class DocumentEditorViewModel: ObservableObject {
     /// Drives the "scroll to bottom" FAB visibility.
     @Published var hasNewStreamContent = false
 
+    /// True when there are older messages in the DB that haven't been loaded yet.
+    @Published var hasMoreMessages = false
+
+    private let pageSize = 100
+    private var initialLoadComplete = false
+
     // MARK: - 60fps Token Batching (CADisplayLink-equivalent via main-RunLoop Timer)
 
     /// Accumulated tokens since the last frame flush.
@@ -415,7 +438,7 @@ class DocumentEditorViewModel: ObservableObject {
             // Database not ready yet (app cold start — child .onAppear fires before
             // WorldTreeApp.onAppear calls setupDatabase). Retry shortly.
             guard loadRetryCount < 10 else {
-                canvasLog("[DocumentEditor] DB not ready after 10 retries — giving up")
+                wtLog("[DocumentEditor] DB not ready after 10 retries — giving up")
                 return
             }
             loadRetryCount += 1
@@ -430,14 +453,20 @@ class DocumentEditorViewModel: ObservableObject {
         let sid = sessionId  // capture value type, not self
 
         let observation = ValueObservation.tracking { db -> [Message] in
+            // Load the LATEST 100 messages, sorted oldest→newest for display.
+            // Using a subquery so we get the tail (newest) not the head (oldest),
+            // which means conversations with >100 messages still show current context.
+            // Pagination via "Load earlier" handles the older messages separately.
             let sql = """
-                SELECT m.*,
-                    (SELECT COUNT(*) FROM canvas_branches cb
-                     WHERE cb.fork_from_message_id = m.id) as has_branches
-                FROM messages m
-                WHERE m.session_id = ?
-                ORDER BY m.timestamp ASC
-                LIMIT 500
+                SELECT * FROM (
+                    SELECT m.*,
+                        (SELECT COUNT(*) FROM canvas_branches cb
+                         WHERE cb.fork_from_message_id = m.id) as has_branches
+                    FROM messages m
+                    WHERE m.session_id = ?
+                    ORDER BY m.timestamp DESC
+                    LIMIT 100
+                ) sub ORDER BY sub.timestamp ASC
                 """
             return try Message.fetchAll(db, sql: sql, arguments: [sid])
         }
@@ -588,6 +617,57 @@ class DocumentEditorViewModel: ObservableObject {
         if newMessages.contains(where: { $0.role == .assistant }) {
             isProcessing = false
         }
+
+        // On first load, check if there might be older messages to paginate
+        if !initialLoadComplete {
+            initialLoadComplete = true
+            hasMoreMessages = messages.count >= pageSize
+        }
+    }
+
+    /// Fetches the previous page of messages and prepends them to the document.
+    /// Called when user scrolls to top or taps "Load earlier messages".
+    func loadOlderMessages() async {
+        guard let oldestMessageId = document.sections.first(where: { $0.messageId != nil })?.messageId else { return }
+
+        guard let older = try? MessageStore.shared.getMessagesBefore(
+            sessionId: sessionId,
+            beforeMessageId: oldestMessageId,
+            limit: pageSize
+        ), !older.isEmpty else {
+            hasMoreMessages = false
+            return
+        }
+
+        let newSections = older.map { msg -> DocumentSection in
+            let isFinding = msg.content.hasPrefix("[Finding from branch")
+            let author: Author = {
+                if isFinding { return .system }
+                switch msg.role {
+                case .user: return .user(name: "You")
+                case .assistant: return .assistant
+                case .system: return .system
+                }
+            }()
+            return DocumentSection(
+                id: stableId(for: msg.id),
+                content: AttributedString(msg.content),
+                author: author,
+                timestamp: msg.createdAt,
+                branchPoint: true,
+                isEditable: msg.role == .user && !isFinding,
+                messageId: msg.id,
+                hasBranches: msg.hasBranches,
+                isFinding: isFinding
+            )
+        }
+
+        for msg in older { seenMessageIds.insert(msg.id) }
+        document.sections.insert(contentsOf: newSections, at: 0)
+
+        if older.count < pageSize {
+            hasMoreMessages = false
+        }
     }
 
     func updateSection(_ sectionId: UUID, content: AttributedString) {
@@ -628,7 +708,7 @@ class DocumentEditorViewModel: ObservableObject {
                     self.pendingForkMessage = message
                 }
             } catch {
-                canvasLog("[DocumentEditor] requestFork: failed to load messages: \(error)")
+                wtLog("[DocumentEditor] requestFork: failed to load messages: \(error)")
             }
         }
     }
@@ -646,7 +726,7 @@ class DocumentEditorViewModel: ObservableObject {
                     toParentBranchId: parentId
                 )
             } catch {
-                canvasLog("[DocumentEditor] inferFinding failed: \(error)")
+                wtLog("[DocumentEditor] inferFinding failed: \(error)")
             }
         }
     }
@@ -770,7 +850,7 @@ class DocumentEditorViewModel: ObservableObject {
                 )
                 document.sections.append(interruptedSection)
             } catch {
-                canvasLog("[DocumentEditor] Failed to persist interrupted response: \(error)")
+                wtLog("[DocumentEditor] Failed to persist interrupted response: \(error)")
                 let interruptedSection = DocumentSection(
                     content: AttributedString(partial),
                     author: .assistant,
@@ -784,7 +864,7 @@ class DocumentEditorViewModel: ObservableObject {
             // Close the crash-recovery stream file for the interrupted response
             Task { await StreamCacheManager.shared.closeStream(sessionId: sessionId) }
 
-            canvasLog("[DocumentEditor] Interrupted mid-stream — preserved partial response (\(partial.count) chars)")
+            wtLog("[DocumentEditor] Interrupted mid-stream — preserved partial response (\(partial.count) chars)")
         } else if streamTask != nil {
             // Processing but no content yet (thinking state) — just cancel
             streamTask?.cancel()
@@ -814,7 +894,7 @@ class DocumentEditorViewModel: ObservableObject {
                 }
                 seenMessageIds.insert(msg.id)
             } catch {
-                canvasLog("[DocumentEditor] Failed to persist user message: \(error)")
+                wtLog("[DocumentEditor] Failed to persist user message: \(error)")
             }
 
             // 2. Route through ClaudeCodeProvider
@@ -853,7 +933,7 @@ class DocumentEditorViewModel: ObservableObject {
                 // If the session was just rotated, the checkpoint is the most accurate
                 // summary of the full conversation. Use it as primary context.
                 if let checkpoint = rotationCheckpoint {
-                    canvasLog("[DocumentEditor] Using rotation checkpoint as context (\(checkpoint.count) chars)")
+                    wtLog("[DocumentEditor] Using rotation checkpoint as context (\(checkpoint.count) chars)")
                     return "CONTEXT CHECKPOINT (conversation was compacted — use this as your memory of earlier work):\n"
                         + checkpoint
                         + "\nEND CHECKPOINT"
@@ -870,7 +950,7 @@ class DocumentEditorViewModel: ObservableObject {
                     return "[\(role)]: \(text)"
                 }
                 if isSessionStale {
-                    canvasLog("[DocumentEditor] Stale session — injecting \(contextSections.count) turns")
+                    wtLog("[DocumentEditor] Stale session — injecting \(contextSections.count) turns")
                 }
                 return "CONVERSATION CONTEXT (recent history — use if session memory is unclear):\n"
                     + lines.joined(separator: "\n\n")
@@ -912,7 +992,7 @@ class DocumentEditorViewModel: ObservableObject {
             for await event in claudeBridge.send(context: ctx) {
                 // Bail out cleanly if this task was cancelled (user interrupted)
                 if Task.isCancelled {
-                    canvasLog("[DocumentEditor] Stream task cancelled — stopping token consumption")
+                    wtLog("[DocumentEditor] Stream task cancelled — stopping token consumption")
                     break
                 }
 
@@ -936,7 +1016,7 @@ class DocumentEditorViewModel: ObservableObject {
 
                 case .error(let msg):
                     hadExplicitError = true
-                    canvasLog("[DocumentEditor] Provider error: \(msg)")
+                    wtLog("[DocumentEditor] Provider error: \(msg)")
                     if fullResponse.isEmpty {
                         fullResponse = "⚠️ \(msg)"
                     }
@@ -952,7 +1032,7 @@ class DocumentEditorViewModel: ObservableObject {
             // Rotate the session so the next attempt starts clean.
             if fullResponse.isEmpty && !hadExplicitError {
                 fullResponse = "⚠️ No response received — the session may have expired. Send another message to continue."
-                canvasLog("[DocumentEditor] Stream ended with no output — rotating session for recovery")
+                wtLog("[DocumentEditor] Stream ended with no output — rotating session for recovery")
                 if let cliProvider = ProviderManager.shared.activeProvider as? ClaudeCodeProvider {
                     cliProvider.rotateSession(for: sessionId)
                 }
@@ -977,7 +1057,7 @@ class DocumentEditorViewModel: ObservableObject {
                     )
                     document.sections.append(assistantSection)
                 } catch {
-                    canvasLog("[DocumentEditor] Failed to persist assistant response: \(error)")
+                    wtLog("[DocumentEditor] Failed to persist assistant response: \(error)")
                     let assistantSection = DocumentSection(
                         content: AttributedString(fullResponse),
                         author: .assistant,
@@ -1005,7 +1085,7 @@ class DocumentEditorViewModel: ObservableObject {
                     provider: activeProvider
                 ) {
                     checkpointContext = checkpoint
-                    canvasLog("[DocumentEditor] Rotation triggered — checkpoint ready for next send")
+                    wtLog("[DocumentEditor] Rotation triggered — checkpoint ready for next send")
                 }
             }
 
@@ -1083,7 +1163,7 @@ class DocumentEditorViewModel: ObservableObject {
     }
 
     func acceptSuggestion(_ suggestion: BranchSuggestion) {
-        canvasLog("[DocumentEditor] Accepting branch suggestion: \(suggestion.title)")
+        wtLog("[DocumentEditor] Accepting branch suggestion: \(suggestion.title)")
 
         // Clear the opportunity
         branchOpportunity = nil
@@ -1098,7 +1178,7 @@ class DocumentEditorViewModel: ObservableObject {
     func spawnParallelBranches() {
         guard let opportunity = branchOpportunity else { return }
 
-        canvasLog("[DocumentEditor] Spawning \(opportunity.suggestions.count) parallel branches")
+        wtLog("[DocumentEditor] Spawning \(opportunity.suggestions.count) parallel branches")
 
         // Clear the opportunity
         branchOpportunity = nil
@@ -1529,7 +1609,7 @@ struct UserInputArea: View {
                 do {
                     try await VoiceService.shared.startListening()
                 } catch {
-                    canvasLog("[VoiceInput] Failed to start: \(error)")
+                    wtLog("[VoiceInput] Failed to start: \(error)")
                 }
             }
         }

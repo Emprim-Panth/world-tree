@@ -114,7 +114,7 @@ final class BranchTerminalManager: ObservableObject {
                 execName: "tmux",
                 currentDirectory: workingDirectory
             )
-            canvasLog("[BranchTerminalManager] tmux session '\(sessionName)' attached/created for \(branchId.prefix(8))")
+            wtLog("[BranchTerminalManager] tmux session '\(sessionName)' attached/created for \(branchId.prefix(8))")
         } else {
             // tmux not installed — fall back to plain zsh
             tv.startProcess(
@@ -124,7 +124,7 @@ final class BranchTerminalManager: ObservableObject {
                 execName: "zsh",
                 currentDirectory: workingDirectory
             )
-            canvasLog("[BranchTerminalManager] tmux not found; spawned plain zsh for \(branchId.prefix(8))")
+            wtLog("[BranchTerminalManager] tmux not found; spawned plain zsh for \(branchId.prefix(8))")
         }
 
         terminals[branchId] = tv
@@ -181,7 +181,7 @@ final class BranchTerminalManager: ObservableObject {
         proc.standardOutput = FileHandle.nullDevice
         proc.standardError = FileHandle.nullDevice
         try? proc.run()
-        canvasLog("[BranchTerminalManager] opened agent window '\(name)' in \(sessionName)")
+        wtLog("[BranchTerminalManager] opened agent window '\(name)' in \(sessionName)")
     }
 
     // MARK: - PTY Input
@@ -230,7 +230,7 @@ final class BranchTerminalManager: ObservableObject {
             try? task.run()
         }
 
-        canvasLog("[BranchTerminalManager] Terminated terminal for \(branchId.prefix(8))")
+        wtLog("[BranchTerminalManager] Terminated terminal for \(branchId.prefix(8))")
     }
 
     /// Terminate all terminals (app quit).

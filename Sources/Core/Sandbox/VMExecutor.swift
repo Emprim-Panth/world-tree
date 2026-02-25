@@ -17,7 +17,7 @@ struct VMExecutor: ExecutionEnvironment {
         // - Capture stdout/stderr via virtio-console
         //
         // For now, fall back to local execution with a warning
-        canvasLog("[VMExecutor] VM isolation not yet implemented, falling back to local execution")
+        wtLog("[VMExecutor] VM isolation not yet implemented, falling back to local execution")
         let local = LocalExecutor()
         return try await local.execute(command: command, workingDirectory: workingDirectory)
     }

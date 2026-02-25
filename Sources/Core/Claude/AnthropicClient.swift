@@ -1,10 +1,10 @@
 import Foundation
 
-/// Shared formatter — ISO8601DateFormatter is expensive to allocate; reuse across all canvasLog calls.
+/// Shared formatter — ISO8601DateFormatter is expensive to allocate; reuse across all wtLog calls.
 private let _logFormatter: ISO8601DateFormatter = ISO8601DateFormatter()
 
 /// Debug logger that writes to a file (print() doesn't work in GUI apps launched outside Xcode)
-func canvasLog(_ msg: String) {
+func wtLog(_ msg: String) {
     let line = "[\(_logFormatter.string(from: Date()))] \(msg)\n"
     let path = FileManager.default.homeDirectoryForCurrentUser.path + "/.cortana/logs/canvas-debug.log"
     if let handle = FileHandle(forWritingAtPath: path) {
@@ -42,24 +42,24 @@ final class AnthropicClient: Sendable {
 
                     if let bodyData = urlRequest.httpBody,
                        let bodyStr = String(data: bodyData, encoding: .utf8) {
-                        canvasLog("[AnthropicClient] request: model + tokens at byte 0..\(min(bodyStr.count, 200))")
+                        wtLog("[AnthropicClient] request: model + tokens at byte 0..\(min(bodyStr.count, 200))")
                         // Log key fields instead of raw body to see model clearly
                         if let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
                             let model = json["model"] as? String ?? "MISSING"
                             let msgs = (json["messages"] as? [[String: Any]])?.count ?? 0
                             let sys = (json["system"] as? [[String: Any]])?.count ?? 0
-                            canvasLog("[AnthropicClient] request fields: model=\(model), messages=\(msgs), system_blocks=\(sys), body_bytes=\(bodyData.count)")
+                            wtLog("[AnthropicClient] request fields: model=\(model), messages=\(msgs), system_blocks=\(sys), body_bytes=\(bodyData.count)")
                         }
                     }
-                    canvasLog("[AnthropicClient] sending request to \(self.baseURL)")
+                    wtLog("[AnthropicClient] sending request to \(self.baseURL)")
                     let (bytes, response) = try await self.session.bytes(for: urlRequest)
 
                     guard let httpResponse = response as? HTTPURLResponse else {
-                        canvasLog("[AnthropicClient] invalid response (not HTTPURLResponse)")
+                        wtLog("[AnthropicClient] invalid response (not HTTPURLResponse)")
                         throw AnthropicClientError.invalidResponse
                     }
 
-                    canvasLog("[AnthropicClient] HTTP \(httpResponse.statusCode)")
+                    wtLog("[AnthropicClient] HTTP \(httpResponse.statusCode)")
 
                     // Handle non-200 responses
                     if httpResponse.statusCode != 200 {
@@ -97,8 +97,8 @@ final class AnthropicClient: Sendable {
                                 }
                             }
                         } catch {
-                            canvasLog("[AnthropicClient] SSE parse error #\(eventCount) for '\(currentEventType)': \(error)")
-                            canvasLog("[AnthropicClient] data: \(String(dataBuffer.prefix(300)))")
+                            wtLog("[AnthropicClient] SSE parse error #\(eventCount) for '\(currentEventType)': \(error)")
+                            wtLog("[AnthropicClient] data: \(String(dataBuffer.prefix(300)))")
                         }
                         return false
                     }
@@ -131,11 +131,11 @@ final class AnthropicClient: Sendable {
                         _ = try flushEvent()
                     }
 
-                    canvasLog("[AnthropicClient] SSE stream ended: \(lineCount) lines, \(eventCount) events")
+                    wtLog("[AnthropicClient] SSE stream ended: \(lineCount) lines, \(eventCount) events")
 
                     continuation.finish()
                 } catch {
-                    canvasLog("[AnthropicClient] stream error: \(error)")
+                    wtLog("[AnthropicClient] stream error: \(error)")
                     continuation.finish(throwing: error)
                 }
             }
@@ -181,7 +181,7 @@ final class AnthropicClient: Sendable {
         } else {
             body = String(data: bodyData, encoding: .utf8) ?? "HTTP \(status) (unreadable body: \(bodyData.count) bytes)"
         }
-        canvasLog("[AnthropicClient] HTTP \(status) error body: \(String(body.prefix(2000)))")
+        wtLog("[AnthropicClient] HTTP \(status) error body: \(String(body.prefix(2000)))")
 
         switch status {
         case 429:

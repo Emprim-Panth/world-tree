@@ -47,6 +47,11 @@ struct SidebarView: View {
     @State private var draggingProject: String?
     @State private var dragOverProject: String?
 
+    // Project collapse state (expanded by default)
+    @State private var collapsedProjects: Set<String> = []
+    // Branch disclosure state per tree (collapsed by default)
+    @State private var expandedBranchTrees: Set<String> = []
+
     var body: some View {
         VStack(spacing: 0) {
             // Search
@@ -121,6 +126,7 @@ struct SidebarView: View {
                         ForEach(viewModel.allProjectGroups, id: \.project) { group in
                             let isActiveProject = viewModel.isActive(group.project, trees: group.trees)
                             let isDragTarget = dragOverProject == group.project && draggingProject != group.project
+                            let isGroupExpanded = !collapsedProjects.contains(group.project)
 
                             VStack(spacing: 0) {
                                 // Drop target indicator
@@ -147,6 +153,14 @@ struct SidebarView: View {
                                         gitInfo: viewModel.gitInfo(for: group.project),
                                         typeIcon: viewModel.typeIcon(for: group.project),
                                         treeCount: group.trees.count,
+                                        isExpanded: isGroupExpanded,
+                                        onToggle: {
+                                            if isGroupExpanded {
+                                                collapsedProjects.insert(group.project)
+                                            } else {
+                                                collapsedProjects.remove(group.project)
+                                            }
+                                        },
                                         onNewTree: {
                                             quickNewTreeProject = group.project
                                             newTreeProject = group.project
@@ -198,13 +212,20 @@ struct SidebarView: View {
                                     draggingProject = nil; dragOverProject = nil
                                     return true
                                 }
-                            }
 
-                            ForEach(group.trees) { tree in
-                                treeRow(tree)
-                                    .contextMenu { treeContextMenu(tree) }
-                                // Branches are navigated from within the conversation
-                                // (branch badges on messages) — not listed in the sidebar.
+                                if isGroupExpanded {
+                                    ForEach(group.trees) { tree in
+                                        VStack(spacing: 0) {
+                                            treeRow(tree)
+                                                .contextMenu { treeContextMenu(tree) }
+
+                                            // Branch disclosure — appears once branches are loaded for this tree
+                                            if tree.branches.count > 1 {
+                                                treeBranchDisclosure(tree)
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             Divider()
@@ -476,6 +497,41 @@ struct SidebarView: View {
         }
     }
 
+    // MARK: - Branch Disclosure
+
+    private func treeBranchDisclosure(_ tree: ConversationTree) -> some View {
+        let binding = Binding<Bool>(
+            get: { expandedBranchTrees.contains(tree.id) },
+            set: { expanded in
+                if expanded {
+                    expandedBranchTrees.insert(tree.id)
+                } else {
+                    expandedBranchTrees.remove(tree.id)
+                }
+            }
+        )
+        let rootBranches = tree.branches.filter { $0.parentBranchId == nil }
+        return DisclosureGroup(isExpanded: binding) {
+            ForEach(rootBranches) { root in
+                TreeNodeView(branch: root, treeId: tree.id)
+                    .padding(.leading, 4)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.branch")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                Text("\(tree.branches.count) branches")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.leading, 14)
+            .padding(.vertical, 2)
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 2)
+    }
+
     /// Load full tree with branches when selected — always selects root branch.
     private func loadTreeBranches(_ treeId: String) {
         do {
@@ -721,6 +777,8 @@ struct ProjectGroupHeader: View {
     let gitInfo: String?
     let typeIcon: String
     let treeCount: Int
+    let isExpanded: Bool
+    let onToggle: () -> Void
     let onNewTree: () -> Void
     let onRename: () -> Void
     let onPathChanged: (String) -> Void
@@ -730,16 +788,19 @@ struct ProjectGroupHeader: View {
     @State private var isEditingPath = false
     @State private var editingText = ""
 
-    private var shortenedPath: String {
-        guard let path = resolvedPath else { return "No path set" }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return path.replacingOccurrences(of: home, with: "~")
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            // Name row: icon + name + git badge + tree count + new button
+            // Name row: chevron + icon + name + git badge + tree count + new button
             HStack(spacing: 5) {
+                Button(action: onToggle) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 10)
+                        .animation(.easeInOut(duration: 0.15), value: isExpanded)
+                }
+                .buttonStyle(.plain)
+
                 Image(systemName: typeIcon)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -778,38 +839,40 @@ struct ProjectGroupHeader: View {
                 .help("New tree in \(projectName)")
             }
 
-            // Path row: tap to edit inline
-            Group {
-                if isEditingPath {
-                    TextField("Path", text: $editingText)
-                        .font(.system(size: 9.5, design: .monospaced))
-                        .textFieldStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .onSubmit { commitPath() }
-                        .onExitCommand { isEditingPath = false }
-                } else {
-                    Text(shortenedPath)
-                        .font(.system(size: 9.5, design: .monospaced))
-                        .foregroundStyle(resolvedPath == nil ? Color.red.opacity(0.7) : Color.secondary.opacity(0.6))
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                        .help("Click to edit path")
-                        .onTapGesture {
-                            editingText = resolvedPath ?? ""
-                            isEditingPath = true
-                        }
-                }
-            }
-            .padding(.leading, 18)
         }
         .padding(.horizontal, 10)
         .padding(.top, 8)
         .padding(.bottom, 3)
         .contextMenu {
             Button("Rename…", action: onRename)
+            Button("Edit Path…") {
+                editingText = resolvedPath ?? ""
+                isEditingPath = true
+            }
             Divider()
             Button("Archive Project") { onArchive() }
             Button("Delete Project…", role: .destructive) { onDelete() }
+        }
+        .popover(isPresented: $isEditingPath, arrowEdge: .trailing) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Project Path")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                TextField("~/Development/…", text: $editingText)
+                    .font(.system(size: 11, design: .monospaced))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 280)
+                    .onSubmit { commitPath() }
+                HStack {
+                    Spacer()
+                    Button("Cancel") { isEditingPath = false }
+                        .keyboardShortcut(.escape, modifiers: [])
+                    Button("Save") { commitPath() }
+                        .keyboardShortcut(.return, modifiers: [])
+                        .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding(12)
         }
     }
 

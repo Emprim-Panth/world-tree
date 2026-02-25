@@ -97,7 +97,7 @@ final class ProjectListViewModel: ObservableObject {
             error = nil
         } catch {
             self.error = error.localizedDescription
-            canvasLog("[ProjectListVM] Error loading projects: \(error)")
+            wtLog("[ProjectListVM] Error loading projects: \(error)")
         }
         isLoading = false
     }
@@ -108,7 +108,7 @@ final class ProjectListViewModel: ObservableObject {
         
         switch result {
         case .success(let count):
-            canvasLog("[ProjectListVM] Refreshed \(count) projects")
+            wtLog("[ProjectListVM] Refreshed \(count) projects")
             await loadProjects()
         case .failure(let error):
             self.error = error.localizedDescription

@@ -122,7 +122,7 @@ class BranchLayoutViewModel: ObservableObject {
                 visibleBranches.append(newBranch)
             }
         } catch {
-            canvasLog("[BranchLayout] Failed to create branch: \(error)")
+            wtLog("[BranchLayout] Failed to create branch: \(error)")
         }
     }
 
@@ -141,7 +141,7 @@ class BranchLayoutViewModel: ObservableObject {
             )
             visibleBranches.append(newBranch)
         } catch {
-            canvasLog("[BranchLayout] Failed to create root branch: \(error)")
+            wtLog("[BranchLayout] Failed to create root branch: \(error)")
         }
     }
 
@@ -152,7 +152,7 @@ class BranchLayoutViewModel: ObservableObject {
                 visibleBranches[idx].title = title
             }
         } catch {
-            canvasLog("[BranchLayout] Failed to rename branch \(id): \(error)")
+            wtLog("[BranchLayout] Failed to rename branch \(id): \(error)")
         }
     }
 
@@ -161,7 +161,7 @@ class BranchLayoutViewModel: ObservableObject {
             try TreeStore.shared.updateBranch(id, status: .completed)
             visibleBranches.removeAll { $0.id == id }
         } catch {
-            canvasLog("[BranchLayout] Failed to complete branch \(id): \(error)")
+            wtLog("[BranchLayout] Failed to complete branch \(id): \(error)")
         }
     }
 
@@ -170,7 +170,7 @@ class BranchLayoutViewModel: ObservableObject {
             try TreeStore.shared.updateBranch(id, status: .archived)
             visibleBranches.removeAll { $0.id == id }
         } catch {
-            canvasLog("[BranchLayout] Failed to archive branch \(id): \(error)")
+            wtLog("[BranchLayout] Failed to archive branch \(id): \(error)")
         }
     }
 
@@ -179,7 +179,7 @@ class BranchLayoutViewModel: ObservableObject {
             try TreeStore.shared.deleteBranch(id)
             visibleBranches.removeAll { $0.id == id }
         } catch {
-            canvasLog("[BranchLayout] Failed to delete branch \(id): \(error)")
+            wtLog("[BranchLayout] Failed to delete branch \(id): \(error)")
         }
     }
 
@@ -195,9 +195,9 @@ class BranchLayoutViewModel: ObservableObject {
                 contextSnapshot: userInput
             )
             visibleBranches.append(newBranch)
-            canvasLog("[BranchLayout] Created branch: \(suggestion.title)")
+            wtLog("[BranchLayout] Created branch: \(suggestion.title)")
         } catch {
-            canvasLog("[BranchLayout] Failed to create branch from suggestion: \(error)")
+            wtLog("[BranchLayout] Failed to create branch from suggestion: \(error)")
         }
     }
 
@@ -214,10 +214,10 @@ class BranchLayoutViewModel: ObservableObject {
                 )
                 visibleBranches.append(newBranch)
             } catch {
-                canvasLog("[BranchLayout] Failed to spawn branch '\(suggestion.title)': \(error)")
+                wtLog("[BranchLayout] Failed to spawn branch '\(suggestion.title)': \(error)")
             }
         }
-        canvasLog("[BranchLayout] Spawned \(suggestions.count) parallel branches")
+        wtLog("[BranchLayout] Spawned \(suggestions.count) parallel branches")
     }
 }
 

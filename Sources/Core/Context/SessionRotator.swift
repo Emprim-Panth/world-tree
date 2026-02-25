@@ -33,11 +33,11 @@ enum SessionRotator {
         guard level.shouldRotate else { return nil }
 
         guard UserDefaults.standard.object(forKey: "cortana.autoCompactEnabled") as? Bool ?? true else {
-            canvasLog("[SessionRotator] Auto-compact disabled — skipping rotation")
+            wtLog("[SessionRotator] Auto-compact disabled — skipping rotation")
             return nil
         }
 
-        canvasLog("[SessionRotator] Pressure \(level.rawValue) (\(tokens) est. tokens) — rotating session \(sessionId)")
+        wtLog("[SessionRotator] Pressure \(level.rawValue) (\(tokens) est. tokens) — rotating session \(sessionId)")
         return await performRotation(
             sessionId: sessionId,
             branchId: branchId,
@@ -56,7 +56,7 @@ enum SessionRotator {
         let messages = (try? MessageStore.shared.getMessages(sessionId: sessionId)) ?? []
         let eventCount = EventStore.shared.activityCount(branchId: branchId, minutes: 999_999)
 
-        canvasLog("[SessionRotator] Forced rotation for session \(sessionId)")
+        wtLog("[SessionRotator] Forced rotation for session \(sessionId)")
         return await performRotation(
             sessionId: sessionId,
             branchId: branchId,
@@ -77,7 +77,7 @@ enum SessionRotator {
     ) async -> String? {
         // 1. Generate checkpoint summary
         guard let checkpoint = await BranchSummarizer.shared.checkpoint(sessionId: sessionId) else {
-            canvasLog("[SessionRotator] Failed to generate checkpoint — skipping rotation")
+            wtLog("[SessionRotator] Failed to generate checkpoint — skipping rotation")
             return nil
         }
 
@@ -112,7 +112,7 @@ enum SessionRotator {
             data: ["reason": "pressure_threshold"]
         )
 
-        canvasLog("[SessionRotator] Rotation complete — checkpoint \(checkpoint.count) chars, cleared CLI mapping")
+        wtLog("[SessionRotator] Rotation complete — checkpoint \(checkpoint.count) chars, cleared CLI mapping")
         return checkpoint
     }
 
@@ -137,7 +137,7 @@ enum SessionRotator {
                 )
             }
         } catch {
-            canvasLog("[SessionRotator] Failed to persist checkpoint: \(error)")
+            wtLog("[SessionRotator] Failed to persist checkpoint: \(error)")
         }
     }
 

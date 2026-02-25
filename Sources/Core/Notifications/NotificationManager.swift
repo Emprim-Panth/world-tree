@@ -24,7 +24,7 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
             guard let jobId = userInfo["jobId"] as? String else { return }
             Task { @MainActor in
                 if let job = try? DatabaseManager.shared.read({ db in
-                    try CanvasJob.fetchOne(db, key: jobId)
+                    try WorldTreeJob.fetchOne(db, key: jobId)
                 }) {
                     let text = job.output ?? job.command
                     NSPasteboard.general.clearContents()
@@ -69,16 +69,16 @@ actor NotificationManager {
         switch settings.authorizationStatus {
         case .authorized, .provisional, .ephemeral:
             isAuthorized = true
-            canvasLog("[NotificationManager] authorization: already granted")
+            wtLog("[NotificationManager] authorization: already granted")
         case .denied:
             isAuthorized = false
-            canvasLog("[NotificationManager] authorization: denied")
+            wtLog("[NotificationManager] authorization: denied")
         case .notDetermined:
             do {
                 isAuthorized = try await center.requestAuthorization(options: [.alert, .sound, .badge])
-                canvasLog("[NotificationManager] authorization: \(isAuthorized)")
+                wtLog("[NotificationManager] authorization: \(isAuthorized)")
             } catch {
-                canvasLog("[NotificationManager] auth error: \(error)")
+                wtLog("[NotificationManager] auth error: \(error)")
             }
         @unknown default:
             isAuthorized = false
@@ -99,7 +99,7 @@ actor NotificationManager {
 
     // MARK: - Job Notifications
 
-    func notifyJobComplete(_ job: CanvasJob) async {
+    func notifyJobComplete(_ job: WorldTreeJob) async {
         guard isAuthorized else { return }
 
         let content = UNMutableNotificationContent()
@@ -128,7 +128,7 @@ actor NotificationManager {
         do {
             try await UNUserNotificationCenter.current().add(request)
         } catch {
-            canvasLog("[NotificationManager] failed to send notification: \(error)")
+            wtLog("[NotificationManager] failed to send notification: \(error)")
         }
     }
 

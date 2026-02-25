@@ -33,13 +33,13 @@ actor JobQueue {
 
     private func dbWrite(_ block: (Database) throws -> Void) {
         guard let pool = dbPool else {
-            canvasLog("[JobQueue] DB write skipped — pool not configured. Call JobQueue.configure() before enqueuing jobs.")
+            wtLog("[JobQueue] DB write skipped — pool not configured. Call JobQueue.configure() before enqueuing jobs.")
             return
         }
         do {
             try pool.write(block)
         } catch {
-            canvasLog("[JobQueue] DB write failed: \(error)")
+            wtLog("[JobQueue] DB write failed: \(error)")
         }
     }
 
@@ -56,7 +56,7 @@ actor JobQueue {
         branchId: String? = nil,
         type: String = "background_run"
     ) async -> String {
-        let job = CanvasJob(
+        let job = WorldTreeJob(
             type: type,
             command: command,
             workingDirectory: workingDirectory,
@@ -74,7 +74,7 @@ actor JobQueue {
 
     // MARK: - Execute
 
-    private func execute(_ job: CanvasJob) async {
+    private func execute(_ job: WorldTreeJob) async {
         var mutableJob = job
         mutableJob.status = .running
         dbWrite { db in try mutableJob.update(db) }
@@ -120,7 +120,7 @@ actor JobQueue {
 
             let timeoutWork = DispatchWorkItem { [weak proc] in
                 if let proc, proc.isRunning {
-                    canvasLog("[JobQueue] Job \(job.id) timed out after \(self.maxJobDuration)s — terminating")
+                    wtLog("[JobQueue] Job \(job.id) timed out after \(self.maxJobDuration)s — terminating")
                     proc.terminate()
                 }
                 safeResume()
@@ -180,28 +180,28 @@ actor JobQueue {
 
     // MARK: - Query
 
-    nonisolated func getJob(_ id: String) -> CanvasJob? {
+    nonisolated func getJob(_ id: String) -> WorldTreeJob? {
         Self._sharedDbPool.flatMap { pool in
             try? pool.read { db in
-                try CanvasJob.fetchOne(db, key: id)
+                try WorldTreeJob.fetchOne(db, key: id)
             }
         }
     }
 
-    nonisolated func activeJobs() -> [CanvasJob] {
+    nonisolated func activeJobs() -> [WorldTreeJob] {
         guard let pool = Self._sharedDbPool else { return [] }
         return (try? pool.read { db in
-            try CanvasJob
+            try WorldTreeJob
                 .filter(Column("status") == "queued" || Column("status") == "running")
                 .order(Column("created_at").desc)
                 .fetchAll(db)
         }) ?? []
     }
 
-    nonisolated func recentJobs(limit: Int = 20) -> [CanvasJob] {
+    nonisolated func recentJobs(limit: Int = 20) -> [WorldTreeJob] {
         guard let pool = Self._sharedDbPool else { return [] }
         return (try? pool.read { db in
-            try CanvasJob
+            try WorldTreeJob
                 .order(Column("created_at").desc)
                 .limit(limit)
                 .fetchAll(db)

@@ -51,7 +51,7 @@ final class PluginServer: ObservableObject {
         do {
             guard let nwPort = NWEndpoint.Port(rawValue: Self.port) else {
                 lastError = "Invalid port: \(Self.port)"
-                canvasLog("[PluginServer] Cannot start: invalid port \(Self.port)")
+                wtLog("[PluginServer] Cannot start: invalid port \(Self.port)")
                 return
             }
             let listener = try NWListener(using: .tcp, on: nwPort)
@@ -70,14 +70,14 @@ final class PluginServer: ObservableObject {
                         self.startedAt = Date()
                         self.lastError = nil
                         self.writeManifestFile()
-                        canvasLog("[PluginServer] Ready on port \(Self.port)")
+                        wtLog("[PluginServer] Ready on port \(Self.port)")
                     case .failed(let error):
                         self.isRunning = false
                         self.lastError = error.localizedDescription
-                        canvasLog("[PluginServer] Failed: \(error)")
+                        wtLog("[PluginServer] Failed: \(error)")
                     case .cancelled:
                         self.isRunning = false
-                        canvasLog("[PluginServer] Stopped")
+                        wtLog("[PluginServer] Stopped")
                     default:
                         break
                     }
@@ -87,7 +87,7 @@ final class PluginServer: ObservableObject {
             listener.start(queue: networkQueue)
         } catch {
             lastError = error.localizedDescription
-            canvasLog("[PluginServer] Listener init failed: \(error)")
+            wtLog("[PluginServer] Listener init failed: \(error)")
         }
     }
 
@@ -117,7 +117,7 @@ final class PluginServer: ObservableObject {
         }
         """
         try? manifest.data(using: .utf8)?.write(to: manifestFile)
-        canvasLog("[PluginServer] Manifest written to \(manifestFile.path)")
+        wtLog("[PluginServer] Manifest written to \(manifestFile.path)")
     }
 
     // MARK: - Connection Entry (MainActor)
@@ -132,7 +132,7 @@ final class PluginServer: ObservableObject {
     private nonisolated static func receiveData(from connection: NWConnection, accumulated: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { chunk, _, isComplete, error in
             if let error {
-                canvasLog("[PluginServer] Receive error: \(error)")
+                wtLog("[PluginServer] Receive error: \(error)")
                 connection.cancel()
                 return
             }
@@ -210,7 +210,7 @@ final class PluginServer: ObservableObject {
         if let data = body.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let type = json["type"] as? String {
-            canvasLog("[PluginServer] Daemon event: \(type)")
+            wtLog("[PluginServer] Daemon event: \(type)")
         }
         sendResponse(connection, status: 200, body: #"{"ok":true}"#)
     }

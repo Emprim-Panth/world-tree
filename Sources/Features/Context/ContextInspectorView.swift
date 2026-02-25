@@ -277,7 +277,7 @@ class ContextInspectorViewModel: ObservableObject {
                 )
             }
         } catch {
-            canvasLog("[ContextInspector] Failed to persist mutations: \(error)")
+            wtLog("[ContextInspector] Failed to persist mutations: \(error)")
         }
     }
 

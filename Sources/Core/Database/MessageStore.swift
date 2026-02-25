@@ -29,6 +29,25 @@ final class MessageStore {
         }
     }
 
+    /// Get a page of messages older than the given message ID.
+    /// Used for pagination — returns up to `limit` messages in chronological order.
+    func getMessagesBefore(sessionId: String, beforeMessageId: String, limit: Int) throws -> [Message] {
+        try db.read { db in
+            let sql = """
+                SELECT * FROM (
+                    SELECT m.*,
+                        (SELECT COUNT(*) FROM canvas_branches cb
+                         WHERE cb.fork_from_message_id = m.id) as has_branches
+                    FROM messages m
+                    WHERE m.session_id = ? AND m.id < ?
+                    ORDER BY m.timestamp DESC
+                    LIMIT ?
+                ) sub ORDER BY sub.timestamp ASC
+                """
+            return try Message.fetchAll(db, sql: sql, arguments: [sessionId, beforeMessageId, limit])
+        }
+    }
+
     /// Get messages up to (and including) a specific message ID.
     /// Used for building fork context.
     func getMessagesUpTo(sessionId: String, messageId: String, limit: Int? = nil) throws -> [Message] {
@@ -66,7 +85,7 @@ final class MessageStore {
             try db.execute(
                 sql: """
                     INSERT OR IGNORE INTO sessions (id, terminal_id, working_directory, description, started_at)
-                    VALUES (?, 'canvas', ?, 'Canvas session', datetime('now'))
+                    VALUES (?, 'canvas', ?, 'World Tree session', datetime('now'))
                     """,
                 arguments: [sessionId, workingDirectory]
             )
@@ -110,7 +129,7 @@ final class MessageStore {
                 let role: String = row["role"]
                 let content: String = row["content"]
                 guard validRoles.contains(role) else {
-                    canvasLog("[MessageStore] copyMessages: skipping row with invalid role '\(role)' in session \(sourceSessionId)")
+                    wtLog("[MessageStore] copyMessages: skipping row with invalid role '\(role)' in session \(sourceSessionId)")
                     continue
                 }
                 try db.execute(
@@ -206,7 +225,7 @@ final class MessageStore {
                 )
             }
         } catch {
-            canvasLog("[MessageStore] Failed to update message \(id): \(error)")
+            wtLog("[MessageStore] Failed to update message \(id): \(error)")
         }
     }
 

@@ -3,7 +3,7 @@ import SwiftUI
 /// Shows background jobs that are actively running.
 /// Polls JobQueue every 2 seconds so the list stays current without @Published.
 struct ActiveJobsSection: View {
-    @State private var jobs: [CanvasJob] = []
+    @State private var jobs: [WorldTreeJob] = []
     private let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -49,7 +49,7 @@ struct ActiveJobsSection: View {
 // MARK: - Job Row
 
 private struct JobRow: View {
-    let job: CanvasJob
+    let job: WorldTreeJob
 
     var body: some View {
         HStack(spacing: 6) {

@@ -173,10 +173,15 @@ final class ClaudeCodeProvider: LLMProvider {
 
             proc.arguments = args
 
-            if let cwd = context.workingDirectory {
+            let fallbackDir = "\(home)/Development"
+            if let cwd = context.workingDirectory,
+               FileManager.default.fileExists(atPath: cwd) {
                 proc.currentDirectoryURL = URL(fileURLWithPath: cwd)
             } else {
-                proc.currentDirectoryURL = URL(fileURLWithPath: "\(home)/Development")
+                if let cwd = context.workingDirectory {
+                    wtLog("[ClaudeCodeProvider] ⚠️ Working directory missing: \(cwd) — falling back to ~/Development")
+                }
+                proc.currentDirectoryURL = URL(fileURLWithPath: fallbackDir)
             }
 
             var env = ProcessInfo.processInfo.environment
@@ -222,7 +227,7 @@ final class ClaudeCodeProvider: LLMProvider {
                         // Detect silent resume failures: if we asked to resume a session
                         // but got back a different session ID, the CLI started fresh.
                         if let expected = self.getCliSession(for: context.sessionId), expected != sid {
-                            canvasLog("[ClaudeCodeProvider] ⚠️ Resume failed silently — new session. Expected: \(expected.prefix(8))…, Got: \(sid.prefix(8))…")
+                            wtLog("[ClaudeCodeProvider] ⚠️ Resume failed silently — new session. Expected: \(expected.prefix(8))…, Got: \(sid.prefix(8))…")
                             resumeFailedSilently = true
                         }
                         self.setCliSession(sid, for: context.sessionId)
@@ -252,7 +257,7 @@ final class ClaudeCodeProvider: LLMProvider {
                     let stderrText = String(data: stderrData, encoding: .utf8)?
                         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     if !stderrText.isEmpty {
-                        canvasLog("[ClaudeCodeProvider] stderr: \(stderrText.prefix(500))")
+                        wtLog("[ClaudeCodeProvider] stderr: \(stderrText.prefix(500))")
                     }
 
                     let procHash = ObjectIdentifier(process).hashValue
@@ -272,7 +277,7 @@ final class ClaudeCodeProvider: LLMProvider {
                     } else if !wasCancelled {
                         // No session ID and not cancelled — session is broken.
                         // Rotate so next attempt starts fresh instead of resume-looping.
-                        canvasLog("[ClaudeCodeProvider] ⚠️ Process exited without a session ID — rotating session")
+                        wtLog("[ClaudeCodeProvider] ⚠️ Process exited without a session ID — rotating session")
                         self?.rotateSession(for: context.sessionId)
                     }
 
@@ -291,12 +296,12 @@ final class ClaudeCodeProvider: LLMProvider {
                         } else {
                             reason = "CLI exited with status \(process.terminationStatus)"
                         }
-                        canvasLog("[ClaudeCodeProvider] CLI failed: status=\(process.terminationStatus), stderr=\(stderrText.prefix(200))")
+                        wtLog("[ClaudeCodeProvider] CLI failed: status=\(process.terminationStatus), stderr=\(stderrText.prefix(200))")
                         continuation.yield(.error("\(reason). Send another message to continue."))
                     } else if !yieldedContent && resumeFailedSilently {
                         // Resume silently started a new session but produced no content.
                         // Surface as an error so the caller can retry or surface to the user.
-                        canvasLog("[ClaudeCodeProvider] ⚠️ Resume fallback produced no content — surfacing error")
+                        wtLog("[ClaudeCodeProvider] ⚠️ Resume fallback produced no content — surfacing error")
                         continuation.yield(.error("Session resume failed and retry produced no response. Please try again."))
                     }
 
@@ -323,9 +328,9 @@ final class ClaudeCodeProvider: LLMProvider {
 
             do {
                 try proc.run()
-                canvasLog("[ClaudeCodeProvider] CLI launched: session=\(context.sessionId), resume=\(cliSessionId ?? "none")")
+                wtLog("[ClaudeCodeProvider] CLI launched: session=\(context.sessionId), resume=\(cliSessionId ?? "none")")
             } catch {
-                canvasLog("[ClaudeCodeProvider] Failed to launch CLI: \(error)")
+                wtLog("[ClaudeCodeProvider] Failed to launch CLI: \(error)")
                 continuation.yield(.error("Failed to launch Claude CLI: \(error.localizedDescription)"))
                 continuation.finish()
                 self.stateLock.lock()
@@ -345,7 +350,7 @@ final class ClaudeCodeProvider: LLMProvider {
         cliSessionMap.removeValue(forKey: canvasSessionId)
         cliSessionLastUsed.removeValue(forKey: canvasSessionId)
         mapLock.unlock()
-        canvasLog("[ClaudeCodeProvider] Rotated session mapping for \(canvasSessionId)")
+        wtLog("[ClaudeCodeProvider] Rotated session mapping for \(canvasSessionId)")
     }
 
     // MARK: - Cancel
@@ -371,11 +376,11 @@ final class ClaudeCodeProvider: LLMProvider {
         // Don't resume sessions that are likely expired on the server.
         // No timestamp = loaded from DB/file with unknown age = treat as stale.
         guard let lastUsed = cliSessionLastUsed[canvasSessionId] else {
-            canvasLog("[ClaudeCodeProvider] Session \(sid.prefix(8))… has no timestamp — starting fresh")
+            wtLog("[ClaudeCodeProvider] Session \(sid.prefix(8))… has no timestamp — starting fresh")
             return nil
         }
         if Date().timeIntervalSince(lastUsed) > Self.sessionTTL {
-            canvasLog("[ClaudeCodeProvider] Session \(sid.prefix(8))… expired (>\(Int(Self.sessionTTL/60))min) — starting fresh")
+            wtLog("[ClaudeCodeProvider] Session \(sid.prefix(8))… expired (>\(Int(Self.sessionTTL/60))min) — starting fresh")
             return nil
         }
         return sid
@@ -415,9 +420,9 @@ final class ClaudeCodeProvider: LLMProvider {
                 }
             }
             mapLock.unlock()
-            canvasLog("[ClaudeCodeProvider] Loaded \(rows.count) session mappings from DB")
+            wtLog("[ClaudeCodeProvider] Loaded \(rows.count) session mappings from DB")
         } catch {
-            canvasLog("[ClaudeCodeProvider] Failed to load session map from DB: \(error)")
+            wtLog("[ClaudeCodeProvider] Failed to load session map from DB: \(error)")
         }
 
         // Overlay with file — file is written synchronously on every update so
@@ -429,7 +434,7 @@ final class ClaudeCodeProvider: LLMProvider {
                 cliSessionMap[canvasId] = cliId  // file wins over DB
             }
             mapLock.unlock()
-            canvasLog("[ClaudeCodeProvider] Overlaid \(fileMap.count) session mappings from file")
+            wtLog("[ClaudeCodeProvider] Overlaid \(fileMap.count) session mappings from file")
         }
     }
 
@@ -453,7 +458,7 @@ final class ClaudeCodeProvider: LLMProvider {
                 }
             }
         } catch {
-            canvasLog("[ClaudeCodeProvider] Failed to persist session map: \(error)")
+            wtLog("[ClaudeCodeProvider] Failed to persist session map: \(error)")
         }
     }
 }

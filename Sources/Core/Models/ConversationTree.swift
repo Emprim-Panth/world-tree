@@ -52,6 +52,7 @@ extension ConversationTree: FetchableRecord {
         updatedAt = row["updated_at"] as? Date ?? Date()
         archived = (row["archived"] as? Int ?? 0) != 0
         lastMessageAt = row["last_message_at"] as? Date
+        lastMessageSnippet = row["last_message_snippet"] as? String
     }
 }
 

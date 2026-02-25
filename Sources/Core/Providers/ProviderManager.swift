@@ -63,7 +63,7 @@ final class ProviderManager: ObservableObject {
             }
         }
 
-        canvasLog("[ProviderManager] Routing to \(provider.displayName) (\(provider.identifier))")
+        wtLog("[ProviderManager] Routing to \(provider.displayName) (\(provider.identifier))")
         return provider.send(context: context)
     }
 
@@ -94,7 +94,7 @@ final class ProviderManager: ObservableObject {
 
         // 2. Anthropic API — only if an API key exists
         if let apiKey = Self.resolveAPIKey() {
-            canvasLog("[ProviderManager] API key found, registering Anthropic API provider")
+            wtLog("[ProviderManager] API key found, registering Anthropic API provider")
             let apiProvider = AnthropicAPIProvider(apiKey: apiKey)
             providers.append(apiProvider)
         }
@@ -104,49 +104,49 @@ final class ProviderManager: ObservableObject {
         providers.append(ollamaProvider)
 
         // 4. Remote Canvas — if remote mode was enabled in a previous session
-        if UserDefaults.standard.bool(forKey: CortanaConstants.remoteCanvasEnabledKey) {
+        if UserDefaults.standard.bool(forKey: CortanaConstants.remoteEnabledKey) {
             if let remote = Self.buildRemoteProvider() {
-                canvasLog("[ProviderManager] Remote mode was enabled, registering Remote Canvas provider")
+                wtLog("[ProviderManager] Remote mode was enabled, registering Remote Studio provider")
                 providers.append(remote)
                 // Restore remote as active if it was previously selected
                 if selectedProviderId == "remote-canvas" {
-                    canvasLog("[ProviderManager] Restoring remote-canvas as active provider")
+                    wtLog("[ProviderManager] Restoring remote-canvas as active provider")
                 }
             }
         }
 
-        canvasLog("[ProviderManager] Registered \(providers.count) providers, active: \(selectedProviderId)")
+        wtLog("[ProviderManager] Registered \(providers.count) providers, active: \(selectedProviderId)")
     }
 
     // MARK: - Remote Provider Management
 
-    /// Enable remote mode: registers RemoteCanvasProvider and switches to it.
+    /// Enable remote mode: registers RemoteWorldTreeProvider and switches to it.
     func enableRemoteProvider(url: URL, token: String) {
         // Remove any existing remote provider first
         providers.removeAll { $0.identifier == "remote-canvas" }
 
-        let remote = RemoteCanvasProvider(serverURL: url, token: token)
+        let remote = RemoteWorldTreeProvider(serverURL: url, token: token)
         providers.append(remote)
         selectedProviderId = "remote-canvas"
-        canvasLog("[ProviderManager] Remote Canvas enabled → \(url)")
+        wtLog("[ProviderManager] Remote Studio enabled → \(url)")
     }
 
-    /// Disable remote mode: removes RemoteCanvasProvider and falls back to Claude Code.
+    /// Disable remote mode: removes RemoteWorldTreeProvider and falls back to Claude Code.
     func disableRemoteProvider() {
         providers.removeAll { $0.identifier == "remote-canvas" }
         if selectedProviderId == "remote-canvas" {
             selectedProviderId = CortanaConstants.defaultProvider
         }
-        canvasLog("[ProviderManager] Remote Canvas disabled")
+        wtLog("[ProviderManager] Remote Studio disabled")
     }
 
-    private static func buildRemoteProvider() -> RemoteCanvasProvider? {
-        let urlString = UserDefaults.standard.string(forKey: CortanaConstants.remoteCanvasURLKey) ?? ""
-        let token = UserDefaults.standard.string(forKey: CortanaConstants.remoteCanvasTokenKey) ?? ""
+    private static func buildRemoteProvider() -> RemoteWorldTreeProvider? {
+        let urlString = UserDefaults.standard.string(forKey: CortanaConstants.remoteURLKey) ?? ""
+        let token = UserDefaults.standard.string(forKey: CortanaConstants.remoteTokenKey) ?? ""
         guard !urlString.isEmpty, !token.isEmpty, let url = URL(string: urlString) else {
             return nil
         }
-        return RemoteCanvasProvider(serverURL: url, token: token)
+        return RemoteWorldTreeProvider(serverURL: url, token: token)
     }
 
     /// Resolve API key from environment or file (non-blocking).

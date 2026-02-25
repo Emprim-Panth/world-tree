@@ -8,7 +8,7 @@ import Foundation
 /// Returns `true` (blocked) when the limit is exceeded. Auto-cleans expired
 /// windows on each check. Never logs the token — only IP + timestamp.
 ///
-/// Thread-safety: must be accessed exclusively from MainActor (CanvasServer is @MainActor).
+/// Thread-safety: must be accessed exclusively from MainActor (WorldTreeServer is @MainActor).
 @MainActor
 final class AuthRateLimiter {
 
@@ -32,7 +32,7 @@ final class AuthRateLimiter {
         purgeExpired(for: ip, now: now)
         windows[ip, default: []].append(now)
         let count = windows[ip]?.count ?? 0
-        canvasLog("[AuthRateLimiter] Auth failure from \(ip) — \(count)/\(Self.maxFailures) in window")
+        wtLog("[AuthRateLimiter] Auth failure from \(ip) — \(count)/\(Self.maxFailures) in window")
         return count >= Self.maxFailures
     }
 

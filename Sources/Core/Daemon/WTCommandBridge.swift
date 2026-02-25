@@ -67,7 +67,7 @@ final class WTCommandBridge: ObservableObject {
         }
 
         guard let fh = FileHandle(forReadingAtPath: commandsPath) else {
-            canvasLog("[WTCommandBridge] failed to open \(commandsPath)")
+            wtLog("[WTCommandBridge] failed to open \(commandsPath)")
             return
         }
         fileHandle = fh
@@ -82,7 +82,7 @@ final class WTCommandBridge: ObservableObject {
         src.resume()
         source = src
 
-        canvasLog("[WTCommandBridge] watching \(commandsPath) from offset \(bytesRead)")
+        wtLog("[WTCommandBridge] watching \(commandsPath) from offset \(bytesRead)")
     }
 
     func stop() {
@@ -117,7 +117,7 @@ final class WTCommandBridge: ObservableObject {
     // MARK: - Dispatch
 
     private func dispatch(_ cmd: WTCommand) {
-        canvasLog("[WTCommandBridge] \(cmd.id): \(cmd.type)")
+        wtLog("[WTCommandBridge] \(cmd.id): \(cmd.type)")
         switch cmd.type {
         case "notify":
             sendNotification(
@@ -184,7 +184,7 @@ final class WTCommandBridge: ObservableObject {
             try? task.run()
 
         default:
-            canvasLog("[WTCommandBridge] unknown command type: \(cmd.type)")
+            wtLog("[WTCommandBridge] unknown command type: \(cmd.type)")
         }
     }
 

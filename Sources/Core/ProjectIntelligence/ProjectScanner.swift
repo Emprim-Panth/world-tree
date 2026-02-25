@@ -26,7 +26,7 @@ final class ProjectScanner {
             throw ProjectScanError.developmentDirectoryNotFound
         }
         
-        canvasLog("[ProjectScanner] Starting scan of \(devPath)")
+        wtLog("[ProjectScanner] Starting scan of \(devPath)")
         
         let contents = try fileManager.contentsOfDirectory(atPath: devPath)
         var projects: [DiscoveredProject] = []
@@ -47,7 +47,7 @@ final class ProjectScanner {
             }
         }
         
-        canvasLog("[ProjectScanner] Found \(projects.count) projects")
+        wtLog("[ProjectScanner] Found \(projects.count) projects")
         return projects
     }
     

@@ -2,7 +2,7 @@ import Foundation
 import GRDB
 
 /// A background job tracked by Canvas
-struct CanvasJob: Codable, FetchableRecord, PersistableRecord, Identifiable {
+struct WorldTreeJob: Codable, FetchableRecord, PersistableRecord, Identifiable {
     static let databaseTableName = "canvas_jobs"
 
     var id: String

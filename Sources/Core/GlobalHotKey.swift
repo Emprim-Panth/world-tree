@@ -40,9 +40,9 @@ final class GlobalHotKey {
         let status = RegisterEventHotKey(keyCode, modifiers, hotKeyID,
                                          GetApplicationEventTarget(), 0, &hotKeyRef)
         if status == noErr {
-            canvasLog("[GlobalHotKey] registered ⌘⇧Space (keyCode=\(keyCode), modifiers=\(modifiers))")
+            wtLog("[GlobalHotKey] registered ⌘⇧Space (keyCode=\(keyCode), modifiers=\(modifiers))")
         } else {
-            canvasLog("[GlobalHotKey] registration failed: \(status)")
+            wtLog("[GlobalHotKey] registration failed: \(status)")
         }
     }
 

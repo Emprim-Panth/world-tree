@@ -12,9 +12,10 @@ struct WorldTreeApp: App {
                 .environmentObject(appState)
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear {
+                    checkForUpdateBadge()
                     // DB is set up in AppState.init() — just surface any error here
                     if let error = appState.dbSetupError {
-                        canvasLog("[Canvas] Database setup failed: \(error)")
+                        wtLog("[WorldTree] Database setup failed: \(error)")
                         let alert = NSAlert()
                         alert.messageText = "World Tree — Database Error"
                         alert.informativeText = "Failed to open the conversation database.\n\n\(error.localizedDescription)\n\nCheck that the Dropbox path is accessible, or configure a different database path in Settings."
@@ -30,10 +31,10 @@ struct WorldTreeApp: App {
                     }
                     validateRestoredSelection()
                     startProjectRefresh()
-                    requestNotificationPermission()
+                    Task { await PermissionsService.shared.setup() }
                     Task { await ProviderManager.shared.refreshHealth() }
                     Task { EventStore.shared.prune() }
-                    startCanvasServerIfEnabled()
+                    startWorldTreeServerIfEnabled()
                     startPluginServerIfEnabled()
                     PeekabooBridgeServer.shared.start()
                     WTCommandBridge.shared.start()
@@ -43,13 +44,16 @@ struct WorldTreeApp: App {
                         // Recover any responses that were interrupted by a crash or SIGTERM
                         let recovered = await StreamCacheManager.shared.recoverOrphanedStreams()
                         for (sessionId, content) in recovered where !content.isEmpty {
-                            canvasLog("[StreamCache] Recovering interrupted response for session \(sessionId)")
+                            wtLog("[StreamCache] Recovering interrupted response for session \(sessionId)")
                             let msg = "[Recovered — response was interrupted]\n\n\(content)"
                             _ = try? MessageStore.shared.sendMessage(sessionId: sessionId, role: .assistant, content: msg)
                         }
                     }
                 }
                 .onChange(of: scenePhase) { _, phase in
+                    if phase == .active {
+                        clearUpdateBadge()
+                    }
                     if phase == .background {
                         DaemonService.shared.stopMonitoring()
                     }
@@ -131,20 +135,26 @@ struct WorldTreeApp: App {
         ProjectRefreshService.shared.startAutoRefresh()
     }
 
-    private func requestNotificationPermission() {
-        UNUserNotificationCenter.current().delegate = NotificationDelegate.shared
-        Task {
-            await NotificationManager.shared.requestAuthorization()
+    private func startWorldTreeServerIfEnabled() {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: WorldTreeServer.enabledKey) == nil {
+            defaults.set(true, forKey: WorldTreeServer.enabledKey) // default on
+        }
+        guard defaults.bool(forKey: WorldTreeServer.enabledKey) else { return }
+        WorldTreeServer.shared.start()
+    }
+
+    private func checkForUpdateBadge() {
+        let sentinel = URL(fileURLWithPath: "/tmp/.worldtree-updated")
+        if FileManager.default.fileExists(atPath: sentinel.path) {
+            NSApp.dockTile.badgeLabel = "↑"
         }
     }
 
-    private func startCanvasServerIfEnabled() {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: CanvasServer.enabledKey) == nil {
-            defaults.set(true, forKey: CanvasServer.enabledKey) // default on
-        }
-        guard defaults.bool(forKey: CanvasServer.enabledKey) else { return }
-        CanvasServer.shared.start()
+    private func clearUpdateBadge() {
+        guard NSApp.dockTile.badgeLabel != nil && NSApp.dockTile.badgeLabel != "" else { return }
+        NSApp.dockTile.badgeLabel = nil
+        try? FileManager.default.removeItem(at: URL(fileURLWithPath: "/tmp/.worldtree-updated"))
     }
 
     /// Plugin server is enabled by default (daemon-local, loopback only).

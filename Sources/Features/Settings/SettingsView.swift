@@ -8,7 +8,7 @@ struct SettingsView: View {
     @AppStorage("defaultModel") private var defaultModel = CortanaConstants.defaultModel
     @AppStorage("contextDepth") private var contextDepth = CortanaConstants.defaultContextDepth
     @StateObject private var providerManager = ProviderManager.shared
-    @StateObject private var server = CanvasServer.shared
+    @StateObject private var server = WorldTreeServer.shared
 
     var body: some View {
         TabView {
@@ -302,9 +302,9 @@ struct SettingsView: View {
 
     // MARK: - Server
 
-    @AppStorage(CanvasServer.enabledKey) private var serverEnabled = false
-    @AppStorage(CanvasServer.tokenKey) private var serverToken = ""
-    @AppStorage(CanvasServer.bonjourEnabledKey) private var bonjourEnabled = true
+    @AppStorage(WorldTreeServer.enabledKey) private var serverEnabled = false
+    @AppStorage(WorldTreeServer.tokenKey) private var serverToken = ""
+    @AppStorage(WorldTreeServer.bonjourEnabledKey) private var bonjourEnabled = true
     @AppStorage(PluginServer.enabledKey) private var pluginEnabled = true
     @StateObject private var pluginServer = PluginServer.shared
     @State private var tokenInput = ""
@@ -340,8 +340,8 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Canvas Hub Server") {
-                Toggle("Enable server (port \(CanvasServer.port))", isOn: $serverEnabled)
+            Section("World Tree Hub") {
+                Toggle("Enable server (port \(WorldTreeServer.port))", isOn: $serverEnabled)
                     .onChange(of: serverEnabled) { _, enabled in
                         if enabled { server.start() } else { server.stop() }
                     }
@@ -485,21 +485,21 @@ struct SettingsView: View {
                         .monospaced()
                         .foregroundStyle(.primary)
                         .textSelection(.enabled)
-                    Text("Copy this URL into MacBook Canvas → Settings → Server.")
+                    Text("Copy this URL into MacBook World Tree → Settings → Server.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 } else {
                     Label("No ngrok tunnel detected", systemImage: "network.slash")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("Start com.cortana.canvas-tunnel to enable remote access.")
+                    Text("Start com.cortana.worldtree-tunnel to enable remote access.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             }
 
             Section("Quick test") {
-                Text(#"curl -H "x-canvas-token: TOKEN" http://localhost:\#(CanvasServer.port)/health"#)
+                Text(#"curl -H "x-worldtree-token: TOKEN" http://localhost:\#(WorldTreeServer.port)/health"#)
                     .font(.caption)
                     .monospaced()
                     .foregroundStyle(.secondary)
@@ -512,9 +512,9 @@ struct SettingsView: View {
 
     // MARK: - Remote Studio (MacBook client mode)
 
-    @AppStorage(CortanaConstants.remoteCanvasEnabledKey) private var remoteEnabled = false
-    @AppStorage(CortanaConstants.remoteCanvasURLKey) private var remoteURL = ""
-    @AppStorage(CortanaConstants.remoteCanvasTokenKey) private var remoteToken = ""
+    @AppStorage(CortanaConstants.remoteEnabledKey) private var remoteEnabled = false
+    @AppStorage(CortanaConstants.remoteURLKey) private var remoteURL = ""
+    @AppStorage(CortanaConstants.remoteTokenKey) private var remoteToken = ""
     @State private var remoteURLInput = ""
     @State private var remoteTokenInput = ""
     @State private var showRemoteToken = false
@@ -523,7 +523,7 @@ struct SettingsView: View {
     private var remoteTab: some View {
         Form {
             Section("Connect to Studio") {
-                Text("When enabled, all messages are sent to your Mac Studio's Canvas server. The UI is identical — tokens stream in real time.")
+                Text("When enabled, all messages are sent to your Mac Studio's World Tree hub. The UI is identical — tokens stream in real time. The UI is identical — tokens stream in real time.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -567,7 +567,7 @@ struct SettingsView: View {
                     .disabled(remoteURLInput.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
 
-                Text("Paste the ngrok URL from Studio Canvas → Settings → Server.")
+                Text("Paste the ngrok URL from Studio World Tree → Settings → Server.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -575,11 +575,11 @@ struct SettingsView: View {
             Section("Studio Token") {
                 HStack {
                     if showRemoteToken {
-                        TextField("x-canvas-token", text: $remoteTokenInput)
+                        TextField("x-worldtree-token", text: $remoteTokenInput)
                             .textFieldStyle(.roundedBorder)
                             .font(.caption).monospaced()
                     } else {
-                        SecureField("x-canvas-token", text: $remoteTokenInput)
+                        SecureField("x-worldtree-token", text: $remoteTokenInput)
                             .textFieldStyle(.roundedBorder)
                             .font(.caption).monospaced()
                     }
@@ -651,7 +651,7 @@ struct SettingsView: View {
             client.wsConnection?.sendCloseAndDisconnect(code: 1008, reason: "Token regenerated — reconnect with new token")
         }
 
-        canvasLog("[Settings] Server token regenerated — \(server.webSocketClients.count) client(s) disconnected")
+        wtLog("[Settings] Server token regenerated — \(server.webSocketClients.count) client(s) disconnected")
     }
 
     /// Write the new token via @AppStorage (so SwiftUI re-renders immediately)
@@ -672,10 +672,10 @@ struct SettingsView: View {
                 remoteEnabled = false
                 return
             }
-            UserDefaults.standard.set(true, forKey: CortanaConstants.remoteCanvasEnabledKey)
+            UserDefaults.standard.set(true, forKey: CortanaConstants.remoteEnabledKey)
             providerManager.enableRemoteProvider(url: url, token: remoteToken)
         } else {
-            UserDefaults.standard.set(false, forKey: CortanaConstants.remoteCanvasEnabledKey)
+            UserDefaults.standard.set(false, forKey: CortanaConstants.remoteEnabledKey)
             providerManager.disableRemoteProvider()
         }
     }
@@ -686,7 +686,7 @@ struct SettingsView: View {
             return
         }
         remoteHealthStatus = "Testing…"
-        let provider = RemoteCanvasProvider(serverURL: url, token: remoteToken)
+        let provider = RemoteWorldTreeProvider(serverURL: url, token: remoteToken)
         let health = await provider.checkHealth()
         switch health {
         case .available:
@@ -779,7 +779,7 @@ struct SettingsView: View {
                 }
 
                 Text(daemonEnabled && daemonService.isConnected
-                     ? "Canvas → Daemon → Claude (memory + identity)"
+                     ? "World Tree → Cortana (memory + identity)"
                      : "Direct to provider (no daemon context)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)

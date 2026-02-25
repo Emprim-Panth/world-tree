@@ -5,7 +5,7 @@ import GRDB
 
 /// Structured event log for observability — every significant action in Canvas gets recorded.
 /// Stored in SQLite `canvas_events` table, queryable for dashboards, timelines, and analytics.
-enum CanvasEventType: String, Codable, DatabaseValueConvertible {
+enum WorldTreeEventType: String, Codable, DatabaseValueConvertible {
     case textChunk       // Streaming text received
     case toolStart       // Tool execution began
     case toolEnd         // Tool execution completed
@@ -24,13 +24,13 @@ enum CanvasEventType: String, Codable, DatabaseValueConvertible {
 }
 
 /// A single recorded event in Canvas.
-struct CanvasEvent: Codable, FetchableRecord, PersistableRecord, Identifiable {
+struct WorldTreeEvent: Codable, FetchableRecord, PersistableRecord, Identifiable {
     static let databaseTableName = "canvas_events"
 
     var id: Int64?
     var branchId: String
     var sessionId: String?
-    var eventType: CanvasEventType
+    var eventType: WorldTreeEventType
     var eventData: String?  // JSON payload for event-specific data
     var timestamp: Date
 
@@ -57,7 +57,7 @@ final class EventStore {
     static let shared = EventStore()
 
     /// In-memory buffer for batch writes (reduces DB pressure during streaming)
-    private var buffer: [CanvasEvent] = []
+    private var buffer: [WorldTreeEvent] = []
     private let batchSize = 20
     private var flushTask: Task<Void, Never>?
 
@@ -69,7 +69,7 @@ final class EventStore {
     func log(
         branchId: String,
         sessionId: String? = nil,
-        type: CanvasEventType,
+        type: WorldTreeEventType,
         data: [String: Any]? = nil
     ) {
         let jsonData: String?
@@ -80,7 +80,7 @@ final class EventStore {
             jsonData = nil
         }
 
-        let event = CanvasEvent(
+        let event = WorldTreeEvent(
             branchId: branchId,
             sessionId: sessionId,
             eventType: type,
@@ -117,7 +117,7 @@ final class EventStore {
                 }
             }
         } catch {
-            canvasLog("[EventStore] Failed to flush \(events.count) events: \(error)")
+            wtLog("[EventStore] Failed to flush \(events.count) events: \(error)")
             // Put events back to avoid silent data loss
             buffer.insert(contentsOf: events, at: 0)
         }
@@ -126,9 +126,9 @@ final class EventStore {
     // MARK: - Queries
 
     /// Recent events for a branch (for timeline display).
-    func recentEvents(branchId: String, limit: Int = 50) -> [CanvasEvent] {
+    func recentEvents(branchId: String, limit: Int = 50) -> [WorldTreeEvent] {
         (try? DatabaseManager.shared.read { db in
-            try CanvasEvent
+            try WorldTreeEvent
                 .filter(Column("branch_id") == branchId)
                 .order(Column("timestamp").desc)
                 .limit(limit)
@@ -141,7 +141,7 @@ final class EventStore {
     func activityCount(branchId: String, minutes: Int = 5) -> Int {
         let cutoff = Date().addingTimeInterval(-Double(minutes * 60))
         return (try? DatabaseManager.shared.read { db in
-            try CanvasEvent
+            try WorldTreeEvent
                 .filter(Column("branch_id") == branchId)
                 .filter(Column("timestamp") >= cutoff)
                 .fetchCount(db)
@@ -149,11 +149,11 @@ final class EventStore {
     }
 
     /// Tool execution events for timeline (toolStart + toolEnd pairs).
-    func toolEvents(branchId: String, limit: Int = 100) -> [CanvasEvent] {
+    func toolEvents(branchId: String, limit: Int = 100) -> [WorldTreeEvent] {
         (try? DatabaseManager.shared.read { db in
-            try CanvasEvent
+            try WorldTreeEvent
                 .filter(Column("branch_id") == branchId)
-                .filter([CanvasEventType.toolStart.rawValue, CanvasEventType.toolEnd.rawValue, CanvasEventType.toolError.rawValue].contains(Column("event_type")))
+                .filter([WorldTreeEventType.toolStart.rawValue, WorldTreeEventType.toolEnd.rawValue, WorldTreeEventType.toolError.rawValue].contains(Column("event_type")))
                 .order(Column("timestamp").desc)
                 .limit(limit)
                 .fetchAll(db)
@@ -162,7 +162,7 @@ final class EventStore {
     }
 
     /// Total event count per type for a branch (summary stats).
-    func eventCounts(branchId: String) -> [CanvasEventType: Int] {
+    func eventCounts(branchId: String) -> [WorldTreeEventType: Int] {
         guard let rows = try? DatabaseManager.shared.read({ db in
             try Row.fetchAll(db, sql: """
                 SELECT event_type, COUNT(*) as count
@@ -172,10 +172,10 @@ final class EventStore {
                 """, arguments: [branchId])
         }) else { return [:] }
 
-        var result: [CanvasEventType: Int] = [:]
+        var result: [WorldTreeEventType: Int] = [:]
         for row in rows {
             if let typeStr: String = row["event_type"],
-               let type = CanvasEventType(rawValue: typeStr),
+               let type = WorldTreeEventType(rawValue: typeStr),
                let count: Int = row["count"] {
                 result[type] = count
             }
@@ -194,7 +194,7 @@ final class EventStore {
                 )
             }
         } catch {
-            canvasLog("[EventStore] Prune failed: \(error)")
+            wtLog("[EventStore] Prune failed: \(error)")
         }
     }
 }

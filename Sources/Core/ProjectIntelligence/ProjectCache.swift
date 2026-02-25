@@ -74,7 +74,7 @@ final class ProjectCache {
             }
         }
         
-        canvasLog("[ProjectCache] Updated \(count) projects")
+        wtLog("[ProjectCache] Updated \(count) projects")
         return count
     }
     
@@ -99,7 +99,7 @@ final class ProjectCache {
         }
         
         if deletedCount > 0 {
-            canvasLog("[ProjectCache] Pruned \(deletedCount) stale projects")
+            wtLog("[ProjectCache] Pruned \(deletedCount) stale projects")
         }
         
         return deletedCount

@@ -1,16 +1,16 @@
 import Foundation
 
-// MARK: - RemoteCanvasProvider
+// MARK: - RemoteWorldTreeProvider
 
 /// LLM provider that routes messages to a remote World Tree server (Studio Mac).
 ///
-/// When enabled, messages are sent to a remote CanvasServer via HTTP/SSE instead
+/// When enabled, messages are sent to a remote WorldTreeServer via HTTP/SSE instead
 /// of being processed locally. Tokens stream back in real time — the UI experience
 /// is identical to local providers.
 ///
-/// Remote URL is the Studio's ngrok URL (or LAN IP). Token is the x-canvas-token
+/// Remote URL is the Studio's ngrok URL (or LAN IP). Token is the x-worldtree-token
 /// configured in World Tree → Settings → Server.
-final class RemoteCanvasProvider: LLMProvider {
+final class RemoteWorldTreeProvider: LLMProvider {
     let displayName = "Remote Studio"
     let identifier = "remote-canvas"
     let capabilities: ProviderCapabilities = [
@@ -43,7 +43,7 @@ final class RemoteCanvasProvider: LLMProvider {
         let healthURL = serverURL.appendingPathComponent("health")
         var req = URLRequest(url: healthURL)
         req.timeoutInterval = 5
-        req.setValue(token, forHTTPHeaderField: "x-canvas-token")
+        req.setValue(token, forHTTPHeaderField: "x-worldtree-token")
 
         do {
             let (data, response) = try await URLSession.shared.data(for: req)
@@ -111,7 +111,7 @@ final class RemoteCanvasProvider: LLMProvider {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        req.setValue(token, forHTTPHeaderField: "x-canvas-token")
+        req.setValue(token, forHTTPHeaderField: "x-worldtree-token")
         req.timeoutInterval = 300
 
         let body: [String: Any] = [
@@ -121,19 +121,19 @@ final class RemoteCanvasProvider: LLMProvider {
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        canvasLog("[RemoteCanvas] POST \(endpoint) session=\(context.sessionId)")
+        wtLog("[RemoteStudio] POST \(endpoint) session=\(context.sessionId)")
 
         let (bytes, response) = try await session.bytes(for: req)
 
         guard let http = response as? HTTPURLResponse else {
-            throw RemoteCanvasError.invalidResponse
+            throw RemoteWorldTreeError.invalidResponse
         }
 
         if http.statusCode == 401 {
-            throw RemoteCanvasError.unauthorized
+            throw RemoteWorldTreeError.unauthorized
         }
         if http.statusCode != 200 {
-            throw RemoteCanvasError.serverError(http.statusCode)
+            throw RemoteWorldTreeError.serverError(http.statusCode)
         }
 
         // Parse SSE stream — lines() strips empty lines, we rely on data: prefix
@@ -176,16 +176,16 @@ final class RemoteCanvasProvider: LLMProvider {
 
 // MARK: - Errors
 
-enum RemoteCanvasError: LocalizedError {
+enum RemoteWorldTreeError: LocalizedError {
     case invalidResponse
     case unauthorized
     case serverError(Int)
 
     var errorDescription: String? {
         switch self {
-        case .invalidResponse: return "Invalid response from Canvas server"
-        case .unauthorized: return "Canvas token rejected — update it in Settings → Server"
-        case .serverError(let code): return "Canvas server returned HTTP \(code)"
+        case .invalidResponse: return "Invalid response from World Tree server"
+        case .unauthorized: return "World Tree token rejected — update it in Settings → Server"
+        case .serverError(let code): return "World Tree server returned HTTP \(code)"
         }
     }
 }

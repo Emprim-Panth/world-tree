@@ -273,7 +273,7 @@ final class TreeStore {
                     INSERT INTO sessions (id, terminal_id, working_directory, description, started_at)
                     VALUES (?, ?, ?, ?, datetime('now'))
                     """,
-                arguments: [sessionId, "canvas", cwd, title ?? "Canvas branch"]
+                arguments: [sessionId, "canvas", cwd, title ?? "World Tree branch"]
             )
 
             // Create the branch overlay
@@ -442,7 +442,7 @@ final class TreeStore {
     }
 
     /// Find the branch whose associated session_id matches the given ID.
-    /// Used by CanvasServer to resume a conversation from an external client.
+    /// Used by WorldTreeServer to resume a conversation from an external client.
     func getBranchBySessionId(_ sessionId: String) throws -> Branch? {
         try db.read { db in
             try Branch.filter(Column("session_id") == sessionId).fetchOne(db)

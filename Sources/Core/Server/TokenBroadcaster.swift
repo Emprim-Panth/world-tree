@@ -4,7 +4,7 @@ import Foundation
 
 /// Converts BridgeEvent streams into WebSocket frames and broadcasts to subscribed clients.
 ///
-/// Both the SSE handler (CanvasServer) and the WebSocket `send_message` handler route
+/// Both the SSE handler (WorldTreeServer) and the WebSocket `send_message` handler route
 /// through TokenBroadcaster so all WebSocket clients subscribed to a branch receive
 /// token/tool_status/message_complete frames in real time.
 ///
@@ -69,7 +69,7 @@ final class TokenBroadcaster {
                 self.accumulatedText[branchId] = accumulated
 
                 if let frame {
-                    CanvasServer.shared.broadcastToSubscribers(branchId: branchId, message: frame)
+                    WorldTreeServer.shared.broadcastToSubscribers(branchId: branchId, message: frame)
                 }
 
                 // Terminal events — stop consuming the stream
@@ -126,7 +126,7 @@ final class TokenBroadcaster {
             content: partial,
             tokenCount: tokenCount
         )
-        CanvasServer.shared.broadcastToSubscribers(branchId: branchId, message: completeMsg)
+        WorldTreeServer.shared.broadcastToSubscribers(branchId: branchId, message: completeMsg)
     }
 
     // MARK: - Event → Frame Conversion
