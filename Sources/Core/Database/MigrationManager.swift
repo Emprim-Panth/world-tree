@@ -224,6 +224,51 @@ enum MigrationManager {
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_branches_fork_message ON canvas_branches(fork_from_message_id)")
         }
 
+        // Migration 11: Standalone core tables — sessions + messages
+        // In cortana deployments these tables are owned by cortana-core.
+        // On standalone World Tree installs they must be created here.
+        // CREATE TABLE IF NOT EXISTS is safe for both cases.
+        migrator.registerMigration("v11_standalone_core_tables") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    terminal_id TEXT,
+                    working_directory TEXT,
+                    description TEXT,
+                    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(session_id, timestamp)")
+
+            // FTS5 full-text search index — used by MessageStore.searchMessages()
+            // Guard: fts5 may not be available on all SQLite builds
+            let hasFTS5 = (try? Bool.fetchOne(db, sql: """
+                SELECT COUNT(*) > 0 FROM sqlite_master
+                WHERE type = 'table' AND name = 'messages_fts'
+                """) ?? false) ?? false
+            if !hasFTS5 {
+                try? db.execute(sql: """
+                    CREATE VIRTUAL TABLE messages_fts USING fts5(
+                        content,
+                        content=messages,
+                        content_rowid=id
+                    )
+                    """)
+            }
+        }
+
         try migrator.migrate(dbPool)
     }
 }

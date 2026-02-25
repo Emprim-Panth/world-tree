@@ -530,7 +530,7 @@ final class WorldTreeServer: ObservableObject {
             message: content,
             sessionId: resolved.sessionId,
             branchId: resolved.branchId,
-            model: CortanaConstants.defaultModel,
+            model: AppConstants.defaultModel,
             workingDirectory: nil,
             project: project,
             parentSessionId: nil,
@@ -541,7 +541,7 @@ final class WorldTreeServer: ObservableObject {
 
         // Route through daemon channel if enabled and reachable.
         // Falls back to direct ProviderManager if daemon is unavailable.
-        let daemonEnabled = UserDefaults.standard.bool(forKey: CortanaConstants.daemonChannelEnabledKey)
+        let daemonEnabled = UserDefaults.standard.bool(forKey: AppConstants.daemonChannelEnabledKey)
         let daemonConnected = DaemonService.shared.isConnected
 
         let eventStream: AsyncStream<BridgeEvent>
@@ -1066,7 +1066,7 @@ extension WorldTreeServer {
             message: req.content,
             sessionId: sessionId,
             branchId: req.branchId,
-            model: CortanaConstants.defaultModel,
+            model: AppConstants.defaultModel,
             workingDirectory: nil,
             project: treeProject ?? branch.title,
             parentSessionId: nil,

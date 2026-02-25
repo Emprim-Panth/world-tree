@@ -68,7 +68,7 @@ final class DaemonService: ObservableObject {
 
     private func checkHTTPHealth() async {
         // 1. Try HTTP health endpoint first (Swift daemon — port 8765, no socket required).
-        if let url = URL(string: "\(CortanaConstants.daemonAPIURL)/health") {
+        if let url = URL(string: "\(AppConstants.daemonAPIURL)/health") {
             do {
                 var req = URLRequest(url: url, timeoutInterval: 3)
                 req.httpMethod = "GET"
@@ -83,7 +83,7 @@ final class DaemonService: ObservableObject {
         }
 
         // 2. Fallback: health file (written by TS daemon or older Swift daemon builds).
-        let healthPath = CortanaConstants.daemonHealthPath
+        let healthPath = AppConstants.daemonHealthPath
         if let data = FileManager.default.contents(atPath: healthPath),
            let health = try? JSONDecoder().decode(DaemonHealthFile.self, from: data) {
             let age = Date().timeIntervalSince1970 - health.timestamp
@@ -92,7 +92,7 @@ final class DaemonService: ObservableObject {
         }
 
         // 3. Last resort: Unix socket file presence.
-        isConnected = FileManager.default.fileExists(atPath: CortanaConstants.daemonSocketPath)
+        isConnected = FileManager.default.fileExists(atPath: AppConstants.daemonSocketPath)
     }
 
     // MARK: - Dispatch

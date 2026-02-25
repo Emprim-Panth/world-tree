@@ -3,10 +3,10 @@ import Security
 import CryptoKit
 
 struct SettingsView: View {
-    @AppStorage("databasePath") private var databasePath = CortanaConstants.dropboxDatabasePath
-    @AppStorage("daemonSocketPath") private var daemonSocketPath = CortanaConstants.daemonSocketPath
-    @AppStorage("defaultModel") private var defaultModel = CortanaConstants.defaultModel
-    @AppStorage("contextDepth") private var contextDepth = CortanaConstants.defaultContextDepth
+    @AppStorage("databasePath") private var databasePath = AppConstants.dropboxDatabasePath
+    @AppStorage("daemonSocketPath") private var daemonSocketPath = AppConstants.daemonSocketPath
+    @AppStorage("defaultModel") private var defaultModel = AppConstants.defaultModel
+    @AppStorage("contextDepth") private var contextDepth = AppConstants.defaultContextDepth
     @StateObject private var providerManager = ProviderManager.shared
     @StateObject private var server = WorldTreeServer.shared
 
@@ -512,9 +512,9 @@ struct SettingsView: View {
 
     // MARK: - Remote Studio (MacBook client mode)
 
-    @AppStorage(CortanaConstants.remoteEnabledKey) private var remoteEnabled = false
-    @AppStorage(CortanaConstants.remoteURLKey) private var remoteURL = ""
-    @AppStorage(CortanaConstants.remoteTokenKey) private var remoteToken = ""
+    @AppStorage(AppConstants.remoteEnabledKey) private var remoteEnabled = false
+    @AppStorage(AppConstants.remoteURLKey) private var remoteURL = ""
+    @AppStorage(AppConstants.remoteTokenKey) private var remoteToken = ""
     @State private var remoteURLInput = ""
     @State private var remoteTokenInput = ""
     @State private var showRemoteToken = false
@@ -672,10 +672,10 @@ struct SettingsView: View {
                 remoteEnabled = false
                 return
             }
-            UserDefaults.standard.set(true, forKey: CortanaConstants.remoteEnabledKey)
+            UserDefaults.standard.set(true, forKey: AppConstants.remoteEnabledKey)
             providerManager.enableRemoteProvider(url: url, token: remoteToken)
         } else {
-            UserDefaults.standard.set(false, forKey: CortanaConstants.remoteEnabledKey)
+            UserDefaults.standard.set(false, forKey: AppConstants.remoteEnabledKey)
             providerManager.disableRemoteProvider()
         }
     }
@@ -759,7 +759,7 @@ struct SettingsView: View {
 
     // MARK: - Connection
 
-    @AppStorage(CortanaConstants.daemonChannelEnabledKey) private var daemonEnabled = true
+    @AppStorage(AppConstants.daemonChannelEnabledKey) private var daemonEnabled = true
     @StateObject private var daemonService = DaemonService.shared
 
     private var connectionTab: some View {
@@ -772,7 +772,7 @@ struct SettingsView: View {
                         .fill(daemonService.isConnected ? Color.green : Color.secondary.opacity(0.4))
                         .frame(width: 8, height: 8)
                     Text(daemonService.isConnected
-                         ? "Connected — \(CortanaConstants.daemonAPIURL)"
+                         ? "Connected — \(AppConstants.daemonAPIURL)"
                          : "Not connected — daemon not running")
                         .font(.caption)
                         .foregroundStyle(daemonService.isConnected ? .primary : .secondary)
@@ -818,9 +818,9 @@ struct SettingsView: View {
 
                     Spacer()
 
-                    if databasePath != CortanaConstants.dropboxDatabasePath {
+                    if databasePath != AppConstants.dropboxDatabasePath {
                         Button("Reset to Default") {
-                            databasePath = CortanaConstants.dropboxDatabasePath
+                            databasePath = AppConstants.dropboxDatabasePath
                         }
                         .controlSize(.mini)
                         .foregroundStyle(.secondary)

@@ -22,8 +22,6 @@ packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm.git
     from: 1.2.0
-  CortanaCore:
-    path: ../CortanaCore
 
 targets:
   WorldTreeTests:
@@ -59,7 +57,6 @@ targets:
     dependencies:
       - package: GRDB
       - package: SwiftTerm
-      - package: CortanaCore
       - sdk: Carbon.framework
     entitlements:
       path: WorldTree.entitlements

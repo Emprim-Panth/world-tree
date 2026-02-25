@@ -24,7 +24,7 @@ final class ProviderManager: ObservableObject {
 
     private init() {
         self.selectedProviderId = UserDefaults.standard.string(forKey: "cortana.selectedProvider")
-            ?? CortanaConstants.defaultProvider
+            ?? AppConstants.defaultProvider
 
         registerProviders()
     }
@@ -104,7 +104,7 @@ final class ProviderManager: ObservableObject {
         providers.append(ollamaProvider)
 
         // 4. Remote Canvas — if remote mode was enabled in a previous session
-        if UserDefaults.standard.bool(forKey: CortanaConstants.remoteEnabledKey) {
+        if UserDefaults.standard.bool(forKey: AppConstants.remoteEnabledKey) {
             if let remote = Self.buildRemoteProvider() {
                 wtLog("[ProviderManager] Remote mode was enabled, registering Remote Studio provider")
                 providers.append(remote)
@@ -135,14 +135,14 @@ final class ProviderManager: ObservableObject {
     func disableRemoteProvider() {
         providers.removeAll { $0.identifier == "remote-canvas" }
         if selectedProviderId == "remote-canvas" {
-            selectedProviderId = CortanaConstants.defaultProvider
+            selectedProviderId = AppConstants.defaultProvider
         }
         wtLog("[ProviderManager] Remote Studio disabled")
     }
 
     private static func buildRemoteProvider() -> RemoteWorldTreeProvider? {
-        let urlString = UserDefaults.standard.string(forKey: CortanaConstants.remoteURLKey) ?? ""
-        let token = UserDefaults.standard.string(forKey: CortanaConstants.remoteTokenKey) ?? ""
+        let urlString = UserDefaults.standard.string(forKey: AppConstants.remoteURLKey) ?? ""
+        let token = UserDefaults.standard.string(forKey: AppConstants.remoteTokenKey) ?? ""
         guard !urlString.isEmpty, !token.isEmpty, let url = URL(string: urlString) else {
             return nil
         }

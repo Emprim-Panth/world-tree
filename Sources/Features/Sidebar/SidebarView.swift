@@ -52,21 +52,86 @@ struct SidebarView: View {
     // Branch disclosure state per tree (collapsed by default)
     @State private var expandedBranchTrees: Set<String> = []
 
+    private var sortIcon: String {
+        switch viewModel.sortOrder {
+        case .recentDesc: return "arrow.down.circle"
+        case .recentAsc:  return "arrow.up.circle"
+        case .alphaAsc:   return "arrow.up.doc"
+        case .alphaDesc:  return "arrow.down.doc"
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            // Search
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-                TextField("Search…", text: $viewModel.searchText)
-                    .textFieldStyle(.plain)
-                    .font(.callout)
+            // Search + Sort
+            HStack(spacing: 6) {
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                    TextField("Search…", text: $viewModel.searchText)
+                        .textFieldStyle(.plain)
+                        .font(.callout)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.primary.opacity(0.06))
+                .cornerRadius(8)
+                .frame(maxWidth: .infinity)
+
+                Menu {
+                    Section("By Date") {
+                        Button {
+                            viewModel.sortOrder = .recentDesc
+                        } label: {
+                            if viewModel.sortOrder == .recentDesc {
+                                Label("Newest First", systemImage: "checkmark")
+                            } else {
+                                Text("Newest First")
+                            }
+                        }
+                        Button {
+                            viewModel.sortOrder = .recentAsc
+                        } label: {
+                            if viewModel.sortOrder == .recentAsc {
+                                Label("Oldest First", systemImage: "checkmark")
+                            } else {
+                                Text("Oldest First")
+                            }
+                        }
+                    }
+                    Section("By Name") {
+                        Button {
+                            viewModel.sortOrder = .alphaAsc
+                        } label: {
+                            if viewModel.sortOrder == .alphaAsc {
+                                Label("A → Z", systemImage: "checkmark")
+                            } else {
+                                Text("A → Z")
+                            }
+                        }
+                        Button {
+                            viewModel.sortOrder = .alphaDesc
+                        } label: {
+                            if viewModel.sortOrder == .alphaDesc {
+                                Label("Z → A", systemImage: "checkmark")
+                            } else {
+                                Text("Z → A")
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: sortIcon)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .background(Color.primary.opacity(0.06))
+                        .cornerRadius(6)
+                }
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Sort order: \(viewModel.sortOrder.label)")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color.primary.opacity(0.06))
-            .cornerRadius(8)
             .padding(.horizontal, 10)
             .padding(.top, 8)
             .padding(.bottom, 4)

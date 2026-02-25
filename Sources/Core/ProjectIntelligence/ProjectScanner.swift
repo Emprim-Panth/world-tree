@@ -18,10 +18,8 @@ final class ProjectScanner {
     
     /// Scan ~/Development and return all discovered projects
     func scanDevelopmentDirectory() async throws -> [DiscoveredProject] {
-        let devPath = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent("Development")
-            .path
-        
+        let devPath = resolveDevDirectory()
+
         guard fileManager.fileExists(atPath: devPath) else {
             throw ProjectScanError.developmentDirectoryNotFound
         }
@@ -51,10 +49,26 @@ final class ProjectScanner {
         return projects
     }
     
-    /// Detect if a directory is a project and determine its type
+    /// Resolve the development directory to scan.
+    /// Priority: UserDefaults override → ~/Documents/Development → ~/Development
+    private func resolveDevDirectory() -> String {
+        let home = fileManager.homeDirectoryForCurrentUser.path
+        if let override = UserDefaults.standard.string(forKey: "developmentDirectory"),
+           !override.isEmpty,
+           fileManager.fileExists(atPath: override) {
+            return override
+        }
+        let docsDev = "\(home)/Documents/Development"
+        if fileManager.fileExists(atPath: docsDev) { return docsDev }
+        return "\(home)/Development"
+    }
+
+    /// Detect if a directory is a project and determine its type.
+    /// Any directory with a .git folder is included even if the specific type is unrecognized.
     private func detectProject(at path: String, name: String) throws -> DiscoveredProject? {
         let type = detectProjectType(at: path)
-        guard type != .unknown else { return nil }
+        let isGit = fileManager.fileExists(atPath: (path as NSString).appendingPathComponent(".git"))
+        guard type != .unknown || isGit else { return nil }
         
         let attributes = try fileManager.attributesOfItem(atPath: path)
         let lastModified = (attributes[.modificationDate] as? Date) ?? Date()

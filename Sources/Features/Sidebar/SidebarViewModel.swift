@@ -6,6 +6,22 @@ enum SearchScope: String, CaseIterable {
     case content = "Content"
 }
 
+enum SidebarSortOrder: String, CaseIterable {
+    case recentDesc = "recentDesc"
+    case recentAsc  = "recentAsc"
+    case alphaAsc   = "alphaAsc"
+    case alphaDesc  = "alphaDesc"
+
+    var label: String {
+        switch self {
+        case .recentDesc: return "Newest First"
+        case .recentAsc:  return "Oldest First"
+        case .alphaAsc:   return "A → Z"
+        case .alphaDesc:  return "Z → A"
+        }
+    }
+}
+
 struct MessageSearchResult: Identifiable {
     let id: String         // message id
     let treeId: String
@@ -48,6 +64,17 @@ final class SidebarViewModel: ObservableObject {
         order.move(fromOffsets: source, toOffset: destination)
         projectOrder = order
         rebuildProjectGroups()
+    }
+
+    @Published var sortOrder: SidebarSortOrder = {
+        guard let raw = UserDefaults.standard.string(forKey: "sidebarSortOrder"),
+              let order = SidebarSortOrder(rawValue: raw) else { return .recentDesc }
+        return order
+    }() {
+        didSet {
+            UserDefaults.standard.set(sortOrder.rawValue, forKey: "sidebarSortOrder")
+            rebuildProjectGroups()
+        }
     }
 
     @Published var trees: [ConversationTree] = [] {
@@ -179,23 +206,47 @@ final class SidebarViewModel: ObservableObject {
             allNames.append(group.project)
         }
 
-        // Sort all projects by their most recent message activity, newest first.
-        // Uses lastMessageAt (actual message timestamp) with updatedAt as fallback.
-        // Projects with no trees (cache-only) fall to the bottom via .distantPast.
         let sorted = allNames.sorted { a, b in
-            let aDate = treesByProject[a]?.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
-            let bDate = treesByProject[b]?.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
-            return aDate > bDate
+            switch sortOrder {
+            case .recentDesc:
+                let aDate = treesByProject[a]?.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
+                let bDate = treesByProject[b]?.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
+                return aDate > bDate
+            case .recentAsc:
+                let aDate = treesByProject[a]?.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantFuture
+                let bDate = treesByProject[b]?.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantFuture
+                return aDate < bDate
+            case .alphaAsc:
+                return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+            case .alphaDesc:
+                return a.localizedCaseInsensitiveCompare(b) == .orderedDescending
+            }
         }
 
         var result: [(project: String, trees: [ConversationTree])] = sorted.map {
-            (project: $0, trees: treesByProject[$0] ?? [])
+            (project: $0, trees: sortTrees(treesByProject[$0] ?? []))
         }
         if let general = treesByProject["General"] {
-            result.append((project: "General", trees: general))
+            result.append((project: "General", trees: sortTrees(general)))
         }
 
         allProjectGroups = result
+    }
+
+    /// Sort an array of trees according to the current sortOrder.
+    private func sortTrees(_ trees: [ConversationTree]) -> [ConversationTree] {
+        trees.sorted { a, b in
+            switch sortOrder {
+            case .recentDesc:
+                return (a.lastMessageAt ?? a.updatedAt) > (b.lastMessageAt ?? b.updatedAt)
+            case .recentAsc:
+                return (a.lastMessageAt ?? a.updatedAt) < (b.lastMessageAt ?? b.updatedAt)
+            case .alphaAsc:
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            case .alphaDesc:
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedDescending
+            }
+        }
     }
 
     deinit {

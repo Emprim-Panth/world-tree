@@ -31,11 +31,11 @@ actor DaemonChannel {
     private var apiURL: String {
         // Allow runtime override; default to constant
         UserDefaults.standard.string(forKey: "cortana.daemonAPIBaseURL")
-            ?? CortanaConstants.daemonAPIURL
+            ?? AppConstants.daemonAPIURL
     }
 
     private var apiToken: String {
-        UserDefaults.standard.string(forKey: CortanaConstants.daemonAPITokenKey) ?? ""
+        UserDefaults.standard.string(forKey: AppConstants.daemonAPITokenKey) ?? ""
     }
 
     // MARK: - Send

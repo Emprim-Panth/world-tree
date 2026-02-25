@@ -23,7 +23,6 @@ struct DocumentEditorView: View {
     @State private var forkBranchType: BranchType = .conversation
     @State private var showSearch = false
     @State private var searchQuery = ""
-    @State private var isAtBottom = true
 
     let branchId: String
     let sessionId: String
@@ -110,10 +109,8 @@ struct DocumentEditorView: View {
                                 .padding(.vertical, 8)
                         }
 
-                        // Scroll anchor — tracks whether user is near bottom
+                        // Scroll anchor — used by proxy.scrollTo("scroll-bottom")
                         Color.clear.frame(height: 1).id("scroll-bottom")
-                            .onAppear { isAtBottom = true }
-                            .onDisappear { isAtBottom = false }
                     }
                     .padding(.horizontal, max(24, (geometry.size.width - 800) / 2))
                     .padding(.vertical, 24)
@@ -131,69 +128,6 @@ struct DocumentEditorView: View {
                     }
                 }
                 .animation(.easeInOut(duration: 0.2), value: showSearch)
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Divider()
-                        VStack(alignment: .leading, spacing: 8) {
-                            UserInputArea(
-                                text: $viewModel.currentInput,
-                                attachments: $viewModel.pendingAttachments,
-                                isProcessing: viewModel.isProcessing,
-                                onSubmit: { viewModel.submitInput() },
-                                onTabKey: {
-                                    if viewModel.branchOpportunity != nil {
-                                        selectedSuggestionIndex = (selectedSuggestionIndex + 1) % (viewModel.branchOpportunity?.suggestions.count ?? 1)
-                                        return true
-                                    }
-                                    return false
-                                },
-                                onShiftTabKey: {
-                                    if let opportunity = viewModel.branchOpportunity {
-                                        viewModel.acceptSuggestion(opportunity.suggestions[selectedSuggestionIndex])
-                                        selectedSuggestionIndex = 0
-                                        return true
-                                    }
-                                    return false
-                                },
-                                onCmdReturnKey: {
-                                    if viewModel.branchOpportunity != nil {
-                                        viewModel.spawnParallelBranches()
-                                        return true
-                                    }
-                                    return false
-                                }
-                            )
-                            .focused($isFocused)
-
-                            if let opportunity = viewModel.branchOpportunity {
-                                BranchSuggestionChips(
-                                    suggestions: opportunity.suggestions,
-                                    selectedIndex: selectedSuggestionIndex,
-                                    onAccept: { suggestion in viewModel.acceptSuggestion(suggestion) },
-                                    onAcceptAll: { viewModel.spawnParallelBranches() },
-                                    onDismiss: { viewModel.branchOpportunity = nil }
-                                )
-                            }
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
-                    }
-                    .background(.bar)
-                    // Hidden cancel button — Cmd+. stops the active stream
-                    .background {
-                        Button("") { viewModel.cancelStream() }
-                            .keyboardShortcut(".", modifiers: .command)
-                            .opacity(0)
-                            .allowsHitTesting(false)
-                    }
-                    // Cmd+L focuses the input field
-                    .background {
-                        Button("") { isFocused = true }
-                            .keyboardShortcut("l", modifiers: .command)
-                            .opacity(0)
-                            .allowsHitTesting(false)
-                    }
-                }
                 .background(Color(nsColor: .textBackgroundColor))
                 .onAppear {
                     isFocused = true
@@ -227,8 +161,12 @@ struct DocumentEditorView: View {
                         }
                     )
                 }
-                // Streaming and FAB scroll handler — defaultScrollAnchor(.bottom) handles
-                // initial load and branch switches natively.
+                // Unified scroll handler — only auto-scrolls when user is at the bottom.
+                // If the user scrolled up to read, we show a "new messages" indicator instead.
+                .onChange(of: viewModel.document.sections.count) { _, _ in
+                    guard viewModel.streamingContent == nil, !viewModel.isProcessing else { return }
+                    if viewModel.isScrolledToBottom { proxy.scrollTo("scroll-bottom") }
+                }
                 .onChange(of: viewModel.streamingContent) { _, content in
                     if content != nil {
                         // Only auto-scroll while streaming if user hasn't scrolled up
@@ -261,7 +199,11 @@ struct DocumentEditorView: View {
                 .animation(.easeInOut(duration: 0.2),
                            value: viewModel.hasNewStreamContent && !viewModel.isScrolledToBottom)
                 .onChange(of: viewModel.isProcessing) { _, processing in
-                    if processing && viewModel.streamingContent == nil && isAtBottom {
+                    if processing && viewModel.streamingContent == nil {
+                        proxy.scrollTo("scroll-bottom")
+                    }
+                    // Snap to bottom when the response finishes committing
+                    if !processing && viewModel.isScrolledToBottom {
                         proxy.scrollTo("scroll-bottom")
                     }
                 }
@@ -280,7 +222,71 @@ struct DocumentEditorView: View {
                     viewModel.forkFromLastMessage()
                 }
             }
+            .frame(maxHeight: .infinity)
             .background(Color(nsColor: .textBackgroundColor))
+
+            // Input box — direct VStack sibling so scroll view is height-constrained above it
+            VStack(alignment: .leading, spacing: 0) {
+                Divider()
+                VStack(alignment: .leading, spacing: 8) {
+                    UserInputArea(
+                        text: $viewModel.currentInput,
+                        attachments: $viewModel.pendingAttachments,
+                        isProcessing: viewModel.isProcessing,
+                        onSubmit: { viewModel.submitInput() },
+                        onTabKey: {
+                            if viewModel.branchOpportunity != nil {
+                                selectedSuggestionIndex = (selectedSuggestionIndex + 1) % (viewModel.branchOpportunity?.suggestions.count ?? 1)
+                                return true
+                            }
+                            return false
+                        },
+                        onShiftTabKey: {
+                            if let opportunity = viewModel.branchOpportunity {
+                                viewModel.acceptSuggestion(opportunity.suggestions[selectedSuggestionIndex])
+                                selectedSuggestionIndex = 0
+                                return true
+                            }
+                            return false
+                        },
+                        onCmdReturnKey: {
+                            if viewModel.branchOpportunity != nil {
+                                viewModel.spawnParallelBranches()
+                                return true
+                            }
+                            return false
+                        }
+                    )
+                    .focused($isFocused)
+
+                    if let opportunity = viewModel.branchOpportunity {
+                        BranchSuggestionChips(
+                            suggestions: opportunity.suggestions,
+                            selectedIndex: selectedSuggestionIndex,
+                            onAccept: { suggestion in viewModel.acceptSuggestion(suggestion) },
+                            onAcceptAll: { viewModel.spawnParallelBranches() },
+                            onDismiss: { viewModel.branchOpportunity = nil }
+                        )
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
+            }
+            .background(.bar)
+            // Hidden cancel button — Cmd+. stops the active stream
+            .background {
+                Button("") { viewModel.cancelStream() }
+                    .keyboardShortcut(".", modifiers: .command)
+                    .opacity(0)
+                    .allowsHitTesting(false)
+            }
+            // Cmd+L focuses the input field
+            .background {
+                Button("") { isFocused = true }
+                    .keyboardShortcut("l", modifiers: .command)
+                    .opacity(0)
+                    .allowsHitTesting(false)
+            }
         }
     }
     }
@@ -907,7 +913,7 @@ class DocumentEditorViewModel: ObservableObject {
             }
 
             // 2. Route through ClaudeCodeProvider
-            let model = UserDefaults.standard.string(forKey: "defaultModel") ?? CortanaConstants.defaultModel
+            let model = UserDefaults.standard.string(forKey: "defaultModel") ?? AppConstants.defaultModel
 
             // Context injection strategy — two tiers to handle both cold starts and
             // back-to-back --resume failures:

@@ -32,7 +32,7 @@ enum ProjectType: String, Codable, DatabaseValueConvertible {
         case .python: return "terminal"
         case .go: return "goforward"
         case .web: return "globe"
-        case .unknown: return "questionmark.circle"
+        case .unknown: return "folder"
         }
     }
 }

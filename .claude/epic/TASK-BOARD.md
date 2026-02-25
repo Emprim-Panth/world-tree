@@ -1,7 +1,7 @@
 # Task Board — Epic on main
 
 **Epic:** Epic on main
-**Last Updated:** 2026-02-24
+**Last Updated:** 2026-02-25
 
 ---
 
@@ -27,7 +27,7 @@
 
 | ID | Title | Assignee | Started | Notes |
 |----|-------|----------|---------|-------|
-| TASK-037 | Fourth audit pass: implement C-1 through L-5 fixes | — | 2026-02-24 | |
+| TASK-047 | Fix: scroll to bottom on conversation open + sort button invisible on macOS 15 | — | 2026-02-25 | |
 
 ---
 
@@ -43,8 +43,7 @@
 
 | ID | Title | Approved By | Ready Since |
 |----|-------|-------------|-------------|
-| TASK-038 | Wire branch fork display: BranchLayoutView / addBranch disconnect | — | 2026-02-24 |
-| TASK-039 | Wire SessionRotator into active streaming pipeline | — | 2026-02-24 |
+| TASK-049 | Fix conversation scroll content going behind input box | — | 2026-02-25 |
 
 ---
 
@@ -88,6 +87,17 @@
 | TASK-034 | Investigate and optimize message pipeline latency | 2026-02-24 | — |
 | TASK-035 | Implement conversation-level RAG: context scorer + search_conversation tool | 2026-02-24 | — |
 | TASK-036 | UI/UX improvements — Lumen design review pass | 2026-02-24 | — |
+| TASK-037 | Fourth audit pass: implement C-1 through L-5 fixes | 2026-02-24 | — |
+| TASK-038 | Wire branch fork display: BranchLayoutView / addBranch disconnect | 2026-02-24 | — |
+| TASK-039 | Wire SessionRotator into active streaming pipeline | 2026-02-24 | — |
+| TASK-040 | Pass 5 audit fixes — C-1 through M-10 | 2026-02-24 | — |
+| TASK-041 | Fix 3 UI bugs: project sort, sent message missing, input box height | 2026-02-25 | — |
+| TASK-042 | Add paragraph formatting directive to CortanaIdentity system prompt | 2026-02-25 | — |
+| TASK-043 | Remove CortanaConstants — rename to AppConstants throughout | 2026-02-25 | — |
+| TASK-044 | Add sidebar sort picker (A-Z, Z-A, Newest, Oldest) | 2026-02-25 | — |
+| TASK-045 | Fix sidebar sort button visibility and sort order | 2026-02-25 | — |
+| TASK-046 | Fix auto-scroll: conversation view doesn't scroll to show new messages | 2026-02-25 | — |
+| TASK-048 | Add search bar and sort picker to SimpleModeView sidebar | 2026-02-25 | — |
 
 ---
 
@@ -98,9 +108,9 @@
 | Blocked | 0 |
 | In Progress | 1 |
 | Ready for Review | 0 |
-| Ready | 2 |
-| Done | 36 |
-| **Total** | **39** |
+| Ready | 1 |
+| Done | 47 |
+| **Total** | **49** |
 
 ---
 

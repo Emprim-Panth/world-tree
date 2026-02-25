@@ -87,7 +87,7 @@ final class ImplementationVM: ObservableObject {
     // MARK: - Log Tailing
 
     private func startLogTailing(taskId: String) {
-        let logPath = "\(CortanaConstants.daemonLogsDir)/daemon-\(taskId).log"
+        let logPath = "\(AppConstants.daemonLogsDir)/daemon-\(taskId).log"
         let logURL = URL(fileURLWithPath: logPath)
         let tailer = LogTailer(fileURL: logURL)
         self.logTailer = tailer
@@ -108,7 +108,7 @@ final class ImplementationVM: ObservableObject {
     // MARK: - Completion Detection
 
     private func watchForCompletion(taskId: String) {
-        let markerPath = "\(CortanaConstants.completedMarkersDir)/completed-\(taskId)"
+        let markerPath = "\(AppConstants.completedMarkersDir)/completed-\(taskId)"
         let maxPolls = 600  // 30 minutes at 3s intervals
 
         // Poll for completion marker file — tracked so it can be cancelled
