@@ -173,6 +173,7 @@ struct SidebarView: View {
 
                     // AI processing banner — visible when any branch is waiting on Cortana
                     ProcessingBanner()
+                        .animation(.easeInOut(duration: 0.2), value: ProcessingRegistry.shared.anyProcessing)
 
                     // Content search results
                     if viewModel.searchScope == .content && !viewModel.searchText.isEmpty {
