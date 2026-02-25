@@ -27,7 +27,7 @@
 
 | ID | Title | Assignee | Started | Notes |
 |----|-------|----------|---------|-------|
-| | | | | |
+| TASK-047 | Fix: scroll to bottom on conversation open + sort button invisible on macOS 15 | — | 2026-02-25 | |
 
 ---
 
@@ -43,7 +43,7 @@
 
 | ID | Title | Approved By | Ready Since |
 |----|-------|-------------|-------------|
-| TASK-046 | Fix auto-scroll: conversation view doesn't scroll to show new messages | — | 2026-02-25 |
+| TASK-049 | Fix conversation scroll content going behind input box | — | 2026-02-25 |
 
 ---
 
@@ -96,6 +96,8 @@
 | TASK-043 | Remove CortanaConstants — rename to AppConstants throughout | 2026-02-25 | — |
 | TASK-044 | Add sidebar sort picker (A-Z, Z-A, Newest, Oldest) | 2026-02-25 | — |
 | TASK-045 | Fix sidebar sort button visibility and sort order | 2026-02-25 | — |
+| TASK-046 | Fix auto-scroll: conversation view doesn't scroll to show new messages | 2026-02-25 | — |
+| TASK-048 | Add search bar and sort picker to SimpleModeView sidebar | 2026-02-25 | — |
 
 ---
 
@@ -104,11 +106,11 @@
 | Status | Count |
 |--------|-------|
 | Blocked | 0 |
-| In Progress | 0 |
+| In Progress | 1 |
 | Ready for Review | 0 |
 | Ready | 1 |
-| Done | 45 |
-| **Total** | **46** |
+| Done | 47 |
+| **Total** | **49** |
 
 ---
 

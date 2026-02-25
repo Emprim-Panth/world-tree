@@ -107,69 +107,6 @@ struct DocumentEditorView: View {
                     }
                 }
                 .animation(.easeInOut(duration: 0.2), value: showSearch)
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Divider()
-                        VStack(alignment: .leading, spacing: 8) {
-                            UserInputArea(
-                                text: $viewModel.currentInput,
-                                attachments: $viewModel.pendingAttachments,
-                                isProcessing: viewModel.isProcessing,
-                                onSubmit: { viewModel.submitInput() },
-                                onTabKey: {
-                                    if viewModel.branchOpportunity != nil {
-                                        selectedSuggestionIndex = (selectedSuggestionIndex + 1) % (viewModel.branchOpportunity?.suggestions.count ?? 1)
-                                        return true
-                                    }
-                                    return false
-                                },
-                                onShiftTabKey: {
-                                    if let opportunity = viewModel.branchOpportunity {
-                                        viewModel.acceptSuggestion(opportunity.suggestions[selectedSuggestionIndex])
-                                        selectedSuggestionIndex = 0
-                                        return true
-                                    }
-                                    return false
-                                },
-                                onCmdReturnKey: {
-                                    if viewModel.branchOpportunity != nil {
-                                        viewModel.spawnParallelBranches()
-                                        return true
-                                    }
-                                    return false
-                                }
-                            )
-                            .focused($isFocused)
-
-                            if let opportunity = viewModel.branchOpportunity {
-                                BranchSuggestionChips(
-                                    suggestions: opportunity.suggestions,
-                                    selectedIndex: selectedSuggestionIndex,
-                                    onAccept: { suggestion in viewModel.acceptSuggestion(suggestion) },
-                                    onAcceptAll: { viewModel.spawnParallelBranches() },
-                                    onDismiss: { viewModel.branchOpportunity = nil }
-                                )
-                            }
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
-                    }
-                    .background(.bar)
-                    // Hidden cancel button — Cmd+. stops the active stream
-                    .background {
-                        Button("") { viewModel.cancelStream() }
-                            .keyboardShortcut(".", modifiers: .command)
-                            .opacity(0)
-                            .allowsHitTesting(false)
-                    }
-                    // Cmd+L focuses the input field
-                    .background {
-                        Button("") { isFocused = true }
-                            .keyboardShortcut("l", modifiers: .command)
-                            .opacity(0)
-                            .allowsHitTesting(false)
-                    }
-                }
                 .background(Color(nsColor: .textBackgroundColor))
                 .onAppear {
                     isFocused = true
@@ -264,7 +201,71 @@ struct DocumentEditorView: View {
                     viewModel.forkFromLastMessage()
                 }
             }
+            .frame(maxHeight: .infinity)
             .background(Color(nsColor: .textBackgroundColor))
+
+            // Input box — direct VStack sibling so scroll view is height-constrained above it
+            VStack(alignment: .leading, spacing: 0) {
+                Divider()
+                VStack(alignment: .leading, spacing: 8) {
+                    UserInputArea(
+                        text: $viewModel.currentInput,
+                        attachments: $viewModel.pendingAttachments,
+                        isProcessing: viewModel.isProcessing,
+                        onSubmit: { viewModel.submitInput() },
+                        onTabKey: {
+                            if viewModel.branchOpportunity != nil {
+                                selectedSuggestionIndex = (selectedSuggestionIndex + 1) % (viewModel.branchOpportunity?.suggestions.count ?? 1)
+                                return true
+                            }
+                            return false
+                        },
+                        onShiftTabKey: {
+                            if let opportunity = viewModel.branchOpportunity {
+                                viewModel.acceptSuggestion(opportunity.suggestions[selectedSuggestionIndex])
+                                selectedSuggestionIndex = 0
+                                return true
+                            }
+                            return false
+                        },
+                        onCmdReturnKey: {
+                            if viewModel.branchOpportunity != nil {
+                                viewModel.spawnParallelBranches()
+                                return true
+                            }
+                            return false
+                        }
+                    )
+                    .focused($isFocused)
+
+                    if let opportunity = viewModel.branchOpportunity {
+                        BranchSuggestionChips(
+                            suggestions: opportunity.suggestions,
+                            selectedIndex: selectedSuggestionIndex,
+                            onAccept: { suggestion in viewModel.acceptSuggestion(suggestion) },
+                            onAcceptAll: { viewModel.spawnParallelBranches() },
+                            onDismiss: { viewModel.branchOpportunity = nil }
+                        )
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
+            }
+            .background(.bar)
+            // Hidden cancel button — Cmd+. stops the active stream
+            .background {
+                Button("") { viewModel.cancelStream() }
+                    .keyboardShortcut(".", modifiers: .command)
+                    .opacity(0)
+                    .allowsHitTesting(false)
+            }
+            // Cmd+L focuses the input field
+            .background {
+                Button("") { isFocused = true }
+                    .keyboardShortcut("l", modifiers: .command)
+                    .opacity(0)
+                    .allowsHitTesting(false)
+            }
         }
     }
     }

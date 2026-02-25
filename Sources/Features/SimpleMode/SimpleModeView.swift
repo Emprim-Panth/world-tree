@@ -1,5 +1,32 @@
 import SwiftUI
 
+// MARK: - Sort Order
+
+enum SimpleModeSortOrder: String, CaseIterable {
+    case recentDesc = "recentDesc"
+    case recentAsc  = "recentAsc"
+    case alphaAsc   = "alphaAsc"
+    case alphaDesc  = "alphaDesc"
+
+    var label: String {
+        switch self {
+        case .recentDesc: return "Recently Modified"
+        case .recentAsc:  return "Oldest First"
+        case .alphaAsc:   return "A → Z"
+        case .alphaDesc:  return "Z → A"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .recentDesc: return "arrow.down.circle"
+        case .recentAsc:  return "arrow.up.circle"
+        case .alphaAsc:   return "arrow.up.doc"
+        case .alphaDesc:  return "arrow.down.doc"
+        }
+    }
+}
+
 // MARK: - ViewModel
 
 @MainActor
@@ -10,6 +37,28 @@ final class SimpleModeViewModel: ObservableObject {
     @Published var resolvedBranchId: String?
     @Published var isResolving = false
     @Published var error: String?
+    @Published var searchText: String = ""
+    @Published var sortOrder: SimpleModeSortOrder = {
+        guard let raw = UserDefaults.standard.string(forKey: "simpleModeSortOrder"),
+              let order = SimpleModeSortOrder(rawValue: raw) else { return .recentDesc }
+        return order
+    }() {
+        didSet { UserDefaults.standard.set(sortOrder.rawValue, forKey: "simpleModeSortOrder") }
+    }
+
+    var filteredProjects: [CachedProject] {
+        let base = searchText.isEmpty ? projects : projects.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText)
+        }
+        return base.sorted { a, b in
+            switch sortOrder {
+            case .recentDesc: return a.lastModified > b.lastModified
+            case .recentAsc:  return a.lastModified < b.lastModified
+            case .alphaAsc:   return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            case .alphaDesc:  return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedDescending
+            }
+        }
+    }
 
     private var projectObserver: NSObjectProtocol?
 
@@ -81,18 +130,75 @@ struct SimpleModeView: View {
     // MARK: Sidebar
 
     private var sidebar: some View {
-        List(vm.projects, id: \.path, selection: Binding(
-            get: { vm.selectedProject?.path },
-            set: { path in
-                if let path, let project = vm.projects.first(where: { $0.path == path }) {
-                    vm.select(project)
+        VStack(spacing: 0) {
+            // Search + Sort header
+            HStack(spacing: 6) {
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                    TextField("Search…", text: $vm.searchText)
+                        .textFieldStyle(.plain)
+                        .font(.callout)
                 }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.primary.opacity(0.06))
+                .cornerRadius(8)
+                .frame(maxWidth: .infinity)
+
+                Menu {
+                    Section("By Date") {
+                        Button { vm.sortOrder = .recentDesc } label: {
+                            if vm.sortOrder == .recentDesc { Label("Recently Modified", systemImage: "checkmark") }
+                            else { Text("Recently Modified") }
+                        }
+                        Button { vm.sortOrder = .recentAsc } label: {
+                            if vm.sortOrder == .recentAsc { Label("Oldest First", systemImage: "checkmark") }
+                            else { Text("Oldest First") }
+                        }
+                    }
+                    Section("By Name") {
+                        Button { vm.sortOrder = .alphaAsc } label: {
+                            if vm.sortOrder == .alphaAsc { Label("A → Z", systemImage: "checkmark") }
+                            else { Text("A → Z") }
+                        }
+                        Button { vm.sortOrder = .alphaDesc } label: {
+                            if vm.sortOrder == .alphaDesc { Label("Z → A", systemImage: "checkmark") }
+                            else { Text("Z → A") }
+                        }
+                    }
+                } label: {
+                    Image(systemName: vm.sortOrder.icon)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .background(Color.primary.opacity(0.06))
+                        .cornerRadius(6)
+                }
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Sort: \(vm.sortOrder.label)")
             }
-        )) { project in
-            projectRow(project)
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+
+            Divider()
+
+            List(vm.filteredProjects, id: \.path, selection: Binding(
+                get: { vm.selectedProject?.path },
+                set: { path in
+                    if let path, let project = vm.filteredProjects.first(where: { $0.path == path }) {
+                        vm.select(project)
+                    }
+                }
+            )) { project in
+                projectRow(project)
+            }
+            .listStyle(.sidebar)
         }
         .navigationTitle("Projects")
-        .listStyle(.sidebar)
     }
 
     private func projectRow(_ project: CachedProject) -> some View {

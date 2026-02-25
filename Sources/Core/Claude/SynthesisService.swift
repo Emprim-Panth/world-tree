@@ -31,7 +31,7 @@ enum SynthesisService {
             forkFromMessage: nil,
             type: .conversation,
             title: "Synthesis — \(selectedBranchIds.count) branches",
-            model: parentBranch.model ?? CortanaConstants.defaultModel,
+            model: parentBranch.model ?? AppConstants.defaultModel,
             contextSnapshot: nil,
             workingDirectory: parentBranch.contextSnapshot.flatMap { _ in nil }
         )
