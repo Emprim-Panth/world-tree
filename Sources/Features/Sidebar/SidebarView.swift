@@ -171,6 +171,9 @@ struct SidebarView: View {
                     // Active jobs indicator — only visible when jobs are running
                     ActiveJobsSection()
 
+                    // AI processing banner — visible when any branch is waiting on Cortana
+                    ProcessingBanner()
+
                     // Content search results
                     if viewModel.searchScope == .content && !viewModel.searchText.isEmpty {
                         if viewModel.contentResults.isEmpty && !viewModel.isSearching {

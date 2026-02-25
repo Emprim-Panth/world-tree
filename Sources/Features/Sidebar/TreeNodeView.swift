@@ -96,7 +96,7 @@ struct TreeNodeView: View {
         case .active:
             ActivityPulse(
                 eventCount: EventStore.shared.activityCount(branchId: branch.id),
-                isResponding: false
+                isResponding: ProcessingRegistry.shared.isProcessing(branch.id)
             )
         case .completed:
             Image(systemName: "checkmark.circle.fill")

@@ -1,5 +1,37 @@
 import SwiftUI
 
+// MARK: - Processing Banner (Option B)
+
+/// Shows a subtle "Cortana working…" strip when any branch is processing.
+/// Visible regardless of which branch the user is viewing, so you always
+/// know something is happening even after switching away.
+struct ProcessingBanner: View {
+    private var isActive: Bool { ProcessingRegistry.shared.anyProcessing }
+
+    var body: some View {
+        if isActive {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .scaleEffect(0.5)
+                    .frame(width: 12, height: 12)
+                Text("Cortana working…")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background(Color.accentColor.opacity(0.07))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+    }
+}
+
+// MARK: - Active Jobs Section
+
 /// Shows background jobs that are actively running.
 /// Polls JobQueue every 2 seconds so the list stays current without @Published.
 struct ActiveJobsSection: View {

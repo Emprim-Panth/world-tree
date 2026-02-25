@@ -311,9 +311,13 @@ class DocumentEditorViewModel: ObservableObject {
                 // Prevent sleep while Cortana is working — dropped connection mid-stream is a bad time
                 sleepAssertion = ProcessInfo.processInfo.beginActivity(
                     options: .userInitiated, reason: "Cortana is working")
-            } else if let a = sleepAssertion {
-                ProcessInfo.processInfo.endActivity(a)
-                sleepAssertion = nil
+                ProcessingRegistry.shared.register(branchId)
+            } else {
+                if let a = sleepAssertion {
+                    ProcessInfo.processInfo.endActivity(a)
+                    sleepAssertion = nil
+                }
+                ProcessingRegistry.shared.deregister(branchId)
             }
         }
     }
