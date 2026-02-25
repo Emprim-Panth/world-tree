@@ -454,14 +454,10 @@ final class ConversationStateManager {
 
         // Quick git branch check (async to avoid blocking MainActor, 5s timeout)
         let gitBranch: String? = await withCheckedContinuation { continuation in
-            var hasResumed = false
-            let lock = NSLock()
+            let resumeGuard = OneShotGuard()
 
-            func safeResume(_ value: String?) {
-                lock.lock()
-                defer { lock.unlock() }
-                guard !hasResumed else { return }
-                hasResumed = true
+            @Sendable func safeResume(_ value: String?) {
+                guard resumeGuard.tryFire() else { return }
                 continuation.resume(returning: value)
             }
 
@@ -518,14 +514,10 @@ final class ConversationStateManager {
         let outputPath = "\(home)/.cortana/state/session-context.md"
 
         let success: Bool = await withCheckedContinuation { continuation in
-            var hasResumed = false
-            let lock = NSLock()
+            let resumeGuard = OneShotGuard()
 
-            func safeResume(_ value: Bool) {
-                lock.lock()
-                defer { lock.unlock() }
-                guard !hasResumed else { return }
-                hasResumed = true
+            @Sendable func safeResume(_ value: Bool) {
+                guard resumeGuard.tryFire() else { return }
                 continuation.resume(returning: value)
             }
 

@@ -1,14 +1,44 @@
 import Foundation
 import AppKit
-import CortanaCore
 
 private extension String {
-    /// Escapes characters that would break an osascript string literal.
     var osascriptEscaped: String {
         replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
     }
 }
+
+// MARK: - WTCommand (local definition — no CortanaCore dependency)
+
+/// Flat representation of a command written by cortana-daemon to wt-commands.jsonl.
+/// All action-specific fields are optional; only those relevant to `type` will be set.
+private struct WTCommand: Decodable {
+    let id: String
+    let type: String
+    // notify
+    var title: String?
+    var body: String?
+    var subtitle: String?
+    var sound: Bool?
+    // openConversation
+    var sessionId: String?
+    // injectMessage
+    var content: String?
+    var role: String?
+    // showBadge / speak / copyToClipboard
+    var text: String?
+    var color: String?
+    var duration: Double?
+    var voice: String?
+    // openFile
+    var path: String?
+    // openURL
+    var url: String?
+    // runShortcut
+    var name: String?
+}
+
+// MARK: - PeekabooBridgeServer
 
 /// Watches ~/.cortana/wt-commands.jsonl for commands pushed by cortana-daemon.
 /// This is the reverse channel: daemon → World Tree.
@@ -20,7 +50,8 @@ final class WTCommandBridge: ObservableObject {
 
     @Published var lastBadge: BadgeState?
 
-    private let commandsPath = WTCommandWriter.commandsPath
+    private let commandsPath = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".cortana/wt-commands.jsonl").path
     private var source: DispatchSourceFileSystemObject?
     private nonisolated(unsafe) var fileHandle: FileHandle?
     private nonisolated(unsafe) var bytesRead: UInt64 = 0
@@ -31,7 +62,6 @@ final class WTCommandBridge: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
-        // Ensure file exists
         if !FileManager.default.fileExists(atPath: commandsPath) {
             FileManager.default.createFile(atPath: commandsPath, contents: nil)
         }
@@ -41,8 +71,6 @@ final class WTCommandBridge: ObservableObject {
             return
         }
         fileHandle = fh
-
-        // Seek to end — only process future commands, not historical ones
         bytesRead = fh.seekToEndOfFile()
 
         let src = DispatchSource.makeFileSystemObjectSource(
@@ -50,9 +78,7 @@ final class WTCommandBridge: ObservableObject {
             eventMask: .write,
             queue: DispatchQueue.global(qos: .utility)
         )
-        src.setEventHandler { [weak self] in
-            self?.readNewLines()
-        }
+        src.setEventHandler { [weak self] in self?.readNewLines() }
         src.resume()
         source = src
 
@@ -84,79 +110,87 @@ final class WTCommandBridge: ObservableObject {
             guard let lineData = line.data(using: .utf8),
                   let cmd = try? JSONDecoder().decode(WTCommand.self, from: lineData)
             else { continue }
-
-            Task { @MainActor in
-                self.dispatch(cmd)
-            }
+            Task { @MainActor in self.dispatch(cmd) }
         }
     }
 
     // MARK: - Dispatch
 
     private func dispatch(_ cmd: WTCommand) {
-        canvasLog("[WTCommandBridge] \(cmd.id): \(cmd.action)")
-        switch cmd.action {
-        case .notify(let title, let body, let subtitle, let sound):
-            sendNotification(title: title, body: body, subtitle: subtitle, sound: sound)
+        canvasLog("[WTCommandBridge] \(cmd.id): \(cmd.type)")
+        switch cmd.type {
+        case "notify":
+            sendNotification(
+                title: cmd.title ?? "",
+                body: cmd.body ?? "",
+                subtitle: cmd.subtitle,
+                sound: cmd.sound ?? false
+            )
 
-        case .focus:
+        case "focus":
             NSApp.activate(ignoringOtherApps: true)
 
-        case .openConversation(let sessionId):
+        case "openConversation":
             NSApp.activate(ignoringOtherApps: true)
             NotificationCenter.default.post(
                 name: .openConversation,
                 object: nil,
-                userInfo: ["sessionId": sessionId]
+                userInfo: ["sessionId": cmd.sessionId ?? ""]
             )
 
-        case .injectMessage(let content, let role):
+        case "injectMessage":
             NotificationCenter.default.post(
                 name: .injectMessage,
                 object: nil,
-                userInfo: ["content": content, "role": role]
+                userInfo: ["content": cmd.content ?? "", "role": cmd.role ?? "assistant"]
             )
 
-        case .showBadge(let text, let color, let duration):
-            lastBadge = BadgeState(text: text, color: color, expiresAt: Date().addingTimeInterval(duration))
+        case "showBadge":
+            let duration = cmd.duration ?? 3.0
+            lastBadge = BadgeState(
+                text: cmd.text ?? "",
+                color: cmd.color ?? "blue",
+                expiresAt: Date().addingTimeInterval(duration)
+            )
+            let badgeText = cmd.text ?? ""
             DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-                if self?.lastBadge?.text == text { self?.lastBadge = nil }
+                if self?.lastBadge?.text == badgeText { self?.lastBadge = nil }
             }
 
-        case .refreshHivemind:
+        case "refreshHivemind":
             NotificationCenter.default.post(name: .refreshHivemind, object: nil)
 
-        case .openFile(let path):
-            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        case "openFile":
+            if let p = cmd.path { NSWorkspace.shared.open(URL(fileURLWithPath: p)) }
 
-        case .openURL(let urlString):
-            guard let url = URL(string: urlString) else { return }
-            NSWorkspace.shared.open(url)
+        case "openURL":
+            if let s = cmd.url, let url = URL(string: s) { NSWorkspace.shared.open(url) }
 
-        case .runShortcut(let name):
-            let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
+        case "runShortcut":
+            let n = cmd.name ?? ""
+            let encoded = n.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? n
             if let url = URL(string: "shortcuts://run-shortcut?name=\(encoded)") {
                 NSWorkspace.shared.open(url)
             }
 
-        case .copyToClipboard(let text):
+        case "copyToClipboard":
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+            NSPasteboard.general.setString(cmd.text ?? "", forType: .string)
 
-        case .speak(let text, _):
-            // Use NSSpeechSynthesizer via shell to avoid deprecation complexity
+        case "speak":
             let task = Process()
             task.launchPath = "/usr/bin/say"
-            task.arguments = [text]
+            task.arguments = [cmd.text ?? ""]
             try? task.run()
+
+        default:
+            canvasLog("[WTCommandBridge] unknown command type: \(cmd.type)")
         }
     }
 
     // MARK: - Notifications
 
     private func sendNotification(title: String, body: String, subtitle: String?, sound: Bool) {
-        // osascript is permission-free and works on ad-hoc signed debug builds.
-        // UNUserNotificationCenter requires entitlements that debug builds don't reliably carry.
         var script = "display notification \"\(body.osascriptEscaped)\" with title \"\(title.osascriptEscaped)\""
         if let sub = subtitle { script += " subtitle \"\(sub.osascriptEscaped)\"" }
         if sound { script += " sound name \"Ping\"" }

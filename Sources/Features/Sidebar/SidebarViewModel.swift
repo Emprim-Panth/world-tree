@@ -156,10 +156,8 @@ final class SidebarViewModel: ObservableObject {
     }
 
     /// Rebuild allProjectGroups from current source data.
-    /// Sort order:
-    ///   1. Active projects (updated in last 24h) — sorted by most recent activity
-    ///   2. Inactive projects — sorted by user's custom order, then alphabetical for new ones
-    ///   3. "General" always last
+    /// Sort order: most recently active project first, "General" always last.
+    /// The latest tree.updatedAt across all trees in a project determines its rank.
     private func rebuildProjectGroups() {
         let treesByProject = Dictionary(grouping: filteredTrees) {
             let p = $0.project ?? ""
@@ -181,43 +179,17 @@ final class SidebarViewModel: ObservableObject {
             allNames.append(group.project)
         }
 
-        // Partition into active vs inactive
-        var active: [(name: String, latestActivity: Date)] = []
-        var inactive: [String] = []
-
-        for name in allNames {
-            let projectTrees = treesByProject[name] ?? []
-            if isActive(name, trees: projectTrees) {
-                let latest = projectTrees.map(\.updatedAt).max() ?? .distantPast
-                active.append((name: name, latestActivity: latest))
-            } else {
-                inactive.append(name)
-            }
+        // Sort all projects by their most recent message activity, newest first.
+        // Uses lastMessageAt (actual message timestamp) with updatedAt as fallback.
+        // Projects with no trees (cache-only) fall to the bottom via .distantPast.
+        let sorted = allNames.sorted { a, b in
+            let aDate = treesByProject[a]?.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
+            let bDate = treesByProject[b]?.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
+            return aDate > bDate
         }
 
-        // Active: sort by most recent activity first
-        active.sort { $0.latestActivity > $1.latestActivity }
-
-        // Inactive: sort by user's custom order, new projects appended alphabetically
-        let order = projectOrder
-        inactive.sort { a, b in
-            let ai = order.firstIndex(of: a)
-            let bi = order.firstIndex(of: b)
-            switch (ai, bi) {
-            case let (a?, b?): return a < b
-            case (_?, nil):    return true
-            case (nil, _?):    return false
-            default:           return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
-            }
-        }
-
-        // Build result
-        var result: [(project: String, trees: [ConversationTree])] = []
-        for item in active {
-            result.append((project: item.name, trees: treesByProject[item.name] ?? []))
-        }
-        for name in inactive {
-            result.append((project: name, trees: treesByProject[name] ?? []))
+        var result: [(project: String, trees: [ConversationTree])] = sorted.map {
+            (project: $0, trees: treesByProject[$0] ?? [])
         }
         if let general = treesByProject["General"] {
             result.append((project: "General", trees: general))
@@ -262,16 +234,18 @@ final class SidebarViewModel: ObservableObject {
         let observation = ValueObservation.tracking { db -> [ConversationTree] in
             let sql = """
                 SELECT t.*,
-                    COALESCE(msg_agg.message_count, 0) as message_count
+                    COALESCE(msg_agg.message_count, 0) as message_count,
+                    msg_agg.last_message_at
                 FROM canvas_trees t
                 LEFT JOIN (
-                    SELECT b.tree_id, COUNT(m.id) as message_count
+                    SELECT b.tree_id, COUNT(m.id) as message_count,
+                           MAX(m.timestamp) as last_message_at
                     FROM canvas_branches b
                     JOIN messages m ON m.session_id = b.session_id
                     GROUP BY b.tree_id
                 ) msg_agg ON msg_agg.tree_id = t.id
                 WHERE t.archived = 0
-                ORDER BY t.updated_at DESC
+                ORDER BY COALESCE(msg_agg.last_message_at, t.updated_at) DESC
                 """
             return try Row.fetchAll(db, sql: sql).map { row in
                 var tree = ConversationTree(row: row)

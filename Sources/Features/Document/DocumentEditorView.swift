@@ -57,32 +57,23 @@ struct DocumentEditorView: View {
                                     .padding(.vertical, 60)
                             }
 
-                            // Persisted message sections
+                            // Persisted messages — rendered in order of arrival
                             ForEach(viewModel.document.sections) { section in
                                 DocumentSectionView(
                                     section: section,
                                     isHovered: hoveredSectionId == section.id,
                                     showInferButton: !viewModel.isRootBranch,
-                                    onEdit: { newContent in
-                                        viewModel.updateSection(section.id, content: newContent)
-                                    },
-                                    onBranch: {
-                                        viewModel.requestFork(from: section.id)
-                                    },
-                                    onInfer: {
-                                        viewModel.inferFinding(from: section.id)
-                                    },
+                                    onEdit: { newContent in viewModel.updateSection(section.id, content: newContent) },
+                                    onBranch: { viewModel.requestFork(from: section.id) },
+                                    onInfer: { viewModel.inferFinding(from: section.id) },
                                     onNavigateToBranch: { branchId in
-                                        parentBranchLayout?.scrollToBranch(branchId)
-                                    },
-                                    onFixError: { toolCall in
-                                        viewModel.currentInput = "This tool call failed — please diagnose and fix:\n\nTool: \(toolCall.name)\nInput: \(toolCall.input)\nError: \(toolCall.output ?? "unknown")"
+                                        if let treeId = viewModel.treeId {
+                                            AppState.shared.selectBranch(branchId, in: treeId)
+                                        }
                                     }
                                 )
+                                .onHover { hovered in hoveredSectionId = hovered ? section.id : nil }
                                 .id(section.id)
-                                .onHover { isHovered in
-                                    hoveredSectionId = isHovered ? section.id : nil
-                                }
                             }
 
                         // Live streaming section — tokens appear as they arrive (only once content exists)
@@ -1360,7 +1351,7 @@ struct UserInputArea: View {
     @State private var isDragTargeted = false
     @State private var isListening = false
     @State private var liveTranscription = ""
-    @State private var editorContentHeight: CGFloat = 20
+    @State private var editorContentHeight: CGFloat = 44
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1392,17 +1383,6 @@ struct UserInputArea: View {
                     }
 
                     ZStack(alignment: .topLeading) {
-                        // Ghost text — invisible replica drives the ZStack height.
-                        // SwiftUI measures Text reliably; NSScrollView does not.
-                        // Uses a single space when empty so there's always 1 line of height.
-                        Text(text.isEmpty ? " " : text)
-                            .font(.system(.body))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .opacity(0)
-                            .allowsHitTesting(false)
-
                         if text.isEmpty && attachments.isEmpty {
                             Text("Message \(LocalAgentIdentity.name)… or drop images/files here")
                                 .font(.system(.body))
@@ -1432,7 +1412,7 @@ struct UserInputArea: View {
                         )
                         .focused($editorFocused)
                     }
-                    .frame(maxHeight: 160)
+                    .frame(height: min(max(44, editorContentHeight), 160))
                     .background(isDragTargeted
                         ? Color.accentColor.opacity(0.08)
                         : Color(nsColor: .controlBackgroundColor))

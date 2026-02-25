@@ -1,5 +1,23 @@
 import Foundation
 
+// MARK: - Thread-Safe One-Shot Guard
+
+/// Thread-safe one-shot flag for guarding continuation resumes.
+/// Wraps a Bool in a class so it can be captured by @Sendable closures.
+final class OneShotGuard: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _fired = false
+
+    /// Returns true on the first call; false on all subsequent calls.
+    func tryFire() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if _fired { return false }
+        _fired = true
+        return true
+    }
+}
+
 // MARK: - Working Directory Resolution (shared by ClaudeBridge + AnthropicAPIProvider)
 
 /// Resolves a working directory from an explicit path or project name.
