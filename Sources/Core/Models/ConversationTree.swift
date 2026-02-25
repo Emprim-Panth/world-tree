@@ -29,6 +29,8 @@ struct ConversationTree: Identifiable, Equatable, Hashable {
     var branchCount: Int = 0
     /// Most recent assistant message snippet for context trail (set by query, transient)
     var lastMessageSnippet: String?
+    /// Most recent message timestamp across all branches (set by observation query, transient)
+    var lastMessageAt: Date?
 
     /// True if this tree is a Telegram phone-bridge channel.
     /// Detected by naming convention (name starts with "Telegram").
@@ -49,6 +51,7 @@ extension ConversationTree: FetchableRecord {
         createdAt = row["created_at"] as? Date ?? Date()
         updatedAt = row["updated_at"] as? Date ?? Date()
         archived = (row["archived"] as? Int ?? 0) != 0
+        lastMessageAt = row["last_message_at"] as? Date
     }
 }
 
