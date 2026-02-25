@@ -114,7 +114,7 @@ actor JobQueue {
             var hasResumed = false
             let lock = NSLock()
 
-            func safeResume() {
+            @Sendable func safeResume() {
                 lock.lock()
                 defer { lock.unlock() }
                 guard !hasResumed else { return }

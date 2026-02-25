@@ -457,7 +457,7 @@ final class ConversationStateManager {
             var hasResumed = false
             let lock = NSLock()
 
-            func safeResume(_ value: String?) {
+            @Sendable func safeResume(_ value: String?) {
                 lock.lock()
                 defer { lock.unlock() }
                 guard !hasResumed else { return }
@@ -521,7 +521,7 @@ final class ConversationStateManager {
             var hasResumed = false
             let lock = NSLock()
 
-            func safeResume(_ value: Bool) {
+            @Sendable func safeResume(_ value: Bool) {
                 lock.lock()
                 defer { lock.unlock() }
                 guard !hasResumed else { return }

@@ -68,7 +68,7 @@ final class ClaudeCodeProvider: LLMProvider {
             var hasResumed = false
             let lock = NSLock()
 
-            func safeResume(_ value: ProviderHealth) {
+            @Sendable func safeResume(_ value: ProviderHealth) {
                 lock.lock()
                 defer { lock.unlock() }
                 guard !hasResumed else { return }
