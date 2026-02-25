@@ -43,7 +43,9 @@ enum ContextPressureEstimator {
     static let toolOverheadTokens = 500
 
     /// Overhead per conversation turn (system prompt fragments, role markers).
-    static let turnOverheadTokens = 2_000
+    /// Was 2_000 — caused premature rotations after only 20-30 turns.
+    /// Real overhead is role markers + separators ≈ 300-500 tokens.
+    static let turnOverheadTokens = 400
 
     /// Base system prompt size (Cortana identity + CLAUDE.md + tools).
     static let systemPromptTokens = 8_000

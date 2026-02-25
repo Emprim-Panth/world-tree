@@ -534,6 +534,15 @@ class DocumentEditorViewModel: ObservableObject {
                     workingDirectory: self.workingDirectory
                 )
             }
+            // Restore the most recent rotation checkpoint so the first send after
+            // a restart or session reload picks up where the last session left off.
+            // Without this, `checkpointContext` stays nil and we fall back to the
+            // much shallower "stale session" context injection (12 turns × 500 chars).
+            if let (summary, createdAt) = SessionRotator.latestCheckpoint(sessionId: self.sessionId),
+               Date().timeIntervalSince(createdAt) < 7200 {  // within 2 hours
+                self.checkpointContext = summary
+                wtLog("[DocumentEditor] Restored rotation checkpoint from DB (\(summary.count) chars, age \(Int(Date().timeIntervalSince(createdAt)))s)")
+            }
         }
     }
 
@@ -921,7 +930,7 @@ class DocumentEditorViewModel: ObservableObject {
             checkpointContext = nil
 
             let allSections = document.sections
-            let maxAdditional = isSessionStale ? 8 : 2   // 12 total stale, 6 total active
+            let maxAdditional = isSessionStale ? 20 : 4   // 24 total stale, 8 total active
             let contextSections = ConversationScorer.select(
                 sections: allSections,
                 query: content,
@@ -946,7 +955,7 @@ class DocumentEditorViewModel: ObservableObject {
                     case .assistant: role = LocalAgentIdentity.name
                     case .system: role = "System"
                     }
-                    let text = String(section.content.characters.prefix(500))
+                    let text = String(section.content.characters.prefix(1000))
                     return "[\(role)]: \(text)"
                 }
                 if isSessionStale {

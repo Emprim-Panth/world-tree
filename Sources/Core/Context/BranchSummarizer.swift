@@ -40,7 +40,7 @@ final class BranchSummarizer {
 
     /// Generate a checkpoint summary for session rotation.
     /// Focuses on recent messages and working state.
-    func checkpoint(sessionId: String, recentMessageCount: Int = 20) async -> String? {
+    func checkpoint(sessionId: String, recentMessageCount: Int = 40) async -> String? {
         let allMessages = (try? MessageStore.shared.getMessages(sessionId: sessionId)) ?? []
         guard !allMessages.isEmpty else { return nil }
 
@@ -109,11 +109,12 @@ final class BranchSummarizer {
                 Create a working-state checkpoint of this conversation. This will be used to continue the conversation in a fresh context window. Capture:
                 1. Current task and what we're working on RIGHT NOW
                 2. Key decisions already made (don't re-discuss)
-                3. Files being modified and their current state
+                3. Files being modified and their current state (include exact file paths)
                 4. Any open questions or next steps
-                5. Important context that must not be lost
+                5. Important context that must not be lost (errors seen, approaches tried, etc.)
+                6. What was just completed immediately before this checkpoint
 
-                Be comprehensive but compact. Under 800 words. The new session needs enough context to continue seamlessly.
+                Be thorough. Up to 2000 words if needed. Prefer specifics over vague summaries — exact file names, function names, error messages, and decisions are more valuable than general descriptions. The new session must be able to continue seamlessly without any re-explanation.
 
                 Conversation:
                 \(conversation)
