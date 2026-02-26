@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ProjectListView: View {
     @StateObject private var viewModel = ProjectListViewModel()
-    @EnvironmentObject var appState: AppState
+    @Environment(AppState.self) var appState
     
     var body: some View {
         VStack(spacing: 0) {

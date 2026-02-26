@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @EnvironmentObject var appState: AppState
+    @Environment(AppState.self) var appState
     @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
     @StateObject private var approvalCoordinator = ApprovalCoordinator.shared
 

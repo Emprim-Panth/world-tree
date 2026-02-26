@@ -61,6 +61,12 @@ final class AnthropicClient: Sendable {
 
                     wtLog("[AnthropicClient] HTTP \(httpResponse.statusCode)")
 
+                    // Parse and log rate limit headers — track remaining capacity
+                    let rateLimits = RateLimitInfo.from(httpResponse)
+                    if rateLimits.isNearLimit {
+                        wtLog("[AnthropicClient] ⚠️ Near rate limit: requests=\(rateLimits.requestsRemaining ?? -1), tokens=\(rateLimits.tokensRemaining ?? -1)")
+                    }
+
                     // Handle non-200 responses
                     if httpResponse.statusCode != 200 {
                         try await self.handleErrorResponse(
@@ -144,6 +150,34 @@ final class AnthropicClient: Sendable {
                 task.cancel()
             }
         }
+    }
+
+    // MARK: - Token Counting
+
+    /// Count tokens for a request without executing it.
+    /// Uses POST /v1/messages/count_tokens — returns exact input token count.
+    /// Useful for accurate context pressure tracking.
+    func countTokens(request: AnthropicRequest) async throws -> Int {
+        let countURL = URL(string: "https://api.anthropic.com/v1/messages/count_tokens")!
+        var urlRequest = URLRequest(url: countURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        urlRequest.timeoutInterval = 15
+
+        let encoder = JSONEncoder()
+        urlRequest.httpBody = try encoder.encode(request)
+
+        let (data, response) = try await session.data(for: urlRequest)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw AnthropicClientError.httpError(status: status, body: String(data: data, encoding: .utf8) ?? "")
+        }
+
+        struct CountResponse: Decodable { let input_tokens: Int }
+        let result = try JSONDecoder().decode(CountResponse.self, from: data)
+        return result.input_tokens
     }
 
     // MARK: - Request Building

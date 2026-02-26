@@ -115,7 +115,7 @@ final class SimpleModeViewModel: ObservableObject {
 
 struct SimpleModeView: View {
     @StateObject private var vm = SimpleModeViewModel()
-    @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
     @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
 
     var body: some View {

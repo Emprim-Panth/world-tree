@@ -282,7 +282,9 @@ final class SidebarViewModel: ObservableObject {
         guard let dbPool = DatabaseManager.shared.dbPool else { return }
 
         // GRDB ValueObservation: auto-refreshes when canvas_trees changes
-        let observation = ValueObservation.tracking { db -> [ConversationTree] in
+        // trackingConstantRegion: observed tables (canvas_trees, canvas_branches, messages)
+        // are fixed regardless of data values, enabling concurrent reads that don't block writes.
+        let observation = ValueObservation.trackingConstantRegion { db -> [ConversationTree] in
             let sql = """
                 SELECT t.*,
                     COALESCE(msg_agg.message_count, 0) as message_count,

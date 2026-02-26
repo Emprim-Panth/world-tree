@@ -4,7 +4,7 @@ import SwiftUI
 struct SingleDocumentView: View {
     let treeId: String
     @StateObject private var viewModel: SingleDocumentViewModel
-    @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
     @State private var showTerminal = false
     @State private var showTreeMap = false
 

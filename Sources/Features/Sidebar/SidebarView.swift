@@ -3,7 +3,7 @@ import SwiftUI
 struct SidebarView: View {
     @StateObject private var viewModel = SidebarViewModel()
     @StateObject private var daemonService = DaemonService.shared
-    @EnvironmentObject var appState: AppState
+    @Environment(AppState.self) var appState
     @State private var showNewTreeSheet = false
     @State private var sessionsExpanded = false
     @State private var newTreeName = ""

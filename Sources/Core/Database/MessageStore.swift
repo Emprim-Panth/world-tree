@@ -109,6 +109,22 @@ final class MessageStore {
         }
     }
 
+    /// Async version of sendMessage — writes off the main thread.
+    /// Use at the end of streaming to avoid blocking UI during the final persist.
+    func sendMessageAsync(sessionId: String, role: MessageRole, content: String) async throws -> Message {
+        try await DatabaseManager.shared.asyncWrite { db in
+            let message = try Message.insert(db: db, sessionId: sessionId, role: role, content: content)
+            try db.execute(
+                sql: """
+                    UPDATE canvas_trees SET updated_at = datetime('now')
+                    WHERE id = (SELECT tree_id FROM canvas_branches WHERE session_id = ? LIMIT 1)
+                    """,
+                arguments: [sessionId]
+            )
+            return message
+        }
+    }
+
     // MARK: - Copy Messages (for branch-on-edit)
 
     /// Copy messages from source session up to (not including) a given message ID.

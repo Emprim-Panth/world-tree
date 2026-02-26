@@ -4,7 +4,7 @@ import SwiftUI
 struct TreeNodeView: View {
     let branch: Branch
     let treeId: String
-    @EnvironmentObject var appState: AppState
+    @Environment(AppState.self) var appState
 
     @State private var isHovering = false
 

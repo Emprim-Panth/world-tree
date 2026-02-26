@@ -1,31 +1,35 @@
 import Foundation
-import Combine
 
 /// Global app state — selected tree, selected branch, daemon connection status.
+///
+/// Uses @Observable for per-property tracking — views only re-render when
+/// the specific properties they read change, not on ANY property change.
+/// This eliminates cascade re-renders across the entire view hierarchy.
 @MainActor
-final class AppState: ObservableObject {
+@Observable
+final class AppState {
     static let shared = AppState()
 
-    @Published var selectedTreeId: String? {
+    var selectedTreeId: String? {
         didSet { UserDefaults.standard.set(selectedTreeId, forKey: "lastSelectedTreeId") }
     }
-    @Published var selectedBranchId: String? {
+    var selectedBranchId: String? {
         didSet { UserDefaults.standard.set(selectedBranchId, forKey: "lastSelectedBranchId") }
     }
-    @Published var selectedProjectPath: String?
-    @Published var daemonConnected: Bool = false
-    @Published var simpleMode: Bool {
+    var selectedProjectPath: String?
+    var daemonConnected: Bool = false
+    var simpleMode: Bool = false {
         didSet { UserDefaults.standard.set(simpleMode, forKey: "worldtree.simpleMode") }
     }
     /// Mermaid source code currently shown in the diagram side panel. nil = panel hidden.
-    @Published var activeMermaidCode: String? = nil
+    var activeMermaidCode: String? = nil
     /// Non-nil if the database failed to initialize — surfaced as an alert in WorldTreeApp.
-    @Published var dbSetupError: Error? = nil
+    var dbSetupError: Error? = nil
 
     /// Navigation history for branch back/forward.
     /// Each entry stores both treeId and branchId so both are restored on navigate.
-    @Published var branchHistory: [(treeId: String, branchId: String)] = []
-    @Published var branchHistoryIndex: Int = -1
+    var branchHistory: [(treeId: String, branchId: String)] = []
+    var branchHistoryIndex: Int = -1
 
     private init() {
         // Setup DB here — before any view renders — so SingleDocumentViewModel.init()

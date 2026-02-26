@@ -1,4 +1,5 @@
 import SwiftUI
+import GRDB
 
 // MARK: - Processing Banner (Option B)
 
@@ -33,10 +34,10 @@ struct ProcessingBanner: View {
 // MARK: - Active Jobs Section
 
 /// Shows background jobs that are actively running.
-/// Polls JobQueue every 5 seconds, only when jobs exist.
+/// Uses GRDB ValueObservation — fires only when canvas_jobs actually changes.
+/// Zero polling overhead compared to the previous 5-second Timer approach.
 struct ActiveJobsSection: View {
     @State private var jobs: [WorldTreeJob] = []
-    @State private var pollTimer: Timer?
 
     var body: some View {
         Group {
@@ -69,31 +70,23 @@ struct ActiveJobsSection: View {
                 .padding(.bottom, 8)
             }
         }
-        .onAppear {
-            refresh()
-            startPolling()
-        }
-        .onDisappear {
-            pollTimer?.invalidate()
-            pollTimer = nil
-        }
-    }
-
-    private func refresh() {
-        jobs = JobQueue.shared.activeJobs()
-        // Stop polling when no jobs — saves CPU
-        if jobs.isEmpty {
-            pollTimer?.invalidate()
-            pollTimer = nil
-        } else if pollTimer == nil {
-            startPolling()
-        }
-    }
-
-    private func startPolling() {
-        guard pollTimer == nil else { return }
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
-            Task { @MainActor in refresh() }
+        .task {
+            // Reactive observation — replaces the 5-second Timer.
+            // Fires immediately with current state, then only when canvas_jobs changes.
+            guard let dbPool = DatabaseManager.shared.dbPool else { return }
+            let observation = ValueObservation.trackingConstantRegion { db -> [WorldTreeJob] in
+                try WorldTreeJob
+                    .filter(Column("status") == "queued" || Column("status") == "running")
+                    .order(Column("created_at").desc)
+                    .fetchAll(db)
+            }
+            do {
+                for try await activeJobs in observation.values(in: dbPool) {
+                    jobs = activeJobs
+                }
+            } catch {
+                // Observation cancelled (view disappeared) — expected
+            }
         }
     }
 }

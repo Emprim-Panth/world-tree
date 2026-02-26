@@ -6,7 +6,7 @@ import WebKit
 /// Right-side panel that shows the active Mermaid diagram full-size and centered.
 /// Appears/disappears via AppState.activeMermaidCode.
 struct DiagramPanelView: View {
-    @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,8 +54,7 @@ struct MermaidWebPanelView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        let config = WebViewPool.shared.makeConfiguration()
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         // Transparent — let body background show through

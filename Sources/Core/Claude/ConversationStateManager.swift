@@ -38,22 +38,24 @@ final class ConversationStateManager {
     // MARK: - System Prompt
 
     /// Build system prompt blocks with caching.
-    /// Stable blocks (identity + CLAUDE.md) get cache_control.
-    /// KB context (per-query) does not, so it doesn't bust the cache.
+    /// Stable blocks (identity + CLAUDE.md) use 1-hour cache — they're identical across
+    /// sessions, so paying 2x write cost once saves 90% on all subsequent reads within the hour.
+    /// KB context (per-query) uses no cache so it doesn't bust the stable cache.
     func buildSystemPrompt(project: String?, workingDirectory: String?) async -> [SystemBlock] {
         var blocks: [SystemBlock] = []
 
-        // 1. Cortana identity + operational directives (stable, cached)
+        // 1. Cortana identity + operational directives (stable across all sessions — 1h cache)
         let identity = CortanaIdentity.fullIdentity(project: project, workingDirectory: workingDirectory)
-        blocks.append(SystemBlock(text: identity, cached: true))
+        blocks.append(SystemBlock(text: identity, longCache: true))
 
-        // 2. CLAUDE.md content if available (stable per project, cached)
+        // 2. CLAUDE.md content if available (stable per project — 1h cache)
         let claudeMdContent = loadClaudeMd(workingDirectory: workingDirectory)
         if !claudeMdContent.isEmpty {
-            blocks.append(SystemBlock(text: claudeMdContent, cached: true))
+            blocks.append(SystemBlock(text: claudeMdContent, longCache: true))
         }
 
-        // 3. Project intelligence context (structure, git, recent commits)
+        // 3. Project intelligence context (structure, git, recent commits — 5min cache)
+        // Changes more frequently than identity/CLAUDE.md, so standard cache.
         let projectContext = await loadProjectContext(project: project, workingDirectory: workingDirectory)
         if !projectContext.isEmpty {
             blocks.append(SystemBlock(text: projectContext, cached: true))

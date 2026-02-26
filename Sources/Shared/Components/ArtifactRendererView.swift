@@ -42,8 +42,7 @@ struct ArtifactRendererView: NSViewRepresentable {
     @Binding var renderedHeight: CGFloat
 
     func makeNSView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        let config = WebViewPool.shared.makeConfiguration()
 
         // Register JS→Swift message handlers
         if case .mermaid = mode {

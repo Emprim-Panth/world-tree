@@ -3,13 +3,13 @@ import UserNotifications
 
 @main
 struct WorldTreeApp: App {
-    @StateObject private var appState = AppState.shared
+    @State private var appState = AppState.shared
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(appState)
+                .environment(appState)
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear {
                     checkForUpdateBadge()

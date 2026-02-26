@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct DashboardView: View {
-    @EnvironmentObject var appState: AppState
+    @Environment(AppState.self) var appState
     @StateObject private var daemonService = DaemonService.shared
     @State private var recentTrees: [ConversationTree] = []
     @State private var treeCount: Int = 0

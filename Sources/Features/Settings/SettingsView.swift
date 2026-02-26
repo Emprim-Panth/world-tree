@@ -156,11 +156,12 @@ struct SettingsView: View {
 
     // MARK: - General
 
-    @StateObject private var appState = AppState.shared
+    private var appState = AppState.shared
     @AppStorage("globalHotKeyEnabled") private var globalHotKeyEnabled = true
 
     private var generalTab: some View {
-        Form {
+        @Bindable var appState = appState
+        return Form {
             Section("View Mode") {
                 Toggle("Simple Mode", isOn: $appState.simpleMode)
                 Text(appState.simpleMode

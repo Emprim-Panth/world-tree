@@ -3,15 +3,43 @@ import Foundation
 // MARK: - Request Types
 
 /// Extended thinking configuration. When set, Claude reasons internally before responding.
-/// Requires model support (claude-sonnet-4-6 and newer). Budget tokens count against max_tokens.
+///
+/// Two modes:
+/// - `enabled`: Manual budget — you specify exact budget_tokens. Required for older models.
+/// - `adaptive`: Model decides when and how deeply to think. Preferred for Opus 4.6+.
+///   Faster on simple queries, deeper on complex ones. No budget_tokens needed.
 struct ThinkingConfig: Encodable {
-    let type: String = "enabled"
-    let budgetTokens: Int
+    let type: String
+    let budgetTokens: Int?
+
+    /// Adaptive thinking — model decides when/how much to think. Preferred for Opus 4.6+.
+    static func adaptive() -> ThinkingConfig {
+        ThinkingConfig(type: "adaptive", budgetTokens: nil)
+    }
+
+    /// Manual budget — explicit token budget for thinking. Use for Sonnet or when you need control.
+    static func enabled(budgetTokens: Int) -> ThinkingConfig {
+        ThinkingConfig(type: "enabled", budgetTokens: budgetTokens)
+    }
 
     enum CodingKeys: String, CodingKey {
         case type
         case budgetTokens = "budget_tokens"
     }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(type, forKey: .type)
+        if let budgetTokens {
+            try container.encode(budgetTokens, forKey: .budgetTokens)
+        }
+    }
+}
+
+/// Effort level for thinking depth control.
+/// Low = faster/cheaper, Max = deepest reasoning.
+enum EffortLevel: String, Encodable {
+    case low, medium, high, max
 }
 
 struct AnthropicRequest: Encodable {
@@ -22,14 +50,18 @@ struct AnthropicRequest: Encodable {
     let messages: [APIMessage]
     let stream: Bool
     let thinking: ThinkingConfig?
+    /// Controls how much effort the model puts into its response.
+    /// Nil uses the API default (varies by model). Low = fast, Max = deepest reasoning.
+    var effort: EffortLevel?
 
     enum CodingKeys: String, CodingKey {
         case model
         case maxTokens = "max_tokens"
         case system, tools, messages, stream, thinking
+        case outputConfig = "output_config"
     }
 
-    // Custom encode: omit thinking when nil
+    // Custom encode: omit thinking/effort when nil
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(model, forKey: .model)
@@ -41,6 +73,9 @@ struct AnthropicRequest: Encodable {
         if let thinking {
             try container.encode(thinking, forKey: .thinking)
         }
+        if let effort {
+            try container.encode(["effort": effort], forKey: .outputConfig)
+        }
     }
 }
 
@@ -49,10 +84,16 @@ struct SystemBlock: Codable {
     let text: String
     var cacheControl: CacheControl?
 
-    init(text: String, cached: Bool = false) {
+    init(text: String, cached: Bool = false, longCache: Bool = false) {
         self.type = "text"
         self.text = text
-        self.cacheControl = cached ? CacheControl(type: "ephemeral") : nil
+        if longCache {
+            self.cacheControl = .ephemeral1h
+        } else if cached {
+            self.cacheControl = .ephemeral
+        } else {
+            self.cacheControl = nil
+        }
     }
 
     enum CodingKeys: String, CodingKey {
@@ -73,6 +114,29 @@ struct SystemBlock: Codable {
 
 struct CacheControl: Codable {
     let type: String
+    /// TTL in seconds. Default 5 minutes (nil). Set to 3600 for 1-hour cache.
+    /// 1-hour cache costs 2x at write time but persists across sessions.
+    let ttl: Int?
+
+    init(type: String, ttl: Int? = nil) {
+        self.type = type
+        self.ttl = ttl
+    }
+
+    /// Standard ephemeral cache — 5 minute TTL (API default)
+    static let ephemeral = CacheControl(type: "ephemeral")
+
+    /// Long-lived ephemeral cache — 1 hour TTL. Ideal for system prompts and tool definitions
+    /// that are identical across sessions. Costs 2x at write, saves 90% on subsequent reads.
+    static let ephemeral1h = CacheControl(type: "ephemeral", ttl: 3600)
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(type, forKey: .type)
+        if let ttl {
+            try container.encode(ttl, forKey: .ttl)
+        }
+    }
 }
 
 struct ToolSchema: Encodable {
@@ -80,14 +144,18 @@ struct ToolSchema: Encodable {
     let description: String
     let inputSchema: JSONSchema
     var cacheControl: CacheControl?
+    /// When true, constrains model output to guarantee schema-valid tool calls.
+    /// Eliminates malformed JSON tool arguments via constrained decoding.
+    var strict: Bool?
 
     enum CodingKeys: String, CodingKey {
         case name, description
         case inputSchema = "input_schema"
         case cacheControl = "cache_control"
+        case strict
     }
 
-    // Custom encoding: omit cache_control when nil (Anthropic API rejects null)
+    // Custom encoding: omit cache_control and strict when nil (Anthropic API rejects null)
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(name, forKey: .name)
@@ -95,6 +163,9 @@ struct ToolSchema: Encodable {
         try container.encode(inputSchema, forKey: .inputSchema)
         if let cacheControl {
             try container.encode(cacheControl, forKey: .cacheControl)
+        }
+        if let strict, strict {
+            try container.encode(strict, forKey: .strict)
         }
     }
 }
@@ -354,9 +425,11 @@ struct ContentBlockDeltaPayload: Decodable {
 enum DeltaContent: Decodable {
     case textDelta(String)
     case inputJsonDelta(String)
+    case thinkingDelta(String)
+    case signatureDelta(String)
 
     private enum CodingKeys: String, CodingKey {
-        case type, text
+        case type, text, thinking, signature
         case partialJson = "partial_json"
     }
 
@@ -370,6 +443,12 @@ enum DeltaContent: Decodable {
         case "input_json_delta":
             let json = try container.decode(String.self, forKey: .partialJson)
             self = .inputJsonDelta(json)
+        case "thinking_delta":
+            let thinking = try container.decode(String.self, forKey: .thinking)
+            self = .thinkingDelta(thinking)
+        case "signature_delta":
+            let signature = try container.decode(String.self, forKey: .signature)
+            self = .signatureDelta(signature)
         default:
             self = .textDelta("")
         }
@@ -428,6 +507,34 @@ struct SessionTokenUsage: Codable {
         cacheHitTokens += usage.cacheReadInputTokens ?? 0
         cacheCreationTokens += usage.cacheCreationInputTokens ?? 0
         turnCount += 1
+    }
+}
+
+// MARK: - Rate Limit Info
+
+/// Parsed from Anthropic response headers — tracks remaining capacity.
+struct RateLimitInfo: Sendable {
+    let requestsRemaining: Int?
+    let tokensRemaining: Int?
+    let requestsReset: Date?
+    let tokensReset: Date?
+
+    /// Parse rate limit headers from an HTTP response.
+    static func from(_ response: HTTPURLResponse) -> RateLimitInfo {
+        let isoFormatter = ISO8601DateFormatter()
+        return RateLimitInfo(
+            requestsRemaining: response.value(forHTTPHeaderField: "anthropic-ratelimit-requests-remaining").flatMap { Int($0) },
+            tokensRemaining: response.value(forHTTPHeaderField: "anthropic-ratelimit-tokens-remaining").flatMap { Int($0) },
+            requestsReset: response.value(forHTTPHeaderField: "anthropic-ratelimit-requests-reset").flatMap { isoFormatter.date(from: $0) },
+            tokensReset: response.value(forHTTPHeaderField: "anthropic-ratelimit-tokens-reset").flatMap { isoFormatter.date(from: $0) }
+        )
+    }
+
+    /// True if we're running low on either requests or tokens.
+    var isNearLimit: Bool {
+        if let r = requestsRemaining, r < 10 { return true }
+        if let t = tokensRemaining, t < 50_000 { return true }
+        return false
     }
 }
 

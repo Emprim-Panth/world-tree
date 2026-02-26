@@ -3,12 +3,20 @@ import Foundation
 /// Static JSON Schema definitions for the tools Canvas gives Claude.
 enum WorldTreeTools {
 
-    /// All tool definitions. The last one carries cache_control for prompt caching.
+    /// All tool definitions with strict mode and cache optimization.
+    /// - Strict mode: guarantees schema-valid tool calls via constrained decoding.
+    /// - 1-hour cache: tool definitions are identical across sessions, so the last tool
+    ///   carries a 1h cache_control to persist the entire tool block in Anthropic's cache.
     static func definitions() -> [ToolSchema] {
         var tools = [readFile, writeFile, editFile, bash, glob, grep,
                      buildProject, runTests, checkpointCreate, checkpointRevert, checkpointList,
                      backgroundRun, listTerminals, terminalOutput, searchConversation, captureScreenshot]
-        tools[tools.count - 1].cacheControl = CacheControl(type: "ephemeral")
+        // Apply strict mode to all tools — constrained decoding eliminates malformed arguments
+        for i in tools.indices {
+            tools[i].strict = true
+        }
+        // Last tool carries 1-hour cache — caches the entire tool definition block across sessions
+        tools[tools.count - 1].cacheControl = .ephemeral1h
         return tools
     }
 

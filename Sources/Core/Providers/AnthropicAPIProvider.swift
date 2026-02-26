@@ -112,10 +112,12 @@ final class AnthropicAPIProvider: LLMProvider {
                     for _ in 0..<self.maxToolLoopIterations {
                         if self.isCancelled { break }
 
-                        // Extended thinking: 10K budget tokens, total budget must exceed it.
-                        // Base max raised to 16K; 32K when thinking is active.
+                        // Extended thinking configuration:
+                        // - Opus 4.6+: adaptive mode (model decides when/how much to think)
+                        // - Sonnet/other: manual 10K budget
+                        // Max tokens raised to 32K when thinking is active (budget counts against it).
                         let thinkingConfig: ThinkingConfig? = context.extendedThinking
-                            ? ThinkingConfig(budgetTokens: 10_000)
+                            ? (selectedModel.contains("opus") ? .adaptive() : .enabled(budgetTokens: 10_000))
                             : nil
                         let maxTokens = context.extendedThinking ? 32_000 : 16_384
 
@@ -159,6 +161,13 @@ final class AnthropicAPIProvider: LLMProvider {
                                     continuation.yield(.text(text))
                                 case .inputJsonDelta(let json):
                                     currentToolInputJSON += json
+                                case .thinkingDelta:
+                                    // Extended thinking content — model reasoning internally.
+                                    // Currently consumed silently; could surface as a "thinking" UI indicator.
+                                    break
+                                case .signatureDelta:
+                                    // Response signature for verification — consumed silently.
+                                    break
                                 }
 
                             case .contentBlockStop:

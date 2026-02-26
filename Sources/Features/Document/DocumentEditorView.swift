@@ -464,7 +464,10 @@ class DocumentEditorViewModel: ObservableObject {
 
         let sid = sessionId  // capture value type, not self
 
-        let observation = ValueObservation.tracking { db -> [Message] in
+        // trackingConstantRegion: observed tables (messages, canvas_branches) are fixed
+        // regardless of data values. Enables concurrent reader execution on DatabasePool
+        // that doesn't block writes — critical during streaming when tokens arrive rapidly.
+        let observation = ValueObservation.trackingConstantRegion { db -> [Message] in
             // Load the LATEST 100 messages, sorted oldest→newest for display.
             // Using a subquery so we get the tail (newest) not the head (oldest),
             // which means conversations with >100 messages still show current context.

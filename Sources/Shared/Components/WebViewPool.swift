@@ -8,11 +8,16 @@ import WebKit
 /// using 50-200MB RAM and its own GPU context. WindowServer must composite all of
 /// them, and when total resources are exhausted, the entire Mac freezes.
 ///
-/// This pool enforces a hard cap. When the cap is reached, the oldest inactive
-/// view is recycled (its HTML content is replaced).
+/// This pool enforces a hard cap AND shares a single WKProcessPool across all
+/// web views, so even at cap they share 1-2 OS processes instead of 8 separate ones.
 @MainActor
 final class WebViewPool {
     static let shared = WebViewPool()
+
+    /// Shared process pool — all WKWebViews use this so they share OS processes
+    /// instead of each spawning a separate `com.apple.WebKit.WebContent` process.
+    /// At 8 views, this saves ~400MB+ RAM (8 × 50-200MB → 1-2 shared processes).
+    let processPool = WKProcessPool()
 
     /// Maximum number of live WKWebViews. Each is an OS subprocess.
     /// 8 is enough for a full screen of code blocks without starving the system.
@@ -26,6 +31,15 @@ final class WebViewPool {
     private(set) var visibleCount = 0
 
     private init() {}
+
+    /// Create a WKWebViewConfiguration with the shared process pool pre-assigned.
+    /// All callers should use this instead of creating `WKWebViewConfiguration()` directly.
+    func makeConfiguration() -> WKWebViewConfiguration {
+        let config = WKWebViewConfiguration()
+        config.processPool = processPool
+        config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        return config
+    }
 
     /// Check if there's capacity for a new WKWebView without exceeding the cap.
     var hasCapacity: Bool {
