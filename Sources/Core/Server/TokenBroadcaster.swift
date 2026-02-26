@@ -15,7 +15,7 @@ final class TokenBroadcaster {
     static let shared = TokenBroadcaster()
 
     /// Per-branch token index. Reset at stream start, removed on completion/error.
-    private(set) var tokenIndexes: [String: Int] = [:]
+    var tokenIndexes: [String: Int] = [:]
 
     /// Active broadcast tasks — allows cancellation via `cancel(branchId:)`.
     private var activeTasks: [String: Task<Void, Never>] = [:]

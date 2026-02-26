@@ -38,6 +38,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.forgeandcode.world-tree-tests
         SWIFT_VERSION: "5.9"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/World Tree.app/Contents/MacOS/World Tree"
+        BUNDLE_LOADER: "$(TEST_HOST)"
 
   WorldTree:
     type: application
@@ -81,6 +83,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.forgeandcode.world-tree
         PRODUCT_NAME: "World Tree"
+        PRODUCT_MODULE_NAME: WorldTree
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_LSUIElement: false
         INFOPLIST_KEY_LSMultipleInstancesProhibited: true
@@ -89,3 +92,16 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "3"
+
+schemes:
+  WorldTree:
+    build:
+      targets:
+        WorldTree: all
+        WorldTreeTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - WorldTreeTests
