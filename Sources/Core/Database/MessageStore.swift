@@ -218,6 +218,170 @@ final class MessageStore {
         }
     }
 
+    // MARK: - Cross-Session Search
+
+    /// Search across all FTS indexes: messages, knowledge, conversation archives, graph nodes.
+    /// Returns unified results sorted by relevance.
+    func searchAcrossAll(query: String, limit: Int = 40) throws -> [GlobalSearchResult] {
+        try db.read { db in
+            var results: [GlobalSearchResult] = []
+            let perSource = max(limit / 4, 10)
+
+            // 1. Messages FTS
+            do {
+                let rows = try Row.fetchAll(db, sql: """
+                    SELECT m.id, m.session_id, m.content, m.role, m.timestamp,
+                           s.working_directory
+                    FROM messages m
+                    JOIN messages_fts ON messages_fts.rowid = m.id
+                    LEFT JOIN sessions s ON s.id = m.session_id
+                    WHERE messages_fts MATCH ?
+                    ORDER BY rank
+                    LIMIT ?
+                    """, arguments: [query, perSource])
+                for row in rows {
+                    let content: String = row["content"] ?? ""
+                    let wd: String = row["working_directory"] ?? ""
+                    results.append(GlobalSearchResult(
+                        id: "msg-\(row["id"] as String)",
+                        source: .message,
+                        title: row["role"] as String? ?? "message",
+                        snippet: String(content.prefix(200)),
+                        project: Self.extractProject(from: wd),
+                        timestamp: Self.parseTimestamp(row["timestamp"])
+                    ))
+                }
+            } catch {
+                wtLog("[GlobalSearch] messages FTS failed: \(error)")
+            }
+
+            // 2. Knowledge FTS
+            let hasKnowledge = (try? Bool.fetchOne(db, sql: """
+                SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='knowledge_fts'
+                """)) ?? false
+
+            if hasKnowledge {
+                do {
+                    let rows = try Row.fetchAll(db, sql: """
+                        SELECT k.id, k.title, k.content, k.type, k.project, k.created_at
+                        FROM knowledge k
+                        JOIN knowledge_fts ON knowledge_fts.rowid = k.rowid
+                        WHERE knowledge_fts MATCH ?
+                        ORDER BY rank
+                        LIMIT ?
+                        """, arguments: [query, perSource])
+                    for row in rows {
+                        let content: String = row["content"] ?? ""
+                        results.append(GlobalSearchResult(
+                            id: "kb-\(row["id"] as String)",
+                            source: .knowledge,
+                            title: row["title"] as String? ?? "knowledge",
+                            snippet: String(content.prefix(200)),
+                            project: row["project"],
+                            timestamp: Self.parseTimestamp(row["created_at"])
+                        ))
+                    }
+                } catch {
+                    wtLog("[GlobalSearch] knowledge FTS failed: \(error)")
+                }
+            }
+
+            // 3. Conversation archive FTS
+            let hasArchive = (try? Bool.fetchOne(db, sql: """
+                SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='conversation_archive_fts'
+                """)) ?? false
+
+            if hasArchive {
+                do {
+                    let rows = try Row.fetchAll(db, sql: """
+                        SELECT ca.session_id, ca.project, ca.compressed_summary,
+                               ca.message_count, ca.archived_at
+                        FROM conversation_archive ca
+                        JOIN conversation_archive_fts ON conversation_archive_fts.rowid = ca.rowid
+                        WHERE conversation_archive_fts MATCH ?
+                        ORDER BY rank
+                        LIMIT ?
+                        """, arguments: [query, perSource])
+                    for row in rows {
+                        let summary: String = row["compressed_summary"] ?? ""
+                        results.append(GlobalSearchResult(
+                            id: "archive-\(row["session_id"] as String)",
+                            source: .archive,
+                            title: "Session (\(row["message_count"] as Int? ?? 0) msgs)",
+                            snippet: String(summary.prefix(200)),
+                            project: row["project"],
+                            timestamp: Self.parseTimestamp(row["archived_at"])
+                        ))
+                    }
+                } catch {
+                    wtLog("[GlobalSearch] archive FTS failed: \(error)")
+                }
+            }
+
+            // 4. Graph nodes FTS
+            let hasGraph = (try? Bool.fetchOne(db, sql: """
+                SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='cg_nodes_fts'
+                """)) ?? false
+
+            if hasGraph {
+                do {
+                    let rows = try Row.fetchAll(db, sql: """
+                        SELECT n.id, n.label, n.content, n.type, n.project
+                        FROM cg_nodes n
+                        JOIN cg_nodes_fts ON cg_nodes_fts.rowid = n.rowid
+                        WHERE cg_nodes_fts MATCH ?
+                        LIMIT ?
+                        """, arguments: [query, perSource])
+                    for row in rows {
+                        let content: String = row["content"] ?? ""
+                        results.append(GlobalSearchResult(
+                            id: "graph-\(row["id"] as String)",
+                            source: .graph,
+                            title: row["label"] as String? ?? "node",
+                            snippet: String(content.prefix(200)),
+                            project: row["project"] as String?,
+                            timestamp: nil
+                        ))
+                    }
+                } catch {
+                    wtLog("[GlobalSearch] graph FTS failed: \(error)")
+                }
+            }
+
+            // Sort by timestamp descending (nil last)
+            results.sort { a, b in
+                switch (a.timestamp, b.timestamp) {
+                case let (ta?, tb?): return ta > tb
+                case (_?, nil): return true
+                case (nil, _?): return false
+                case (nil, nil): return false
+                }
+            }
+
+            return Array(results.prefix(limit))
+        }
+    }
+
+    nonisolated private static func extractProject(from workingDirectory: String) -> String? {
+        let parts = workingDirectory.split(separator: "/")
+        for (i, part) in parts.enumerated() {
+            if (part == "Development" || part == "development") && i + 1 < parts.count {
+                return String(parts[i + 1])
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func parseTimestamp(_ value: DatabaseValue?) -> Date? {
+        guard let value, let str = String.fromDatabaseValue(value) else { return nil }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = iso.date(from: str) { return date }
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return df.date(from: str)
+    }
+
     /// Get the working directory for a session
     func getSessionWorkingDirectory(sessionId: String) throws -> String? {
         try db.read { db in

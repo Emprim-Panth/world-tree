@@ -1,5 +1,12 @@
 import Foundation
 
+/// Which top-level view shows in the detail pane when no tree is selected.
+enum SidebarDestination: String, Hashable {
+    case commandCenter
+    case timeline
+    case graph
+}
+
 /// Global app state — selected tree, selected branch, daemon connection status.
 ///
 /// Uses @Observable for per-property tracking — views only re-render when
@@ -17,6 +24,8 @@ final class AppState {
         didSet { UserDefaults.standard.set(selectedBranchId, forKey: "lastSelectedBranchId") }
     }
     var selectedProjectPath: String?
+    var sidebarDestination: SidebarDestination = .commandCenter
+    var showGlobalSearch: Bool = false
     var daemonConnected: Bool = false
     var simpleMode: Bool = false {
         didSet { UserDefaults.standard.set(simpleMode, forKey: "worldtree.simpleMode") }

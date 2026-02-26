@@ -91,6 +91,11 @@ struct WorldTreeApp: App {
                     NotificationCenter.default.post(name: .showConversationSearch, object: nil)
                 }
                 .keyboardShortcut("f", modifiers: .command)
+
+                Button("Search Everything") {
+                    appState.showGlobalSearch = true
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
             }
         }
 
@@ -179,4 +184,5 @@ extension Notification.Name {
     static let createNewBranch = Notification.Name("createNewBranch")
     static let showConversationSearch = Notification.Name("showConversationSearch")
     static let forkLastMessage = Notification.Name("forkLastMessage")
+    static let showGlobalSearch = Notification.Name("showGlobalSearch")
 }

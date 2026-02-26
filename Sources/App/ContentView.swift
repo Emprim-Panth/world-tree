@@ -43,8 +43,23 @@ struct ContentView: View {
                 SingleDocumentView(treeId: treeId, branchId: appState.selectedBranchId)
                     .id("\(treeId)-\(selectedBranchId)")
             } else {
-                CommandCenterView()
+                switch appState.sidebarDestination {
+                case .commandCenter:
+                    CommandCenterView()
+                case .timeline:
+                    TimelineView()
+                case .graph:
+                    GraphView()
+                }
             }
+        }
+        .sheet(isPresented: Binding(
+            get: { appState.showGlobalSearch },
+            set: { appState.showGlobalSearch = $0 }
+        )) {
+            GlobalSearchView()
+                .environment(appState)
+                .frame(minWidth: 600, minHeight: 400)
         }
     }
 }

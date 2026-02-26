@@ -63,6 +63,19 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Global nav — Command Center, Timeline, Graph
+            HStack(spacing: 2) {
+                sidebarNavButton("Command Center", icon: "square.grid.2x2", dest: .commandCenter)
+                sidebarNavButton("Timeline", icon: "clock", dest: .timeline)
+                sidebarNavButton("Graph", icon: "point.3.connected.trianglepath.dotted", dest: .graph)
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+
+            Divider()
+                .padding(.horizontal, 8)
+
             // Search + Sort
             HStack(spacing: 6) {
                 HStack {
@@ -430,6 +443,27 @@ struct SidebarView: View {
                 showErrorAlert = true
             }
         }
+    }
+
+    // MARK: - Sidebar Nav Button
+
+    private func sidebarNavButton(_ label: String, icon: String, dest: SidebarDestination) -> some View {
+        let isActive = appState.selectedTreeId == nil && appState.sidebarDestination == dest
+        return Button {
+            appState.selectedTreeId = nil
+            appState.selectedBranchId = nil
+            appState.sidebarDestination = dest
+        } label: {
+            Label(label, systemImage: icon)
+                .font(.caption)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 5)
+                .padding(.horizontal, 4)
+                .background(isActive ? Color.accentColor.opacity(0.15) : Color.clear)
+                .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Content Search Result Row

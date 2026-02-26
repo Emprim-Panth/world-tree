@@ -356,6 +356,101 @@ enum MigrationManager {
                 """)
         }
 
+        // Migration 15: Intelligence Upgrade — recognize tables created by Python scripts
+        // These are created by the Python memory system but World Tree needs to read them.
+        // CREATE TABLE IF NOT EXISTS ensures safety whether Python or World Tree runs first.
+        migrator.registerMigration("v15_intelligence_tables") { db in
+            // Conversation archive (compressed session summaries)
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS conversation_archive (
+                    session_id TEXT PRIMARY KEY,
+                    project TEXT,
+                    compressed_summary TEXT NOT NULL,
+                    key_entities TEXT,
+                    key_decisions TEXT,
+                    key_errors TEXT,
+                    files_touched TEXT,
+                    duration_minutes REAL,
+                    message_count INTEGER,
+                    token_estimate INTEGER,
+                    compression_ratio REAL,
+                    full_transcript_path TEXT,
+                    archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_ca_project ON conversation_archive(project)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_ca_archived ON conversation_archive(archived_at)")
+
+            // Knowledge versions (version history for knowledge entries)
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS knowledge_versions (
+                    id TEXT PRIMARY KEY,
+                    knowledge_id TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    rationale TEXT,
+                    diff_from_previous TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(knowledge_id, version)
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_kv_knowledge ON knowledge_versions(knowledge_id)")
+
+            // Crew handoffs (agent-to-agent task handoff)
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS crew_handoffs (
+                    id TEXT PRIMARY KEY,
+                    from_agent TEXT NOT NULL,
+                    to_agent TEXT NOT NULL,
+                    task_summary TEXT NOT NULL,
+                    context TEXT,
+                    deliverables TEXT,
+                    requirements TEXT,
+                    status TEXT DEFAULT 'pending',
+                    result TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP
+                )
+                """)
+
+            // FTS5 for conversation archive search
+            let hasCaFts = (try? Bool.fetchOne(db, sql: """
+                SELECT COUNT(*) > 0 FROM sqlite_master
+                WHERE type = 'table' AND name = 'conversation_archive_fts'
+                """) ?? false) ?? false
+            if !hasCaFts {
+                try? db.execute(sql: """
+                    CREATE VIRTUAL TABLE conversation_archive_fts USING fts5(
+                        compressed_summary, key_entities, key_decisions,
+                        content='conversation_archive',
+                        content_rowid='rowid'
+                    )
+                    """)
+            }
+
+            // FTS5 for knowledge graph nodes
+            let hasCgFts = (try? Bool.fetchOne(db, sql: """
+                SELECT COUNT(*) > 0 FROM sqlite_master
+                WHERE type = 'table' AND name = 'cg_nodes_fts'
+                """) ?? false) ?? false
+            if !hasCgFts {
+                // Only create if cg_nodes exists (it's a cortana-core table)
+                let hasCgNodes = try Bool.fetchOne(db, sql: """
+                    SELECT COUNT(*) > 0 FROM sqlite_master
+                    WHERE type = 'table' AND name = 'cg_nodes'
+                    """) ?? false
+                if hasCgNodes {
+                    try? db.execute(sql: """
+                        CREATE VIRTUAL TABLE cg_nodes_fts USING fts5(
+                            label, content,
+                            content='cg_nodes',
+                            content_rowid='rowid'
+                        )
+                        """)
+                }
+            }
+        }
+
         try migrator.migrate(dbPool)
     }
 }
