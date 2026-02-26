@@ -215,6 +215,44 @@ final class ClaudeBridge {
         return ProviderManager.shared.send(context: context)
     }
 
+    // MARK: - Programmatic Dispatch
+
+    /// Fire-and-forget dispatch through the Agent SDK provider.
+    /// Unlike send(), dispatches are isolated (no session state), tracked in canvas_dispatches,
+    /// and visible in the Command Center.
+    func dispatch(
+        message: String,
+        project: String,
+        workingDirectory: String,
+        model: String? = nil,
+        branchId: String? = nil,
+        origin: DispatchOrigin = .background,
+        allowedTools: [String]? = nil,
+        skipPermissions: Bool = true,
+        systemPrompt: String? = nil
+    ) -> AsyncStream<BridgeEvent> {
+        let context = DispatchContext(
+            message: message,
+            project: project,
+            workingDirectory: workingDirectory,
+            model: model,
+            branchId: branchId,
+            origin: origin,
+            allowedTools: allowedTools,
+            skipPermissions: skipPermissions,
+            systemPromptOverride: systemPrompt
+        )
+
+        wtLog("[ClaudeBridge] dispatching to Agent SDK: project=\(project), origin=\(origin.rawValue)")
+        let (_, stream) = DispatchRouter.dispatch(context: context)
+        return stream
+    }
+
+    /// Cancel a specific background dispatch by ID
+    func cancelDispatch(_ dispatchId: String) {
+        DispatchRouter.cancelDispatch(dispatchId)
+    }
+
     // MARK: - Cancel
 
     func cancel() {

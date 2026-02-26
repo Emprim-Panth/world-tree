@@ -18,7 +18,7 @@ struct WorldTreeApp: App {
                         wtLog("[WorldTree] Database setup failed: \(error)")
                         let alert = NSAlert()
                         alert.messageText = "World Tree — Database Error"
-                        alert.informativeText = "Failed to open the conversation database.\n\n\(error.localizedDescription)\n\nCheck that the Dropbox path is accessible, or configure a different database path in Settings."
+                        alert.informativeText = "Failed to open the conversation database.\n\n\(error.localizedDescription)\n\nCheck that ~/.cortana/claude-memory/ exists, or configure a different database path in Settings."
                         alert.alertStyle = .critical
                         alert.addButton(withTitle: "Open Settings")
                         alert.addButton(withTitle: "Quit")
@@ -34,6 +34,9 @@ struct WorldTreeApp: App {
                     Task { await PermissionsService.shared.setup() }
                     Task { await ProviderManager.shared.refreshHealth() }
                     Task { EventStore.shared.prune() }
+                    DispatchSupervisor.shared.start()
+                    DispatchSupervisor.shared.pruneOldDispatches()
+                    BranchTerminalManager.shared.recoverOrphanedSessions()
                     startWorldTreeServerIfEnabled()
                     startPluginServerIfEnabled()
                     PeekabooBridgeServer.shared.start()

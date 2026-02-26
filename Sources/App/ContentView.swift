@@ -43,7 +43,7 @@ struct ContentView: View {
                 SingleDocumentView(treeId: treeId, branchId: appState.selectedBranchId)
                     .id("\(treeId)-\(selectedBranchId)")
             } else {
-                DashboardView()
+                CommandCenterView()
             }
         }
     }

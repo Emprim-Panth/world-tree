@@ -309,6 +309,52 @@ enum MigrationManager {
             try? db.execute(sql: "INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
         }
 
+        // Migration 13: Dispatch queue for Agent SDK programmatic dispatch
+        migrator.registerMigration("v13_dispatches") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_dispatches (
+                    id TEXT PRIMARY KEY,
+                    project TEXT NOT NULL,
+                    branch_id TEXT,
+                    message TEXT NOT NULL,
+                    model TEXT,
+                    status TEXT NOT NULL DEFAULT 'queued'
+                        CHECK(status IN ('queued','running','completed','failed','cancelled','interrupted')),
+                    working_directory TEXT NOT NULL,
+                    origin TEXT NOT NULL DEFAULT 'background',
+                    result_text TEXT,
+                    result_tokens_in INTEGER,
+                    result_tokens_out INTEGER,
+                    error TEXT,
+                    cli_session_id TEXT,
+                    started_at TIMESTAMP,
+                    completed_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_dispatches_project ON canvas_dispatches(project)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_dispatches_status ON canvas_dispatches(status)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_dispatches_created ON canvas_dispatches(created_at)")
+        }
+
+        // Migration 14: Per-project metrics for Command Center
+        migrator.registerMigration("v14_project_metrics") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_project_metrics (
+                    project TEXT PRIMARY KEY,
+                    total_dispatches INTEGER DEFAULT 0,
+                    successful_dispatches INTEGER DEFAULT 0,
+                    failed_dispatches INTEGER DEFAULT 0,
+                    total_tokens_in INTEGER DEFAULT 0,
+                    total_tokens_out INTEGER DEFAULT 0,
+                    total_duration_seconds REAL DEFAULT 0,
+                    last_activity_at TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+        }
+
         try migrator.migrate(dbPool)
     }
 }

@@ -7,10 +7,8 @@ import GRDB
 /// - Foreign keys enabled
 /// - 5 second busy timeout
 ///
-/// SAFETY: WAL mode with Dropbox sync requires careful handling.
-/// Dropbox syncs each file independently — the -wal and -shm files can
-/// become stale relative to the main DB, risking SIGBUS on mmap.
-/// Mitigations: aggressive checkpointing + synchronous=NORMAL.
+/// Database is local at ~/.cortana/claude-memory/conversations.db.
+/// Aggressive WAL checkpointing keeps file size bounded.
 @MainActor
 final class DatabaseManager {
     static let shared = DatabaseManager()
@@ -23,7 +21,7 @@ final class DatabaseManager {
 
     private init() {}
 
-    /// Opens the database at the configured path (Dropbox-synced, with fallback)
+    /// Opens the database at the configured path (local, with fallback)
     func setup() throws {
         let path = resolveDatabasePath()
 
@@ -33,11 +31,9 @@ final class DatabaseManager {
             try db.execute(sql: "PRAGMA journal_mode = WAL")
             try db.execute(sql: "PRAGMA foreign_keys = ON")
             try db.execute(sql: "PRAGMA busy_timeout = 5000")
-            // Checkpoint after every 100 pages (~400KB) instead of 1000 (~4MB)
-            // to keep WAL small — critical for Dropbox sync safety
+            // Checkpoint after every 100 pages (~400KB) to keep WAL small
             try db.execute(sql: "PRAGMA wal_autocheckpoint = 100")
-            // NORMAL sync is safe with WAL mode and significantly reduces
-            // I/O overhead vs FULL. Data is still durable (WAL protects against corruption).
+            // NORMAL sync is safe with WAL mode and reduces I/O overhead
             try db.execute(sql: "PRAGMA synchronous = NORMAL")
         }
 
@@ -52,8 +48,8 @@ final class DatabaseManager {
 
     /// Resolves database path — priority order:
     /// 1. User override from Settings (UserDefaults "databasePath") if the file exists
-    /// 2. Dropbox-synced path (default)
-    /// 3. Local fallback (~/.cortana/cortana.db)
+    /// 2. Local claude-memory path (default)
+    /// 3. Fallback to ~/.cortana/cortana.db
     private func resolveDatabasePath() -> String {
         // User-configured override (Settings → Connection tab)
         if let override = UserDefaults.standard.string(forKey: "databasePath"),
@@ -62,25 +58,25 @@ final class DatabaseManager {
             return override
         }
 
-        let dropboxPath = AppConstants.dropboxDatabasePath
-        if FileManager.default.fileExists(atPath: dropboxPath) {
-            return dropboxPath
+        let primaryPath = AppConstants.databasePath
+        if FileManager.default.fileExists(atPath: primaryPath) {
+            return primaryPath
         }
 
-        // Dropbox not available — fall back to cortana.db
+        // Primary not available — fall back to cortana.db
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let fallback = "\(home)/.cortana/cortana.db"
         if FileManager.default.fileExists(atPath: fallback) {
             return fallback
         }
 
-        // Neither exists — create at Dropbox path (GRDB will create the file)
-        let dir = (dropboxPath as NSString).deletingLastPathComponent
+        // Neither exists — create at primary path (GRDB will create the file)
+        let dir = (primaryPath as NSString).deletingLastPathComponent
         try? FileManager.default.createDirectory(
             atPath: dir,
             withIntermediateDirectories: true
         )
-        return dropboxPath
+        return primaryPath
     }
 
     /// Read-only access (preferred for browsing)
@@ -111,8 +107,6 @@ final class DatabaseManager {
     // MARK: - WAL Checkpoint Management
 
     /// Periodically checkpoint WAL to keep file size bounded.
-    /// Critical for Dropbox sync — large WAL files are more likely to
-    /// cause stale-mmap SIGBUS when synced independently of the main DB.
     private func startCheckpointTimer() {
         checkpointTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in

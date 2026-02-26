@@ -241,4 +241,82 @@ final class BranchTerminalManager: ObservableObject {
         workingDirs.removeAll()
         tmuxNames.removeAll()
     }
+
+    // MARK: - Session Verification
+
+    /// Verify a tmux session is still alive. If dead, clean up the stale mapping.
+    /// Returns true if the session is valid, false if it was cleaned up.
+    /// Verify a tmux session is still alive. If dead, clean up the stale mapping.
+    /// Returns true if the session is valid, false if it was cleaned up.
+    /// Non-blocking — uses async continuation with terminationHandler.
+    @discardableResult
+    func verifySession(branchId: String) async -> Bool {
+        guard let sessionName = tmuxNames[branchId],
+              FileManager.default.fileExists(atPath: tmuxExecutable) else {
+            return false
+        }
+
+        let tmuxPath = tmuxExecutable
+        let alive = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: tmuxPath)
+            proc.arguments = ["has-session", "-t", sessionName]
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
+
+            proc.terminationHandler = { process in
+                continuation.resume(returning: process.terminationStatus == 0)
+            }
+
+            do {
+                try proc.run()
+            } catch {
+                continuation.resume(returning: false)
+            }
+        }
+
+        if !alive {
+            terminals.removeValue(forKey: branchId)
+            workingDirs.removeValue(forKey: branchId)
+            tmuxNames.removeValue(forKey: branchId)
+            wtLog("[BranchTerminalManager] Cleaned up stale tmux session '\(sessionName)' for \(branchId.prefix(8))")
+        }
+        return alive
+    }
+
+    /// Recover orphaned tmux sessions on app launch.
+    /// Scans tmux for canvas-* sessions and checks if we have branch mappings for them.
+    /// Scan for orphaned canvas-* tmux sessions on app launch.
+    /// Non-blocking — uses terminationHandler instead of waitUntilExit.
+    func recoverOrphanedSessions() {
+        guard FileManager.default.fileExists(atPath: tmuxExecutable) else { return }
+
+        let tmuxPath = tmuxExecutable
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: tmuxPath)
+        proc.arguments = ["list-sessions", "-F", "#{session_name}"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+
+        proc.terminationHandler = { [weak self] _ in
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let output = String(data: data, encoding: .utf8) else { return }
+
+            let canvasSessions = output.split(separator: "\n")
+                .map(String.init)
+                .filter { $0.hasPrefix("canvas-") }
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let knownNames = Set(self.tmuxNames.values)
+                let orphans = canvasSessions.filter { !knownNames.contains($0) }
+                if !orphans.isEmpty {
+                    wtLog("[BranchTerminalManager] Found \(orphans.count) orphaned canvas tmux session(s): \(orphans.joined(separator: ", "))")
+                }
+            }
+        }
+
+        try? proc.run()
+    }
 }

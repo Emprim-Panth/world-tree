@@ -44,7 +44,7 @@ Sources/
 
 ## Database
 
-Shared: `~/Library/CloudStorage/Dropbox/claude-memory/conversations.db`
+Shared: `~/.cortana/claude-memory/conversations.db`
 Canvas adds: `canvas_trees`, `canvas_branches` tables (prefixed, isolated)
 
 ## Ticketmaster

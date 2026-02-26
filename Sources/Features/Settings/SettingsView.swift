@@ -3,7 +3,7 @@ import Security
 import CryptoKit
 
 struct SettingsView: View {
-    @AppStorage("databasePath") private var databasePath = AppConstants.dropboxDatabasePath
+    @AppStorage("databasePath") private var databasePath = AppConstants.databasePath
     @AppStorage("daemonSocketPath") private var daemonSocketPath = AppConstants.daemonSocketPath
     @AppStorage("defaultModel") private var defaultModel = AppConstants.defaultModel
     @AppStorage("contextDepth") private var contextDepth = AppConstants.defaultContextDepth
@@ -819,9 +819,9 @@ struct SettingsView: View {
 
                     Spacer()
 
-                    if databasePath != AppConstants.dropboxDatabasePath {
+                    if databasePath != AppConstants.databasePath {
                         Button("Reset to Default") {
-                            databasePath = AppConstants.dropboxDatabasePath
+                            databasePath = AppConstants.databasePath
                         }
                         .controlSize(.mini)
                         .foregroundStyle(.secondary)

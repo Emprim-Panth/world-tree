@@ -119,7 +119,7 @@ enum CortanaIdentity {
         if let sid = sessionId {
             let dbPath = UserDefaults.standard.string(forKey: "databasePath").flatMap {
                 $0.isEmpty ? nil : $0
-            } ?? AppConstants.dropboxDatabasePath
+            } ?? AppConstants.databasePath
             prompt += """
 
 

@@ -25,6 +25,8 @@ final class AppState {
     var activeMermaidCode: String? = nil
     /// Non-nil if the database failed to initialize — surfaced as an alert in WorldTreeApp.
     var dbSetupError: Error? = nil
+    /// Number of active tasks across all projects (dispatches + jobs)
+    var activeTaskCount: Int = 0
 
     /// Navigation history for branch back/forward.
     /// Each entry stores both treeId and branchId so both are restored on navigate.

@@ -2,9 +2,9 @@ import Foundation
 
 enum AppConstants {
     // MARK: - Database
-    static let dropboxDatabasePath: String = {
+    static let databasePath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/Library/CloudStorage/Dropbox/claude-memory/conversations.db"
+        return "\(home)/.cortana/claude-memory/conversations.db"
     }()
 
     // MARK: - Daemon (OpenClaude paths — degrades gracefully if socket absent)

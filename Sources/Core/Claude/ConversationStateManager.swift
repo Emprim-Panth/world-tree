@@ -507,7 +507,7 @@ final class ConversationStateManager {
     /// Load recent session context from conversations.db (async to avoid blocking MainActor)
     private func loadRecentSessionContext() async -> String {
         let dbPath = UserDefaults.standard.string(forKey: "databasePath").flatMap { $0.isEmpty ? nil : $0 }
-            ?? AppConstants.dropboxDatabasePath
+            ?? AppConstants.databasePath
         guard FileManager.default.fileExists(atPath: dbPath) else { return "" }
 
         let restorePath = "\(home)/.cortana/bin/cortana-context-restore"

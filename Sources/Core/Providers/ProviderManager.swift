@@ -53,6 +53,11 @@ final class ProviderManager: ObservableObject {
         }
     }
 
+    /// Look up a provider by identifier
+    func provider(withId id: String) -> (any LLMProvider)? {
+        providers.first { $0.identifier == id }
+    }
+
     // MARK: - Send
 
     func send(context: ProviderSendContext) -> AsyncStream<BridgeEvent> {
@@ -92,18 +97,22 @@ final class ProviderManager: ObservableObject {
         let cliProvider = ClaudeCodeProvider()
         providers.append(cliProvider)
 
-        // 2. Anthropic API — only if an API key exists
+        // 2. Agent SDK (Background dispatch) — always available alongside Claude Code
+        let sdkProvider = AgentSDKProvider()
+        providers.append(sdkProvider)
+
+        // 3. Anthropic API — only if an API key exists
         if let apiKey = Self.resolveAPIKey() {
             wtLog("[ProviderManager] API key found, registering Anthropic API provider")
             let apiProvider = AnthropicAPIProvider(apiKey: apiKey)
             providers.append(apiProvider)
         }
 
-        // 3. Ollama (stub) — always registered for future use
+        // 4. Ollama (stub) — always registered for future use
         let ollamaProvider = OllamaProvider()
         providers.append(ollamaProvider)
 
-        // 4. Remote Canvas — if remote mode was enabled in a previous session
+        // 5. Remote Canvas — if remote mode was enabled in a previous session
         if UserDefaults.standard.bool(forKey: AppConstants.remoteEnabledKey) {
             if let remote = Self.buildRemoteProvider() {
                 wtLog("[ProviderManager] Remote mode was enabled, registering Remote Studio provider")
