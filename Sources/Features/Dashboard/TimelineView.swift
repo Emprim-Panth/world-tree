@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Unified timeline showing events from all Cortana systems.
-struct TimelineView: View {
+struct EventTimelineView: View {
     @State private var events: [UnifiedTimelineEvent] = []
     @State private var isLoading = false
     @State private var selectedTypes: Set<UnifiedTimelineEvent.EventType> = Set(UnifiedTimelineEvent.EventType.allCases)

@@ -47,7 +47,7 @@ struct ContentView: View {
                 case .commandCenter:
                     CommandCenterView()
                 case .timeline:
-                    TimelineView()
+                    EventTimelineView()
                 case .graph:
                     GraphView()
                 }
