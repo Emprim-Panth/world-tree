@@ -3,6 +3,10 @@ import Observation
 
 /// Tracks which branches are actively being processed by an LLM.
 /// Lets the sidebar show live state even when the user has navigated away.
+///
+/// @MainActor ensures all mutations happen on the main thread (required for
+/// @Observable to trigger SwiftUI updates correctly and prevents data races).
+@MainActor
 @Observable
 final class ProcessingRegistry {
     static let shared = ProcessingRegistry()

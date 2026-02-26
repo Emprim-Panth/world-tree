@@ -5,6 +5,22 @@ struct ToolResult: Sendable {
     let isError: Bool
 }
 
+/// Thread-safe pipe data accumulator. Used with readabilityHandler to drain
+/// pipe output incrementally, preventing the 64KB pipe buffer deadlock that
+/// occurs when a process writes more than the OS pipe buffer can hold.
+final class PipeAccumulator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _data = Data()
+
+    func append(_ chunk: Data) {
+        lock.withLock { _data.append(chunk) }
+    }
+
+    var data: Data {
+        lock.withLock { _data }
+    }
+}
+
 /// Executes tools locally on the filesystem and shell.
 /// Runs off the main thread as an actor.
 actor ToolExecutor {
@@ -273,15 +289,38 @@ actor ToolExecutor {
         proc.standardOutput = stdoutPipe
         proc.standardError = stderrPipe
 
+        // Drain pipes via readabilityHandler BEFORE run to avoid pipe buffer deadlock.
+        // If a process writes >64KB to stdout/stderr, the pipe buffer fills and the
+        // process blocks forever waiting for a reader — deadlocking the cooperative thread.
+        let stdoutAccum = PipeAccumulator()
+        let stderrAccum = PipeAccumulator()
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                stdoutAccum.append(data)
+            }
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                stderrAccum.append(data)
+            }
+        }
+
         do {
             try proc.run()
         } catch {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
             return ToolResult(content: "Failed to execute command: \(error.localizedDescription)", isError: true)
         }
 
-        // Async wait with timeout — avoids blocking MainActor
+        // Async wait with timeout — avoids blocking the cooperative thread pool
         let exitCode: Int32 = await withCheckedContinuation { continuation in
-            // Timeout enforcement
             let timeoutTask = DispatchWorkItem {
                 if proc.isRunning { proc.terminate() }
             }
@@ -293,8 +332,9 @@ actor ToolExecutor {
             }
         }
 
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        // Pipes are already drained by readabilityHandler — just collect the data
+        let stdoutData = stdoutAccum.data
+        let stderrData = stderrAccum.data
 
         var output = String(data: stdoutData, encoding: .utf8) ?? ""
         let stderr = String(data: stderrData, encoding: .utf8) ?? ""
@@ -368,8 +408,15 @@ actor ToolExecutor {
         sendProc.arguments = ["send-keys", "-t", sessionName, "bash '\(scriptPath)'", "Enter"]
         sendProc.standardOutput = FileHandle.nullDevice
         sendProc.standardError = FileHandle.nullDevice
-        try? sendProc.run()
-        sendProc.waitUntilExit()
+        do {
+            try sendProc.run()
+            // Async wait — avoids blocking the cooperative thread pool
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                sendProc.terminationHandler = { _ in cont.resume() }
+            }
+        } catch {
+            wtLog("[ToolExecutor] bashViaTmux: failed to send keys — \(error)")
+        }
 
         // Poll for completion (200ms intervals, up to timeout)
         let deadline = Date().addingTimeInterval(Double(timeoutSecs))

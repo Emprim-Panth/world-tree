@@ -33,10 +33,10 @@ struct ProcessingBanner: View {
 // MARK: - Active Jobs Section
 
 /// Shows background jobs that are actively running.
-/// Polls JobQueue every 2 seconds so the list stays current without @Published.
+/// Polls JobQueue every 5 seconds, only when jobs exist.
 struct ActiveJobsSection: View {
     @State private var jobs: [WorldTreeJob] = []
-    private let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    @State private var pollTimer: Timer?
 
     var body: some View {
         Group {
@@ -69,12 +69,32 @@ struct ActiveJobsSection: View {
                 .padding(.bottom, 8)
             }
         }
-        .onAppear { refresh() }
-        .onReceive(timer) { _ in refresh() }
+        .onAppear {
+            refresh()
+            startPolling()
+        }
+        .onDisappear {
+            pollTimer?.invalidate()
+            pollTimer = nil
+        }
     }
 
     private func refresh() {
         jobs = JobQueue.shared.activeJobs()
+        // Stop polling when no jobs — saves CPU
+        if jobs.isEmpty {
+            pollTimer?.invalidate()
+            pollTimer = nil
+        } else if pollTimer == nil {
+            startPolling()
+        }
+    }
+
+    private func startPolling() {
+        guard pollTimer == nil else { return }
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+            Task { @MainActor in refresh() }
+        }
     }
 }
 

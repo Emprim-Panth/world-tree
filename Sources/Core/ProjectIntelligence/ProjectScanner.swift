@@ -170,29 +170,52 @@ final class ProjectScanner {
         )
     }
     
-    /// Run a git command and return stdout
+    /// Run a git command and return stdout.
+    /// Uses readabilityHandler + terminationHandler to avoid blocking cooperative threads
+    /// and prevent pipe buffer deadlocks.
     private func runGitCommand(at path: String, args: [String]) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = args
         process.currentDirectoryURL = URL(fileURLWithPath: path)
-        
+
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
-        
+        process.standardError = FileHandle.nullDevice  // Discard stderr to /dev/null
+
+        // Drain stdout incrementally to avoid pipe buffer deadlock
+        let accum = PipeAccumulator()
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                pipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                accum.append(data)
+            }
+        }
+
         do {
             try process.run()
-            process.waitUntilExit()
-            
-            guard process.terminationStatus == 0 else { return nil }
-            
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return output?.isEmpty == false ? output : nil
         } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
             return nil
         }
+
+        // Use a semaphore with short timeout — this runs on a GCD utility queue
+        // (via Task.detached in the caller), NOT on the cooperative thread pool.
+        let sem = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in sem.signal() }
+        if sem.wait(timeout: .now() + .seconds(10)) == .timedOut {
+            process.terminate()
+            pipe.fileHandleForReading.readabilityHandler = nil
+            return nil
+        }
+
+        guard process.terminationStatus == 0 else { return nil }
+
+        let data = accum.data
+        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return output?.isEmpty == false ? output : nil
     }
 }
 

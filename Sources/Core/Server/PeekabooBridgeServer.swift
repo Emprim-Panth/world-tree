@@ -116,7 +116,13 @@ final class PeekabooBridgeServer {
             }
             guard clientFD >= 0 else { continue }
             connectionSemaphore.wait()
-            Thread.detachNewThread { self.handleClient(fd: clientFD) }
+            Thread.detachNewThread { [weak self] in
+                guard let self else {
+                    close(clientFD)
+                    return
+                }
+                self.handleClient(fd: clientFD)
+            }
         }
     }
 
@@ -125,6 +131,10 @@ final class PeekabooBridgeServer {
     private func handleClient(fd: Int32) {
         defer { connectionSemaphore.signal(); close(fd) }
         wtLog("[PeekabooBridge] Client connected fd=\(fd)")
+
+        // Set a 30-second read timeout to prevent stale connections from holding semaphore slots
+        var tv = timeval(tv_sec: 30, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
         var buffer = Data()
         var chunk = [UInt8](repeating: 0, count: 65_536)
@@ -235,7 +245,8 @@ final class PeekabooBridgeServer {
 
         // Task.detached prevents cancellation propagation from any parent task context.
         // SCK APIs work from any thread.
-        Task.detached { [self] in
+        Task.detached { [weak self] in
+            guard let self else { sem.signal(); return }
             do {
                 let content = try await SCShareableContent.current
                 let cgImage = try await self.pickAndCapture(

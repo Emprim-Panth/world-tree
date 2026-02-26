@@ -352,16 +352,18 @@ class DocumentEditorViewModel: ObservableObject {
     // MARK: - 60fps Token Batching (CADisplayLink-equivalent via main-RunLoop Timer)
 
     /// Accumulated tokens since the last frame flush.
-    /// Written per-token; flushed to streamingContent at ~60fps by streamFlushTimer.
+    /// Written per-token; flushed to streamingContent at ~15fps by streamFlushTimer.
     private var pendingTokenBuffer = ""
 
-    /// Fires at 60fps on the main RunLoop to flush pendingTokenBuffer → streamingContent.
-    /// Using a Timer keyed to .common run-loop mode ensures it fires even during scroll tracking.
+    /// Fires at 15fps on the main RunLoop to flush pendingTokenBuffer → streamingContent.
+    /// 15fps is perceptually smooth for text streaming while reducing SwiftUI view
+    /// re-evaluation load by 4x compared to 60fps. Critical when many WKWebView-backed
+    /// code blocks are in the view tree — each evaluation walks all NSViewRepresentable wrappers.
     private var streamFlushTimer: Timer?
 
     private func startStreamBatching() {
         guard streamFlushTimer == nil else { return }
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1.0 / 15.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.flushPendingTokens() }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -374,7 +376,7 @@ class DocumentEditorViewModel: ObservableObject {
         flushPendingTokens()  // drain any remaining tokens
     }
 
-    /// Drain accumulated tokens to streamingContent — called at 60fps.
+    /// Drain accumulated tokens to streamingContent — called at 15fps.
     private func flushPendingTokens() {
         guard !pendingTokenBuffer.isEmpty else { return }
         let chunk = pendingTokenBuffer
@@ -976,9 +978,9 @@ class DocumentEditorViewModel: ObservableObject {
                     + "\nEND CONTEXT"
             }()
 
-            // Prefer the sidebar-selected project path when available;
-            // fall back to the tree's stored project name.
-            let resolvedProject = AppState.shared.selectedProjectPath.flatMap {
+            // Branch working directory takes priority; fall back to sidebar-selected project.
+            let resolvedWorkingDir = workingDirectory ?? AppState.shared.selectedProjectPath
+            let resolvedProject = resolvedWorkingDir.flatMap {
                 URL(fileURLWithPath: $0).lastPathComponent
             } ?? cachedProject
 
@@ -988,7 +990,7 @@ class DocumentEditorViewModel: ObservableObject {
                 sessionId: sessionId,
                 branchId: branchId,
                 model: model,
-                workingDirectory: AppState.shared.selectedProjectPath ?? workingDirectory,
+                workingDirectory: resolvedWorkingDir,
                 project: resolvedProject,
                 parentSessionId: cachedParentSessionId,
                 isNewSession: isNew,
@@ -1026,6 +1028,7 @@ class DocumentEditorViewModel: ObservableObject {
                 case .toolStart(let name, let input):
                     let activity = ToolActivity(name: name, input: input, status: .running)
                     currentTool = activity.displayDescription
+                    BranchTerminalManager.shared.send(to: branchId, text: "\r\n\u{1B}[2m⟩ \(activity.displayDescription)\u{1B}[0m\r\n")
 
                 case .toolEnd:
                     currentTool = nil

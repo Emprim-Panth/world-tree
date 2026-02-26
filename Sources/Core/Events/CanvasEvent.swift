@@ -59,6 +59,8 @@ final class EventStore {
     /// In-memory buffer for batch writes (reduces DB pressure during streaming)
     private var buffer: [WorldTreeEvent] = []
     private let batchSize = 20
+    /// Hard cap on buffer size — prevents unbounded growth if DB is unavailable
+    private let maxBufferSize = 500
     private var flushTask: Task<Void, Never>?
 
     private init() {}
@@ -118,8 +120,13 @@ final class EventStore {
             }
         } catch {
             wtLog("[EventStore] Failed to flush \(events.count) events: \(error)")
-            // Put events back to avoid silent data loss
-            buffer.insert(contentsOf: events, at: 0)
+            // Put events back to avoid silent data loss — but cap buffer size
+            // to prevent unbounded growth if DB stays unavailable
+            if buffer.count + events.count <= maxBufferSize {
+                buffer.insert(contentsOf: events, at: 0)
+            } else {
+                wtLog("[EventStore] Buffer at cap (\(maxBufferSize)) — dropping \(events.count) events")
+            }
         }
     }
 

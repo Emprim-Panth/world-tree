@@ -61,7 +61,7 @@ final class ClaudeService {
                 return
             }
 
-            Task {
+            let task = Task {
                 do {
                     let url = URL(string: "\(baseURL)/messages")!
                     var request = URLRequest(url: url)
@@ -129,6 +129,11 @@ final class ClaudeService {
                 } catch {
                     continuation.finish(throwing: error)
                 }
+            }
+
+            // Cancel the spawned Task when the stream is abandoned — prevents leak
+            continuation.onTermination = { _ in
+                task.cancel()
             }
         }
     }

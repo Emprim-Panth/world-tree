@@ -39,6 +39,10 @@ final class WorldTreeServer: ObservableObject {
     private var pingTask: Task<Void, Never>?
     private let rateLimiter = AuthRateLimiter()
 
+    /// Exponential backoff for listener restart — prevents restart storm on port conflict.
+    private var restartAttempts = 0
+    private let maxRestartAttempts = 5
+
     private static let iso8601 = ISO8601DateFormatter()
 
     var configuredToken: String {
@@ -81,6 +85,7 @@ final class WorldTreeServer: ObservableObject {
                         self.isRunning = true
                         self.startedAt = Date()
                         self.lastError = nil
+                        self.restartAttempts = 0
                         self.writeStateFile(ngrokURL: nil)
                         wtLog("[WorldTreeServer] Ready on port \(Self.port)")
                         // Discover ngrok tunnel URL (if running) after a short delay
@@ -91,10 +96,16 @@ final class WorldTreeServer: ObservableObject {
                     case .failed(let error):
                         self.isRunning = false
                         self.lastError = error.localizedDescription
-                        wtLog("[WorldTreeServer] Failed: \(error) — restarting in 5s")
-                        Task { @MainActor [weak self] in
-                            try? await Task.sleep(for: .seconds(5))
-                            self?.start()
+                        self.restartAttempts += 1
+                        if self.restartAttempts <= self.maxRestartAttempts {
+                            let delay = min(5 * Int(pow(2.0, Double(self.restartAttempts - 1))), 300)
+                            wtLog("[WorldTreeServer] Failed: \(error) — restarting in \(delay)s (attempt \(self.restartAttempts)/\(self.maxRestartAttempts))")
+                            Task { @MainActor [weak self] in
+                                try? await Task.sleep(for: .seconds(delay))
+                                self?.start()
+                            }
+                        } else {
+                            wtLog("[WorldTreeServer] Failed: \(error) — giving up after \(self.maxRestartAttempts) attempts")
                         }
                     case .cancelled:
                         self.isRunning = false
@@ -578,7 +589,9 @@ final class WorldTreeServer: ObservableObject {
                 } catch {
                     wtLog("[WorldTreeServer] Failed to persist assistant message: \(error)")
                 }
-                sendSSEChunk(connection, #"{"done":true,"response":"\#(esc(fullResponse))"}"#)
+                // Only send length — clients already have the full text from token events.
+                // Sending the entire response again doubled peak memory usage.
+                sendSSEChunk(connection, #"{"done":true,"response_length":\#(fullResponse.count)}"#)
                 sendSSEClose(connection)
                 return
 
@@ -829,6 +842,8 @@ extension WorldTreeServer {
     /// Remove a WebSocket client (disconnect or close).
     private func removeWebSocketClient(_ clientId: String, code: UInt16, reason: String?) {
         guard webSocketClients.removeValue(forKey: clientId) != nil else { return }
+        // Clean up any branch subscriptions for this client
+        SubscriptionManager.shared.remove(clientId: clientId)
         wtLog("[WorldTreeServer] WebSocket client disconnected: \(clientId) (code: \(code), remaining: \(webSocketClients.count))")
 
         // Stop ping timer if no clients remain

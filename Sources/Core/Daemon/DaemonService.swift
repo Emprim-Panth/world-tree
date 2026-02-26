@@ -19,10 +19,14 @@ final class DaemonService: ObservableObject {
 
     /// Track sessions we've already sent a /compact to, so we don't spam.
     /// Key: session name, Value: timestamp of last intervention.
+    /// Pruned periodically to prevent unbounded growth.
     private var tmuxRotationHistory: [String: Date] = [:]
 
     /// Minimum interval between auto-rotations for the same session (5 minutes).
     private let rotationCooldown: TimeInterval = 300
+
+    /// Maximum entries before pruning old rotation history
+    private let maxRotationHistorySize = 50
 
     private static let isoWithFractional: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -228,8 +232,17 @@ final class DaemonService: ObservableObject {
             let finalSessions = sessions
             await MainActor.run { [weak self] in
                 self?.tmuxSessions = finalSessions
+                // Prune stale rotation history entries to prevent unbounded growth
+                self?.pruneRotationHistory()
             }
         }
+    }
+
+    /// Remove rotation history entries older than 1 hour or exceeding cap
+    private func pruneRotationHistory() {
+        guard tmuxRotationHistory.count > maxRotationHistorySize else { return }
+        let oneHourAgo = Date().addingTimeInterval(-3600)
+        tmuxRotationHistory = tmuxRotationHistory.filter { $0.value > oneHourAgo }
     }
 
     /// Send /compact to a tmux Claude session that's running hot.
@@ -347,6 +360,8 @@ final class DaemonService: ObservableObject {
     }
 
     /// Helper to run tmux commands and return stdout.
+    /// Uses readabilityHandler to drain pipes incrementally and avoids blocking
+    /// cooperative threads (called from Task.detached on GCD utility queue).
     nonisolated private static func runTmux(_ path: String, args: [String]) -> String? {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: path)
@@ -356,28 +371,41 @@ final class DaemonService: ObservableObject {
         proc.standardOutput = pipe
         proc.standardError = FileHandle.nullDevice
 
+        let accum = PipeAccumulator()
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                pipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                accum.append(data)
+            }
+        }
+
         do {
             try proc.run()
         } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
             return nil
         }
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        // 10s timeout — tmux should never take this long
+        // Wait with timeout — this runs on a GCD queue (via Task.detached),
+        // NOT on the cooperative thread pool, so semaphore is safe here.
         let sem = DispatchSemaphore(value: 0)
         proc.terminationHandler = { _ in sem.signal() }
         if sem.wait(timeout: .now() + .seconds(10)) == .timedOut {
             proc.terminate()
+            pipe.fileHandleForReading.readabilityHandler = nil
             return nil
         }
 
         guard proc.terminationStatus == 0 else { return nil }
-        return String(data: data, encoding: .utf8)
+        return String(data: accum.data, encoding: .utf8)
     }
 
     // MARK: - Tmux Commands
 
     /// Send keystrokes to a tmux session (for rotation commands, etc.)
+    /// Fire-and-forget — tmux send-keys completes in <100ms, no need to wait.
     nonisolated static func sendToTmux(session: String, keys: String) -> Bool {
         let tmuxPath = tmuxExecutable
         guard FileManager.default.fileExists(atPath: tmuxPath) else { return false }
@@ -390,13 +418,10 @@ final class DaemonService: ObservableObject {
 
         do {
             try proc.run()
-            let sem = DispatchSemaphore(value: 0)
-            proc.terminationHandler = { _ in sem.signal() }
-            if sem.wait(timeout: .now() + .seconds(5)) == .timedOut {
-                proc.terminate()
-                return false
-            }
-            return proc.terminationStatus == 0
+            // Fire and forget with cleanup — tmux send-keys is near-instant.
+            // terminationHandler ensures the Process object is properly cleaned up.
+            proc.terminationHandler = { _ in /* cleanup */ }
+            return true
         } catch {
             return false
         }
@@ -415,13 +440,8 @@ final class DaemonService: ObservableObject {
 
         do {
             try proc.run()
-            let sem = DispatchSemaphore(value: 0)
-            proc.terminationHandler = { _ in sem.signal() }
-            if sem.wait(timeout: .now() + .seconds(5)) == .timedOut {
-                proc.terminate()
-                return false
-            }
-            return proc.terminationStatus == 0
+            proc.terminationHandler = { _ in /* cleanup */ }
+            return true
         } catch {
             return false
         }

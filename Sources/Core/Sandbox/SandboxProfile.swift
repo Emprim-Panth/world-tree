@@ -160,12 +160,27 @@ struct LocalExecutor: ExecutionEnvironment {
         proc.standardOutput = stdoutPipe
         proc.standardError = stderrPipe
 
-        try proc.run()
+        // Drain pipes incrementally to prevent 64KB buffer deadlock
+        let stdoutAccum = PipeAccumulator()
+        let stderrAccum = PipeAccumulator()
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                stdoutAccum.append(data)
+            }
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                stderrAccum.append(data)
+            }
+        }
 
-        // Read pipe data BEFORE waiting for exit to avoid pipe buffer deadlock.
-        // If the process writes >64KB, it blocks waiting for the reader.
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        try proc.run()
 
         let exitCode: Int32 = await withCheckedContinuation { continuation in
             proc.terminationHandler = { process in
@@ -173,8 +188,8 @@ struct LocalExecutor: ExecutionEnvironment {
             }
         }
 
-        let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+        let stdout = String(data: stdoutAccum.data, encoding: .utf8) ?? ""
+        let stderr = String(data: stderrAccum.data, encoding: .utf8) ?? ""
 
         return (stdout, stderr, exitCode)
     }
@@ -204,10 +219,27 @@ struct SandboxedExecutor: ExecutionEnvironment {
         proc.standardOutput = stdoutPipe
         proc.standardError = stderrPipe
 
-        try proc.run()
+        // Drain pipes incrementally to prevent 64KB buffer deadlock
+        let stdoutAccum = PipeAccumulator()
+        let stderrAccum = PipeAccumulator()
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                stdoutAccum.append(data)
+            }
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                stderrAccum.append(data)
+            }
+        }
 
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        try proc.run()
 
         let exitCode: Int32 = await withCheckedContinuation { continuation in
             proc.terminationHandler = { process in
@@ -215,8 +247,8 @@ struct SandboxedExecutor: ExecutionEnvironment {
             }
         }
 
-        let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+        let stdout = String(data: stdoutAccum.data, encoding: .utf8) ?? ""
+        let stderr = String(data: stderrAccum.data, encoding: .utf8) ?? ""
 
         return (stdout, stderr, exitCode)
     }

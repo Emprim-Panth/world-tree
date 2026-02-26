@@ -95,11 +95,33 @@ actor JobQueue {
         proc.standardOutput = stdoutPipe
         proc.standardError = stderrPipe
 
+        // Drain pipes incrementally to prevent 64KB pipe buffer deadlock
+        let stdoutAccum = PipeAccumulator()
+        let stderrAccum = PipeAccumulator()
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                stdoutAccum.append(data)
+            }
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                stderrAccum.append(data)
+            }
+        }
+
         runningProcesses[job.id] = proc
 
         do {
             try proc.run()
         } catch {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
             mutableJob.status = .failed
             mutableJob.error = "Failed to launch: \(error.localizedDescription)"
             mutableJob.completedAt = Date()
@@ -134,8 +156,9 @@ actor JobQueue {
         }
         runningProcesses.removeValue(forKey: job.id)
 
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        // Pipes already drained by readabilityHandler
+        let stdoutData = stdoutAccum.data
+        let stderrData = stderrAccum.data
 
         var output = String(data: stdoutData, encoding: .utf8) ?? ""
         let stderr = String(data: stderrData, encoding: .utf8) ?? ""

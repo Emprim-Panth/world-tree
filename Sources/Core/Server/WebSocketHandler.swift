@@ -254,6 +254,10 @@ final class WebSocketConnection: @unchecked Sendable {
     private let lock = NSLock()
     private var isClosed = false
 
+    /// Maximum allowed size for reassembled fragmented messages (10MB).
+    /// Prevents unbounded memory growth from malicious or malformed clients.
+    private let maxFragmentSize = 10 * 1024 * 1024
+
     init(id: String, connection: NWConnection) {
         self.id = id
         self.connection = connection
@@ -347,6 +351,12 @@ final class WebSocketConnection: @unchecked Sendable {
                 // Start of fragmented message
                 fragmentOpcode = frame.opcode
                 fragmentBuffer = frame.payload
+                if fragmentBuffer.count > maxFragmentSize {
+                    fragmentOpcode = nil
+                    fragmentBuffer = Data()
+                    sendCloseAndDisconnect(code: 1009, reason: "Message too large")
+                    return
+                }
             }
 
         case .continuation:
@@ -355,6 +365,12 @@ final class WebSocketConnection: @unchecked Sendable {
                 return
             }
             fragmentBuffer.append(frame.payload)
+            if fragmentBuffer.count > maxFragmentSize {
+                fragmentOpcode = nil
+                fragmentBuffer = Data()
+                sendCloseAndDisconnect(code: 1009, reason: "Message too large")
+                return
+            }
             if frame.fin {
                 // Fragment complete
                 let opcode = fragmentOpcode!

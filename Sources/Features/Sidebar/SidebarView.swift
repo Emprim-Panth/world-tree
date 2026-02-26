@@ -167,7 +167,7 @@ struct SidebarView: View {
 
             // Unified project list — projects ARE the grouping, trees live inside them
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     // Active jobs indicator — only visible when jobs are running
                     ActiveJobsSection()
 

@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// Syntax-highlighted code block view.
-/// Uses ArtifactRendererView (WKWebView + highlight.js) for all languages.
-/// Mermaid, HTML, and SVG blocks get an additional "Preview" toggle.
+/// Uses ArtifactRendererView (WKWebView + highlight.js) for renderable content
+/// and visible code blocks within the WebView pool cap.
+/// Falls back to a lightweight NSFont-based text display when the pool is full.
 struct CodeBlockView: View {
     let code: String
     let language: String?
@@ -13,6 +14,10 @@ struct CodeBlockView: View {
     @State private var justCopied = false
     @State private var syntaxHeight: CGFloat = 80
     @State private var previewHeight: CGFloat = 500
+    @State private var isVisible = false
+
+    /// Unique ID for pool registration
+    @State private var poolId = UUID().uuidString
 
     // Mermaid/HTML/SVG default to preview-on; source code defaults to source-on
     @State private var showPreview: Bool
@@ -22,6 +27,14 @@ struct CodeBlockView: View {
         self.language = language
         let lang = language?.lowercased() ?? ""
         _showPreview = State(initialValue: ["mermaid", "html", "htm", "svg", "graph"].contains(lang))
+    }
+
+    /// Whether to use a full WKWebView or the lightweight fallback.
+    /// Renderable content (mermaid, html, svg) always gets a WKWebView.
+    /// Plain code only gets a WKWebView if there's pool capacity.
+    private var useWebView: Bool {
+        if isRenderable { return true }
+        return isVisible && WebViewPool.shared.hasCapacity
     }
 
     var body: some View {
@@ -80,13 +93,26 @@ struct CodeBlockView: View {
 
             // ── Syntax-highlighted source ─────────────────────────────────
             if !showPreview {
-                ArtifactRendererView(
-                    content: code,
-                    mode: .syntax(language: language),
-                    renderedHeight: $syntaxHeight
-                )
-                .frame(height: syntaxHeight)
-                .transition(.opacity)
+                if useWebView {
+                    ArtifactRendererView(
+                        content: code,
+                        mode: .syntax(language: language),
+                        renderedHeight: $syntaxHeight
+                    )
+                    .frame(height: syntaxHeight)
+                    .transition(.opacity)
+                } else {
+                    // Lightweight fallback — plain monospace text with no WKWebView
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        Text(code)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .padding(8)
+                    }
+                    .frame(maxHeight: 400)
+                    .transition(.opacity)
+                }
             }
 
             // ── Preview (mermaid / html / svg) ────────────────────────────
@@ -112,6 +138,11 @@ struct CodeBlockView: View {
         )
         .cornerRadius(6)
         .onHover { isHoveringCode = $0 }
+        .onAppear { isVisible = true }
+        .onDisappear {
+            isVisible = false
+            WebViewPool.shared.release(id: poolId)
+        }
     }
 
     // MARK: - Renderable Language Detection

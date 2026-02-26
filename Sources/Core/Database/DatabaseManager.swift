@@ -6,11 +6,20 @@ import GRDB
 /// - WAL mode for concurrent read/write
 /// - Foreign keys enabled
 /// - 5 second busy timeout
+///
+/// SAFETY: WAL mode with Dropbox sync requires careful handling.
+/// Dropbox syncs each file independently — the -wal and -shm files can
+/// become stale relative to the main DB, risking SIGBUS on mmap.
+/// Mitigations: aggressive checkpointing + synchronous=NORMAL.
 @MainActor
 final class DatabaseManager {
     static let shared = DatabaseManager()
 
     private(set) var dbPool: DatabasePool?
+
+    /// WAL checkpoint timer — runs every 30 seconds to keep WAL size bounded
+    /// and minimize risk of stale WAL files on Dropbox.
+    private var checkpointTimer: Timer?
 
     private init() {}
 
@@ -24,13 +33,21 @@ final class DatabaseManager {
             try db.execute(sql: "PRAGMA journal_mode = WAL")
             try db.execute(sql: "PRAGMA foreign_keys = ON")
             try db.execute(sql: "PRAGMA busy_timeout = 5000")
-            try db.execute(sql: "PRAGMA wal_autocheckpoint = 1000")
+            // Checkpoint after every 100 pages (~400KB) instead of 1000 (~4MB)
+            // to keep WAL small — critical for Dropbox sync safety
+            try db.execute(sql: "PRAGMA wal_autocheckpoint = 100")
+            // NORMAL sync is safe with WAL mode and significantly reduces
+            // I/O overhead vs FULL. Data is still durable (WAL protects against corruption).
+            try db.execute(sql: "PRAGMA synchronous = NORMAL")
         }
 
         dbPool = try DatabasePool(path: path, configuration: config)
 
         // Run canvas-specific migrations
         try MigrationManager.migrate(dbPool!)
+
+        // Start periodic WAL checkpoint to keep file size bounded
+        startCheckpointTimer()
     }
 
     /// Resolves database path — priority order:
@@ -76,6 +93,50 @@ final class DatabaseManager {
     func write<T>(_ block: (Database) throws -> T) throws -> T {
         guard let dbPool else { throw DatabaseError.notConnected }
         return try dbPool.write(block)
+    }
+
+    /// Async read — runs on GRDB's reader queue, NOT on MainActor.
+    /// Use this for expensive queries to avoid blocking the main thread.
+    func asyncRead<T: Sendable>(_ block: @Sendable @escaping (Database) throws -> T) async throws -> T {
+        guard let dbPool else { throw DatabaseError.notConnected }
+        return try await dbPool.read(block)
+    }
+
+    /// Async write — runs on GRDB's writer queue, NOT on MainActor.
+    func asyncWrite<T: Sendable>(_ block: @Sendable @escaping (Database) throws -> T) async throws -> T {
+        guard let dbPool else { throw DatabaseError.notConnected }
+        return try await dbPool.write(block)
+    }
+
+    // MARK: - WAL Checkpoint Management
+
+    /// Periodically checkpoint WAL to keep file size bounded.
+    /// Critical for Dropbox sync — large WAL files are more likely to
+    /// cause stale-mmap SIGBUS when synced independently of the main DB.
+    private func startCheckpointTimer() {
+        checkpointTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.performCheckpoint()
+            }
+        }
+    }
+
+    private func performCheckpoint() {
+        guard let dbPool else { return }
+        do {
+            try dbPool.write { db in
+                // PASSIVE checkpoint — does not block readers/writers.
+                // Moves committed WAL pages back to the main database file.
+                try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE)")
+            }
+        } catch {
+            wtLog("[DatabaseManager] WAL checkpoint failed: \(error)")
+        }
+    }
+
+    func stopCheckpointTimer() {
+        checkpointTimer?.invalidate()
+        checkpointTimer = nil
     }
 }
 
