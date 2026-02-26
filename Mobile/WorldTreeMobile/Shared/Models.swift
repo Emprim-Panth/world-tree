@@ -96,6 +96,7 @@ struct SavedServer: Identifiable, Codable, Equatable {
 struct TreeSummary: Identifiable, Codable, Equatable {
     let id: String
     let name: String
+    let project: String?
     let updatedAt: String
     let messageCount: Int
 }

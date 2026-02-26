@@ -58,8 +58,6 @@ final class ProjectScanner {
            fileManager.fileExists(atPath: override) {
             return override
         }
-        let docsDev = "\(home)/Documents/Development"
-        if fileManager.fileExists(atPath: docsDev) { return docsDev }
         return "\(home)/Development"
     }
 

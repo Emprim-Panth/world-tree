@@ -72,8 +72,6 @@ final class WorldTreeServer: ObservableObject {
             let listener = try NWListener(using: .tcp, on: nwPort)
             self.listener = listener
 
-            configureBonjour(on: listener)
-
             listener.newConnectionHandler = { [weak self] connection in
                 // NWListener delivers on networkQueue; hop to MainActor for start()
                 Task { @MainActor [weak self] in self?.beginConnection(connection) }
@@ -171,7 +169,7 @@ final class WorldTreeServer: ObservableObject {
             return
         }
 
-        let name = "\(shortHostname):\(Self.port)"
+        let name = "\(shortHostname),\(Self.wsPort)"
         var txt = NWTXTRecord()
         txt["version"] = "1"
         txt["name"]    = "World Tree"
@@ -1163,6 +1161,7 @@ extension WorldTreeServer {
         do {
             let wsl = try NWListener(using: params, on: wsPort)
             wsListener = wsl
+            configureBonjour(on: wsl)
 
             wsl.newConnectionHandler = { [weak self] connection in
                 Task { @MainActor [weak self] in self?.handleNativeWSConnection(connection) }
@@ -1278,13 +1277,26 @@ extension WorldTreeServer {
     }
 
     /// Handle the first WebSocket message as an auth message.
-    /// Expected format: {"type":"auth","token":"<server-token>"}
+    /// Accepts both formats:
+    ///   Flat:     {"type":"auth","token":"<token>"}          (legacy)
+    ///   Envelope: {"type":"auth","payload":{"token":"..."}}  (WSMessage standard — iOS client)
     private func handleWSAuth(clientId: String, text: String) {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = json["type"] as? String, type == "auth",
-              let token = json["token"] as? String,
-              token == configuredToken else {
+              let type = json["type"] as? String, type == "auth" else {
+            wtLog("[WorldTreeServer] WS auth failed for \(clientId.prefix(8))")
+            pendingAuthClients.remove(clientId)
+            webSocketClients[clientId]?.wsConnection?.send(text: #"{"type":"error","message":"unauthorized"}"#)
+            webSocketClients[clientId]?.wsConnection?.sendCloseAndDisconnect(code: 4003, reason: "Unauthorized")
+            removeWebSocketClient(clientId, code: 4003, reason: "Unauthorized")
+            return
+        }
+
+        // Extract token from flat format or WSMessage envelope.
+        let receivedToken = (json["token"] as? String)
+            ?? ((json["payload"] as? [String: Any])?["token"] as? String)
+
+        guard let receivedToken, receivedToken == configuredToken else {
             wtLog("[WorldTreeServer] WS auth failed for \(clientId.prefix(8))")
             pendingAuthClients.remove(clientId)
             webSocketClients[clientId]?.wsConnection?.send(text: #"{"type":"error","message":"unauthorized"}"#)

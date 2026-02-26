@@ -171,8 +171,9 @@ final class ConnectionManager {
         state = .connected
         startReceiveLoop(task: task, generation: generation, server: server, token: token)
         startPingLoop()
-        // Request initial tree list immediately on connect.
-        await send(.listTrees())
+        // Auth handshake: first message must be {"type":"auth","token":"..."}.
+        // listTrees is sent after auth_ok is received (see handleMessage).
+        await send(.auth(token: token))
     }
 
     private func startReceiveLoop(
@@ -200,6 +201,11 @@ final class ConnectionManager {
     private func handleMessage(_ message: URLSessionWebSocketTask.Message) {
         switch message {
         case .string(let text):
+            // Consume auth_ok internally — request initial data and skip forwarding.
+            if text.contains("\"auth_ok\"") {
+                Task { @MainActor [weak self] in await self?.send(.listTrees()) }
+                return
+            }
             NotificationCenter.default.post(name: .webSocketMessageReceived, object: text)
         default:
             break

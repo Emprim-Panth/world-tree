@@ -209,7 +209,7 @@ private struct NearbyServerRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(server.name)
                         .font(.body)
-                    Text("\(server.host):\(server.port)")
+                    Text(verbatim: "\(server.host):\(server.port)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -236,7 +236,7 @@ private struct ServerRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(server.name)
                         .font(.body)
-                    Text("\(server.host):\(server.port)")
+                    Text(verbatim: "\(server.host):\(server.port)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if let connectedAt = server.lastConnectedAt {

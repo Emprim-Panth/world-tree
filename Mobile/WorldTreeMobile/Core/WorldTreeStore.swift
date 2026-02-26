@@ -24,6 +24,8 @@ final class WorldTreeStore {
     var activeToolChips: [ToolChip] = []
     /// True while a get_messages request is in-flight (no messages arrived yet).
     var isLoadingHistory: Bool = false
+    /// True while a list_branches request is in-flight (set when a tree is selected).
+    var isLoadingBranches: Bool = false
     /// Per-branch draft text. Key = branchId. Binding-compatible via draftText(for:).
     private var drafts: [String: String] = [:]
 
@@ -60,6 +62,7 @@ final class WorldTreeStore {
             }
         case "branches_list":
             if let payload = event.branches {
+                isLoadingBranches = false
                 branches = payload
                 if pendingNavigateToNewBranch {
                     pendingNavigateToNewBranch = false
@@ -171,6 +174,8 @@ extension WorldTreeStore {
     func selectTree(_ tree: TreeSummary) {
         currentTree = tree
         persistedTreeId = tree.id
+        isLoadingBranches = true
+        branches = []
     }
 
     /// Immediately append a user message so the UI shows it before the server echoes it back.
@@ -217,6 +222,7 @@ extension WorldTreeStore {
         isStreaming = false
         activeToolChips = []
         isLoadingHistory = false
+        isLoadingBranches = false
     }
 
     /// Called once after the tree list arrives. Navigates to the last-viewed tree if it still exists.

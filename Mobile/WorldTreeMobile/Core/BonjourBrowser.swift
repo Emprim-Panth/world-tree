@@ -86,10 +86,10 @@ final class BonjourBrowser {
 
     /// Parse service name into a `DiscoveredServer`.
     ///
-    /// The Mac World Tree server registers with name `"Hostname:Port"`.
+    /// The Mac World Tree server registers with name `"Hostname,Port"`.
     /// Fall back to `Constants.Network.defaultPort` when the port is absent.
     private func parseService(name serviceName: String) -> DiscoveredServer {
-        let parts = serviceName.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: true)
+        let parts = serviceName.split(separator: ",", maxSplits: 1, omittingEmptySubsequences: true)
         let displayName = parts.first.map(String.init) ?? serviceName
         let port = parts.count > 1 ? Int(String(parts[1])) ?? Constants.Network.defaultPort
                                    : Constants.Network.defaultPort

@@ -11,10 +11,18 @@ enum MessageParser {
     }
 
     /// Encode a client command to a JSON string for sending over WebSocket.
-    /// Emits the WSMessage envelope: { "type": "...", "payload": { ... } }
+    ///
+    /// Most commands use the envelope format: `{ "type": "...", "payload": { ... } }`.
+    /// Auth is a special case — the server's `handleWSAuth` reads `token` at the top level,
+    /// so auth produces a flat message: `{ "type": "auth", "token": "..." }`.
     static func encode(_ command: ClientCommand) -> String? {
         var dict: [String: Any] = ["type": command.type]
-        if let payload = command.payload {
+        if command.type == "auth" {
+            // Flat format — server expects {"type":"auth","token":"..."} not {"payload":{"token":"..."}}
+            if let payload = command.payload {
+                for (k, v) in payload { dict[k] = v }
+            }
+        } else if let payload = command.payload {
             dict["payload"] = payload
         }
         guard let data = try? JSONSerialization.data(withJSONObject: dict) else { return nil }
@@ -150,6 +158,10 @@ struct ClientCommand {
     let type: String
     /// Payload values — must be JSON-serializable (String, Int, Bool, nested dicts/arrays).
     let payload: [String: Any]?
+
+    static func auth(token: String) -> ClientCommand {
+        ClientCommand(type: "auth", payload: ["token": token])
+    }
 
     static func listTrees() -> ClientCommand {
         ClientCommand(type: "list_trees", payload: nil)

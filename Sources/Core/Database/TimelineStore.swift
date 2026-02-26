@@ -23,6 +23,12 @@ final class TimelineStore {
 
             let sinceStr = since.map { ISO8601DateFormatter().string(from: $0) } ?? "2000-01-01"
 
+            // Preflight: one query to check all optional tables at once.
+            let existingTables = try Set(String.fetchAll(db, sql: """
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name IN ('canvas_dispatches', 'knowledge', 'conversation_archive')
+                """))
+
             // 1. Sessions
             if eventTypes == nil || eventTypes!.contains(.session) {
                 let rows = try Row.fetchAll(db, sql: """
@@ -60,11 +66,7 @@ final class TimelineStore {
 
             // 2. Dispatches
             if eventTypes == nil || eventTypes!.contains(.dispatch) {
-                let hasDispatches = try Bool.fetchOne(db, sql: """
-                    SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='canvas_dispatches'
-                    """) ?? false
-
-                if hasDispatches {
+                if existingTables.contains("canvas_dispatches") {
                     let rows = try Row.fetchAll(db, sql: """
                         SELECT id, project, message, status, model, created_at
                         FROM canvas_dispatches
@@ -97,11 +99,7 @@ final class TimelineStore {
 
             // 3. Knowledge entries
             if eventTypes == nil || eventTypes!.contains(.knowledgeAdd) {
-                let hasKnowledge = try Bool.fetchOne(db, sql: """
-                    SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='knowledge'
-                    """) ?? false
-
-                if hasKnowledge {
+                if existingTables.contains("knowledge") {
                     let rows = try Row.fetchAll(db, sql: """
                         SELECT id, type, title, project, created_at, heat_score
                         FROM knowledge
@@ -135,11 +133,7 @@ final class TimelineStore {
 
             // 4. Conversation archives
             if eventTypes == nil || eventTypes!.contains(.archival) {
-                let hasArchive = try Bool.fetchOne(db, sql: """
-                    SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='conversation_archive'
-                    """) ?? false
-
-                if hasArchive {
+                if existingTables.contains("conversation_archive") {
                     let rows = try Row.fetchAll(db, sql: """
                         SELECT session_id, project, message_count, token_estimate,
                                compression_ratio, archived_at

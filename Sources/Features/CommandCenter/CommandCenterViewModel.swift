@@ -44,6 +44,8 @@ final class CommandCenterViewModel {
     var isShowingDispatchSheet = false
 
     private var observationTask: Task<Void, Never>?
+    /// Fingerprint of the last rebuild — skip if dispatches + jobs haven't changed.
+    private var lastRebuildFingerprint: String = ""
 
     // MARK: - Lifecycle
 
@@ -129,6 +131,11 @@ final class CommandCenterViewModel {
     // MARK: - Activity Grouping
 
     private func rebuildProjectActivities() {
+        // Skip rebuild when the underlying data hasn't changed.
+        let fingerprint = activeDispatches.map(\.id).joined() + activeJobs.map(\.id).joined()
+        guard fingerprint != lastRebuildFingerprint else { return }
+        lastRebuildFingerprint = fingerprint
+
         let tmuxSessions = DaemonService.shared.tmuxSessions
 
         var activities: [String: ProjectActivity] = [:]

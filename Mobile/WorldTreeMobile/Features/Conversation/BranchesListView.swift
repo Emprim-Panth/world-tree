@@ -35,9 +35,15 @@ struct BranchesListView: View {
             .foregroundStyle(.primary)
         }
         .overlay {
-            if store.branches.isEmpty {
+            if store.isLoadingBranches {
                 ProgressView()
                     .progressViewStyle(.circular)
+            } else if store.branches.isEmpty {
+                ContentUnavailableView(
+                    "No Branches",
+                    systemImage: "arrow.triangle.branch",
+                    description: Text("This conversation has no branches yet.")
+                )
             }
         }
     }
