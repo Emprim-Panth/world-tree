@@ -23,6 +23,7 @@ final class ClaudeBridge {
     static let shared = ClaudeBridge()
 
     private let home = FileManager.default.homeDirectoryForCurrentUser.path
+    private let contextLoader = ProjectContextLoader()
 
     @AppStorage(AppConstants.daemonChannelEnabledKey)
     private var daemonEnabled: Bool = true
@@ -197,19 +198,27 @@ final class ClaudeBridge {
         let isNewSession = !hasExistingSession(sessionId: sessionId)
 
         let thinkingEnabled = UserDefaults.standard.bool(forKey: "extendedThinkingEnabled")
+        let cwd = workingDirectory ?? resolveWorkingDirectory(nil, project: project)
 
         var context = ProviderSendContext(
             message: message,
             sessionId: sessionId,
             branchId: branchId,
             model: model,
-            workingDirectory: workingDirectory ?? resolveWorkingDirectory(nil, project: project),
+            workingDirectory: cwd,
             project: project,
             parentSessionId: parentSessionId,
             isNewSession: isNewSession,
             extendedThinking: thinkingEnabled
         )
         context.checkpointContext = checkpointContext
+
+        // Inject project context for CLI providers (AnthropicAPI does its own via ConversationStateManager)
+        let projectContext = loadProjectContextSync(project: project, workingDirectory: cwd)
+        if !projectContext.isEmpty {
+            let existing = context.recentContext ?? ""
+            context.recentContext = existing.isEmpty ? projectContext : "\(projectContext)\n\n\(existing)"
+        }
 
         wtLog("[ClaudeBridge] routing to \(ProviderManager.shared.activeProviderName), session=\(sessionId), parent=\(parentSessionId ?? "none")")
         return ProviderManager.shared.send(context: context)
@@ -231,6 +240,15 @@ final class ClaudeBridge {
         skipPermissions: Bool = true,
         systemPrompt: String? = nil
     ) -> AsyncStream<BridgeEvent> {
+        // Inject project context into system prompt if no override provided
+        let resolvedPrompt: String?
+        if let systemPrompt {
+            resolvedPrompt = systemPrompt
+        } else {
+            let projectCtx = loadProjectContextSync(project: project, workingDirectory: workingDirectory)
+            resolvedPrompt = projectCtx.isEmpty ? nil : projectCtx
+        }
+
         let context = DispatchContext(
             message: message,
             project: project,
@@ -240,7 +258,7 @@ final class ClaudeBridge {
             origin: origin,
             allowedTools: allowedTools,
             skipPermissions: skipPermissions,
-            systemPromptOverride: systemPrompt
+            systemPromptOverride: resolvedPrompt
         )
 
         wtLog("[ClaudeBridge] dispatching to Agent SDK: project=\(project), origin=\(origin.rawValue)")
@@ -257,6 +275,42 @@ final class ClaudeBridge {
 
     func cancel() {
         ProviderManager.shared.cancel()
+    }
+
+    // MARK: - Project Context
+
+    /// Load project context synchronously from the cache.
+    /// Uses cached data only (no git/filesystem calls) to avoid blocking the UI thread.
+    /// ProjectContextLoader.loadContext() is async — use loadProjectContextAsync() for full context.
+    private func loadProjectContextSync(project: String?, workingDirectory: String?) -> String {
+        guard let cwd = workingDirectory else { return "" }
+        let cache = ProjectCache()
+
+        // Try by path first, then by name
+        let cached: CachedProject?
+        if let byPath = try? cache.get(path: cwd) {
+            cached = byPath
+        } else if let name = project, let byName = try? cache.getByName(name) {
+            cached = byName
+        } else {
+            cached = nil
+        }
+
+        guard let project = cached else { return "" }
+
+        // Build context from cached data only (no async git calls)
+        var output = "# Project Context: \(project.name)\n"
+        output += "**Type:** \(project.type.displayName)\n"
+        output += "**Path:** `\(project.path)`\n"
+        if let branch = project.gitBranch {
+            output += "**Git Branch:** `\(branch)`"
+            if project.gitDirty { output += " (uncommitted changes)" }
+            output += "\n"
+        }
+        if let readme = project.readme, !readme.isEmpty {
+            output += "\n## README\n\(readme)\n"
+        }
+        return output
     }
 
     // MARK: - Helpers

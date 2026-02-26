@@ -15,30 +15,39 @@ enum DispatchRouter {
 
     /// Fire a programmatic dispatch through the Agent SDK provider.
     /// Returns a stream of BridgeEvents and the dispatch ID for tracking.
+    /// Returns nil with an error event if the provider is unavailable.
     static func dispatch(
         context: DispatchContext
     ) -> (id: String, stream: AsyncStream<BridgeEvent>) {
-        let provider = sdkProvider
+        guard let provider = resolveProvider() else {
+            let errorId = UUID().uuidString
+            let stream = AsyncStream<BridgeEvent> { continuation in
+                continuation.yield(.error("[DispatchRouter] AgentSDKProvider not available — check ProviderManager registration"))
+                continuation.finish()
+            }
+            return (id: errorId, stream: stream)
+        }
         return provider.dispatch(context: context)
     }
 
     /// Cancel a specific dispatch by ID
     static func cancelDispatch(_ dispatchId: String) {
-        sdkProvider.cancelDispatch(dispatchId)
+        resolveProvider()?.cancelDispatch(dispatchId)
     }
 
     /// Check active dispatches
     static var activeDispatchCount: Int {
-        sdkProvider.activeDispatchIds.count
+        resolveProvider()?.activeDispatchIds.count ?? 0
     }
 
     // MARK: - Provider Access
 
     /// Resolves the Agent SDK provider from ProviderManager.
-    /// Always goes through ProviderManager to guarantee a single shared instance.
-    private static var sdkProvider: AgentSDKProvider {
+    /// Returns nil if the provider isn't registered (no crash).
+    private static func resolveProvider() -> AgentSDKProvider? {
         guard let provider = ProviderManager.shared.provider(withId: "agent-sdk") as? AgentSDKProvider else {
-            fatalError("[DispatchRouter] AgentSDKProvider not registered in ProviderManager")
+            wtLog("[DispatchRouter] AgentSDKProvider not registered in ProviderManager")
+            return nil
         }
         return provider
     }

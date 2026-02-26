@@ -272,11 +272,12 @@ enum MigrationManager {
         // Migration 12: FTS5 with porter tokenizer + sync triggers
         // The v11 FTS5 table has no tokenizer (defaults to unicode61, no stemming)
         // and no sync triggers (index goes stale immediately after creation).
+        // All operations must succeed as a unit — partial FTS creates a corrupt index.
         migrator.registerMigration("v12_fts5_porter_triggers") { db in
             // Drop the old FTS table and recreate with porter stemming
-            try? db.execute(sql: "DROP TABLE IF EXISTS messages_fts")
+            try db.execute(sql: "DROP TABLE IF EXISTS messages_fts")
 
-            try? db.execute(sql: """
+            try db.execute(sql: """
                 CREATE VIRTUAL TABLE messages_fts USING fts5(
                     content,
                     content=messages,
@@ -286,19 +287,19 @@ enum MigrationManager {
                 """)
 
             // Sync triggers — keep FTS index in lockstep with messages table
-            try? db.execute(sql: """
+            try db.execute(sql: """
                 CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
                     INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
                 END
                 """)
 
-            try? db.execute(sql: """
+            try db.execute(sql: """
                 CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
                     INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.id, old.content);
                 END
                 """)
 
-            try? db.execute(sql: """
+            try db.execute(sql: """
                 CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
                     INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.id, old.content);
                     INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
@@ -306,7 +307,7 @@ enum MigrationManager {
                 """)
 
             // Rebuild index from all existing messages
-            try? db.execute(sql: "INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+            try db.execute(sql: "INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
         }
 
         // Migration 13: Dispatch queue for Agent SDK programmatic dispatch

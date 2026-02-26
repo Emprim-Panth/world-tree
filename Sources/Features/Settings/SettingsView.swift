@@ -554,7 +554,7 @@ struct SettingsView: View {
                 }
 
                 HStack {
-                    TextField("https://…ngrok-free.app  or  http://192.168.x.x:5865",
+                    TextField("https://…ngrok-free.app  or  ws://192.168.x.x:5866",
                               text: $remoteURLInput)
                         .textFieldStyle(.roundedBorder)
                         .font(.caption).monospaced()
