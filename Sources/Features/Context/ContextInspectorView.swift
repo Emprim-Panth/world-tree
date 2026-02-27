@@ -1,6 +1,21 @@
 import SwiftUI
 import GRDB
 
+// MARK: - Token Estimation Constants
+
+private enum TokenEstimation {
+    /// Approximate characters per token for text content (GPT/Claude tokenizers average ~3.5 chars/token)
+    static let charsPerToken: Double = 3.5
+    /// Estimated token overhead for a tool_use content block (JSON structure + tool name + input schema)
+    static let toolUseOverhead: Int = 50
+    /// Estimated token cost for an inline base64 image block
+    static let imageOverhead: Int = 500
+    /// Number of most-recent messages that are always protected from deletion
+    static let recentMessageCount: Int = 4
+    /// Target percentage of maxTokens after compaction
+    static let compactionTargetRatio: Double = 0.6
+}
+
 /// Context window inspector and management
 struct ContextInspectorView: View {
     @StateObject private var viewModel: ContextInspectorViewModel
@@ -211,12 +226,12 @@ class ContextInspectorViewModel: ObservableObject {
                         switch block {
                         case .text(let t): return acc + tokenEstimate(for: t)
                         case .toolResult(let tr): return acc + tokenEstimate(for: tr.content)
-                        case .toolUse: return acc + 50
-                        case .image: return acc + 500
+                        case .toolUse: return acc + TokenEstimation.toolUseOverhead
+                        case .image: return acc + TokenEstimation.imageOverhead
                         }
                     }
                     totalTokens += tokens
-                    let isRecent = i >= messages.count - 4
+                    let isRecent = i >= messages.count - TokenEstimation.recentMessageCount
                     builtSections.append(ContextSection(
                         id: UUID(),
                         title: "[\(role)] Turn \(turnIndex + 1)",
@@ -301,7 +316,7 @@ class ContextInspectorViewModel: ObservableObject {
     }
 
     private func tokenEstimate(for text: String) -> Int {
-        max(1, Int(Double(text.count) / 3.5))
+        max(1, Int(Double(text.count) / TokenEstimation.charsPerToken))
     }
 
     func togglePin(_ sectionId: UUID) {
@@ -348,7 +363,7 @@ class ContextInspectorViewModel: ObservableObject {
             .sorted { $0.timestamp < $1.timestamp }
 
         var tokensFreed = 0
-        let targetTokens = Int(Double(maxTokens) * 0.6) // Compact to 60%
+        let targetTokens = Int(Double(maxTokens) * TokenEstimation.compactionTargetRatio)
         var sectionsToRemoveIds: [UUID] = []
 
         for section in unpinned {

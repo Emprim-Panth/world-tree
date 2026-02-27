@@ -62,6 +62,8 @@ final class EventStore {
     /// Hard cap on buffer size — prevents unbounded growth if DB is unavailable
     private let maxBufferSize = 500
     private var flushTask: Task<Void, Never>?
+    /// Guards against overlapping flush operations (rapid triggers could overlap the async DB write)
+    private var isFlushingInProgress = false
 
     private init() {}
 
@@ -104,13 +106,16 @@ final class EventStore {
     }
 
     /// Force write all buffered events to DB (async — does not block UI).
+    /// Guarded: if a flush is already in progress, this call is a no-op (the in-flight
+    /// flush will pick up any events buffered before it started).
     func flush() {
         flushTask?.cancel()
         flushTask = nil
 
-        guard !buffer.isEmpty else { return }
+        guard !buffer.isEmpty, !isFlushingInProgress else { return }
         let events = buffer
         buffer = []
+        isFlushingInProgress = true
 
         Task {
             do {
@@ -129,6 +134,13 @@ final class EventStore {
                     } else {
                         wtLog("[EventStore] Buffer at cap (\(self.maxBufferSize)) — dropping \(events.count) events")
                     }
+                }
+            }
+            await MainActor.run {
+                self.isFlushingInProgress = false
+                // If events accumulated while we were flushing, trigger another flush
+                if !self.buffer.isEmpty {
+                    self.flush()
                 }
             }
         }
