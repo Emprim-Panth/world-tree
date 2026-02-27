@@ -390,18 +390,23 @@ final class TreeStore {
                 arguments: [id]
             )
 
-            // Delete the session
-            try db.execute(
-                sql: """
-                    DELETE FROM sessions WHERE id = (
-                        SELECT session_id FROM canvas_branches WHERE id = ?
-                    )
-                    """,
+            // Capture session_id before deleting the branch (FK-safe order)
+            let sessionId: String? = try String.fetchOne(
+                db,
+                sql: "SELECT session_id FROM canvas_branches WHERE id = ?",
                 arguments: [id]
             )
 
-            // Delete the branch
+            // Delete the branch first (references sessions via FK)
             try db.execute(sql: "DELETE FROM canvas_branches WHERE id = ?", arguments: [id])
+
+            // Then delete the session (now safe — no branches reference it)
+            if let sessionId {
+                try db.execute(
+                    sql: "DELETE FROM sessions WHERE id = ?",
+                    arguments: [sessionId]
+                )
+            }
         }
     }
 

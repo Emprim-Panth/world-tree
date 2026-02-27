@@ -73,7 +73,7 @@ extension Message: FetchableRecord {
             createdAt = Date()
         }
 
-        hasBranches = (row["has_branches"] as? Int ?? 0) > 0
+        hasBranches = (row["has_branches"] as? Int64 ?? 0) > 0
     }
 }
 
