@@ -106,4 +106,91 @@ final class SubscriptionManagerTests: XCTestCase {
         XCTAssertTrue(result.isEmpty,
                       "subscribers(for:) must return an empty set for an unknown branch")
     }
+
+    // MARK: - 4. Remove Client with Multiple Branch History
+
+    /// Subscribe a client to branch A then branch B (auto-switch), then remove.
+    /// Both branches must be fully clean — no dangling entries in either index.
+    func testRemoveClientClearsAllState() {
+        let clientId = "client-H"
+        let branchA = "branch-7"
+        let branchB = "branch-8"
+
+        // Subscribe to A, then switch to B (auto-unsubscribes from A)
+        manager.subscribe(clientId: clientId, branchId: branchA)
+        manager.subscribe(clientId: clientId, branchId: branchB)
+
+        // Precondition: client is on B, A is already empty
+        XCTAssertEqual(manager.subscribedBranch(for: clientId), branchB)
+        XCTAssertNil(manager.branchSubscribers[branchA],
+                     "Branch A should already be cleaned up after auto-switch")
+
+        // Now disconnect
+        manager.remove(clientId: clientId)
+
+        // Both branches must be empty
+        XCTAssertNil(manager.subscribedBranch(for: clientId),
+                     "Client subscription must be nil after remove")
+        XCTAssertNil(manager.branchSubscribers[branchA],
+                     "Branch A must have no subscriber entry after remove")
+        XCTAssertNil(manager.branchSubscribers[branchB],
+                     "Branch B must have no subscriber entry after remove")
+        XCTAssertTrue(manager.subscriptions.isEmpty,
+                      "subscriptions dict must be empty — only client was removed")
+        XCTAssertTrue(manager.branchSubscribers.isEmpty,
+                      "branchSubscribers dict must be empty — all branches cleared")
+    }
+
+    // MARK: - 5. Resubscribe Idempotency
+
+    /// Subscribing the same client to the same branch twice must be a no-op
+    /// (no duplicate entries, no crashes).
+    func testResubscribeSameBranchIsIdempotent() {
+        let clientId = "client-I"
+        let branchId = "branch-9"
+
+        manager.subscribe(clientId: clientId, branchId: branchId)
+        manager.subscribe(clientId: clientId, branchId: branchId)
+
+        XCTAssertEqual(manager.subscribers(for: branchId).count, 1,
+                       "Subscribing twice to the same branch must not create duplicates")
+        XCTAssertEqual(manager.subscribedBranch(for: clientId), branchId)
+    }
+
+    // MARK: - 6. Unsubscribe No-Op for Unknown Client
+
+    /// Unsubscribing a client that was never subscribed must not crash or corrupt state.
+    func testUnsubscribeUnknownClientIsNoop() {
+        manager.unsubscribe(clientId: "phantom-client")
+
+        XCTAssertTrue(manager.subscriptions.isEmpty,
+                      "Unsubscribing an unknown client must not create entries")
+        XCTAssertTrue(manager.branchSubscribers.isEmpty,
+                      "Unsubscribing an unknown client must not create branch entries")
+    }
+
+    // MARK: - 7. Remove Preserves Other Clients
+
+    /// When one client is removed, other clients on the same branch must be unaffected.
+    func testRemoveClientPreservesOtherSubscribers() {
+        let branchId = "branch-10"
+        let clientA = "client-J"
+        let clientB = "client-K"
+        let clientC = "client-L"
+
+        manager.subscribe(clientId: clientA, branchId: branchId)
+        manager.subscribe(clientId: clientB, branchId: branchId)
+        manager.subscribe(clientId: clientC, branchId: branchId)
+
+        // Remove one client
+        manager.remove(clientId: clientB)
+
+        let remaining = manager.subscribers(for: branchId)
+        XCTAssertEqual(remaining.count, 2,
+                       "Two clients should remain after removing one")
+        XCTAssertTrue(remaining.contains(clientA), "Client A must still be subscribed")
+        XCTAssertTrue(remaining.contains(clientC), "Client C must still be subscribed")
+        XCTAssertNil(manager.subscribedBranch(for: clientB),
+                     "Removed client must have no subscription")
+    }
 }

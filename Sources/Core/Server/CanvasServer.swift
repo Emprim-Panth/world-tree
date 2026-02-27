@@ -667,24 +667,70 @@ final class WorldTreeServer: ObservableObject {
     }
 
     private func parseHTTP(_ raw: String) -> ParsedRequest {
-        let sections = raw.components(separatedBy: "\r\n\r\n")
-        let headerBlock = sections.first ?? ""
-        let body = sections.dropFirst().joined(separator: "\r\n\r\n")
+        // Split header block from body at first \r\n\r\n using range(of:) to
+        // avoid allocating an array of all sections and re-joining the body.
+        let headerBlock: Substring
+        let body: String
+        if let sep = raw.range(of: "\r\n\r\n") {
+            headerBlock = raw[raw.startIndex..<sep.lowerBound]
+            body = String(raw[sep.upperBound...])
+        } else {
+            headerBlock = raw[...]
+            body = ""
+        }
 
-        let lines = headerBlock.components(separatedBy: "\r\n")
-        let tokens = (lines.first ?? "").components(separatedBy: " ")
-        let method = tokens.first ?? "GET"
-        let rawPath = tokens.count > 1 ? tokens[1] : "/"
-        let path = rawPath.components(separatedBy: "?").first ?? rawPath
+        // Parse request line — split on first two spaces only via index scanning
+        // instead of components(separatedBy:) which allocates an array.
+        let requestLine: Substring
+        if let firstCRLF = headerBlock.range(of: "\r\n") {
+            requestLine = headerBlock[headerBlock.startIndex..<firstCRLF.lowerBound]
+        } else {
+            requestLine = headerBlock
+        }
 
-        var headers: [String: String] = [:]
-        for line in lines.dropFirst() {
-            if let colon = line.range(of: ":") {
-                let key = String(line[line.startIndex..<colon.lowerBound])
-                    .lowercased().trimmingCharacters(in: .whitespaces)
-                let val = String(line[colon.upperBound...]).trimmingCharacters(in: .whitespaces)
-                headers[key] = val
+        let method: String
+        let rawPath: String
+        if let firstSpace = requestLine.firstIndex(of: " ") {
+            method = String(requestLine[requestLine.startIndex..<firstSpace])
+            let afterMethod = requestLine.index(after: firstSpace)
+            if let secondSpace = requestLine[afterMethod...].firstIndex(of: " ") {
+                rawPath = String(requestLine[afterMethod..<secondSpace])
+            } else {
+                rawPath = String(requestLine[afterMethod...])
             }
+        } else {
+            method = "GET"
+            rawPath = "/"
+        }
+
+        let path: String
+        if let qmark = rawPath.firstIndex(of: "?") {
+            path = String(rawPath[rawPath.startIndex..<qmark])
+        } else {
+            path = rawPath
+        }
+
+        // Parse only the headers we actually use — avoids allocating a full
+        // dictionary for every header in the request.
+        var headers: [String: String] = [:]
+        var searchStart = headerBlock.startIndex
+        if let firstCRLF = headerBlock.range(of: "\r\n") {
+            searchStart = firstCRLF.upperBound
+        }
+        let headerLines = headerBlock[searchStart...]
+        for line in headerLines.split(separator: "\r\n", omittingEmptySubsequences: true) {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let key = line[line.startIndex..<colon].lowercased()
+                .trimmingCharacters(in: .whitespaces)
+            // Only store headers the server actually reads
+            guard key == "content-length" || key == "content-type" ||
+                  key == "authorization" || key == "x-worldtree-token" ||
+                  key == "upgrade" || key == "connection" ||
+                  key == "sec-websocket-key" || key == "sec-websocket-version"
+            else { continue }
+            let val = line[line.index(after: colon)...]
+                .trimmingCharacters(in: .whitespaces)
+            headers[key] = val
         }
 
         return ParsedRequest(method: method, path: path, rawPath: rawPath, headers: headers, body: body)
