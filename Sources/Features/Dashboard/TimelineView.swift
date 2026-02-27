@@ -1,11 +1,27 @@
 import SwiftUI
 
+/// Date range presets for timeline filtering.
+enum TimelineRange: String, CaseIterable {
+    case week = "7 Days"
+    case month = "30 Days"
+    case all = "All Time"
+
+    var since: Date? {
+        switch self {
+        case .week:  return Calendar.current.date(byAdding: .day, value: -7, to: Date())
+        case .month: return Calendar.current.date(byAdding: .day, value: -30, to: Date())
+        case .all:   return nil
+        }
+    }
+}
+
 /// Unified timeline showing events from all Cortana systems.
 struct EventTimelineView: View {
     @State private var events: [UnifiedTimelineEvent] = []
     @State private var isLoading = false
     @State private var selectedTypes: Set<UnifiedTimelineEvent.EventType> = Set(UnifiedTimelineEvent.EventType.allCases)
     @State private var projectFilter: String = ""
+    @State private var selectedRange: TimelineRange = .month
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,6 +29,18 @@ struct EventTimelineView: View {
             HStack {
                 Text("Timeline")
                     .font(.headline)
+
+                // Date range picker
+                Picker("Range", selection: $selectedRange) {
+                    ForEach(TimelineRange.allCases, id: \.self) { range in
+                        Text(range.rawValue).tag(range)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+                .onChange(of: selectedRange) { _, _ in
+                    Task { await loadEvents() }
+                }
 
                 Spacer()
 
@@ -74,6 +102,7 @@ struct EventTimelineView: View {
             events = try await TimelineStore.shared.getTimeline(
                 project: project,
                 eventTypes: types,
+                since: selectedRange.since,
                 limit: 100
             )
         } catch {

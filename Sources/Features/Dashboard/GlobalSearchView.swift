@@ -9,6 +9,7 @@ struct GlobalSearchView: View {
     @State private var results: [GlobalSearchResult] = []
     @State private var isSearching = false
     @State private var selectedSources: Set<GlobalSearchResult.Source> = Set(GlobalSearchResult.Source.allCases)
+    @State private var searchTask: Task<Void, Never>?
     @FocusState private var isQueryFocused: Bool
 
     var body: some View {
@@ -22,7 +23,10 @@ struct GlobalSearchView: View {
                     .textFieldStyle(.plain)
                     .font(.title3)
                     .focused($isQueryFocused)
-                    .onSubmit { performSearch() }
+                    .onSubmit {
+                        searchTask?.cancel()
+                        searchTask = Task { await performSearch() }
+                    }
 
                 if isSearching {
                     ProgressView()
@@ -78,25 +82,34 @@ struct GlobalSearchView: View {
             }
         }
         .onAppear { isQueryFocused = true }
+        .onChange(of: query) { _, newValue in
+            searchTask?.cancel()
+            searchTask = Task {
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
+                await performSearch()
+            }
+        }
     }
 
     private var filteredResults: [GlobalSearchResult] {
         results.filter { selectedSources.contains($0.source) }
     }
 
-    private func performSearch() {
+    private func performSearch() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else {
+            results = []
+            return
+        }
 
         isSearching = true
-        Task {
-            defer { isSearching = false }
-            do {
-                results = try MessageStore.shared.searchAcrossAll(query: trimmed, limit: 60)
-            } catch {
-                wtLog("[GlobalSearch] Search failed: \(error)")
-                results = []
-            }
+        defer { isSearching = false }
+        do {
+            results = try MessageStore.shared.searchAcrossAll(query: trimmed, limit: 60)
+        } catch {
+            wtLog("[GlobalSearch] Search failed: \(error)")
+            results = []
         }
     }
 

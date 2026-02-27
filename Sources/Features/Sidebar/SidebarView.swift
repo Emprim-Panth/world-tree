@@ -456,10 +456,12 @@ struct SidebarView: View {
         } label: {
             Label(label, systemImage: icon)
                 .font(.caption)
+                .fontWeight(isActive ? .semibold : .regular)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
                 .padding(.horizontal, 4)
+                .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
                 .background(isActive ? Color.accentColor.opacity(0.15) : Color.clear)
                 .cornerRadius(6)
         }
