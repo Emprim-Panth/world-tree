@@ -5,6 +5,8 @@ struct GraphView: View {
     @State private var nodes: [GraphNode] = []
     @State private var edges: [GraphEdge] = []
     @State private var positions: [String: CGPoint] = [:]
+    @State private var jitterCache: [String: CGFloat] = [:]
+    @State private var lastLayoutSize: CGSize = .zero
     @State private var selectedNode: GraphNode?
     @State private var isLoading = false
     @State private var nodeCount = 0
@@ -187,8 +189,15 @@ struct GraphView: View {
                     }
                 }
             }
-            .onChange(of: nodes) { _, _ in
-                layoutNodes(in: geometry.size)
+            .onChange(of: nodes) { _, newNodes in
+                // Only relayout if node set actually changed (not just selection)
+                if Set(newNodes.map(\.id)) != Set(positions.keys) {
+                    layoutNodes(in: geometry.size)
+                }
+            }
+            .onChange(of: geometry.size) { _, newSize in
+                guard newSize != lastLayoutSize else { return }
+                layoutNodes(in: newSize)
             }
             .onAppear {
                 layoutNodes(in: geometry.size)
@@ -223,6 +232,7 @@ struct GraphView: View {
     /// Uses concentric rings within each type group so nodes don't pile up.
     private func layoutNodes(in size: CGSize) {
         guard !nodes.isEmpty else { return }
+        lastLayoutSize = size
 
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
 
@@ -248,7 +258,6 @@ struct GraphView: View {
         var newPositions: [String: CGPoint] = [:]
 
         for (_, typeNodes) in grouped {
-            let rings = (typeNodes.count + maxPerRing - 1) / maxPerRing  // ceil division
             for (i, node) in typeNodes.enumerated() {
                 let ring = i / maxPerRing
                 let indexInRing = i % maxPerRing
@@ -256,9 +265,13 @@ struct GraphView: View {
                 let nodeAngleStep = typeAngleStep / CGFloat(max(nodesInThisRing, 1))
                 let nodeAngle = angle + CGFloat(indexInRing) * nodeAngleStep
 
-                // Push outer rings further from center; slight jitter for organic look
+                // Stable per-node jitter — only generated once per node ID
+                let jitter = jitterCache[node.id] ?? {
+                    let j = CGFloat.random(in: -8...8)
+                    jitterCache[node.id] = j
+                    return j
+                }()
                 let ringOffset = CGFloat(ring) * ringSpacing
-                let jitter = CGFloat.random(in: -8...8)
                 let r = radius + ringOffset + jitter
 
                 newPositions[node.id] = CGPoint(

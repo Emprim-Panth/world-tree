@@ -157,8 +157,10 @@ class ContextInspectorViewModel: ObservableObject {
         Int(Double(maxTokens) * (thresholdPercentage / 100.0))
     }
 
-    var pinnedTokens: Int {
-        sections.filter { $0.isPinned }.reduce(0) { $0 + $1.tokenCount }
+    private(set) var pinnedTokens: Int = 0
+
+    private func recalcPinnedTokens() {
+        pinnedTokens = sections.filter { $0.isPinned }.reduce(0) { $0 + $1.tokenCount }
     }
 
     var availableTokens: Int {
@@ -273,6 +275,7 @@ class ContextInspectorViewModel: ObservableObject {
         systemBlockCount = loadedBlocks.count
         sections = builtSections
         currentTokens = totalTokens
+        recalcPinnedTokens()
     }
 
     /// Write current cachedApiMessages + cachedSystemBlocks back to canvas_api_state.
@@ -322,6 +325,7 @@ class ContextInspectorViewModel: ObservableObject {
     func togglePin(_ sectionId: UUID) {
         guard let index = sections.firstIndex(where: { $0.id == sectionId }) else { return }
         sections[index].isPinned.toggle()
+        recalcPinnedTokens()
 
         // Sync to cached system blocks (message turns don't have a pin mechanism in the API)
         if index < systemBlockCount {
@@ -354,6 +358,7 @@ class ContextInspectorViewModel: ObservableObject {
         cachedApiMessages.remove(at: messageIndex)
         sections.remove(at: index)
         currentTokens -= tokenCount
+        recalcPinnedTokens()
         persistMutations()
     }
 
@@ -391,6 +396,7 @@ class ContextInspectorViewModel: ObservableObject {
 
         sections.removeAll { sectionsToRemoveIds.contains($0.id) }
         currentTokens -= tokensFreed
+        recalcPinnedTokens()
 
         for msgIdx in messageIndicesToRemove.sorted().reversed() {
             cachedApiMessages.remove(at: msgIdx)
