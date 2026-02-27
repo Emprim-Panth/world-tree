@@ -103,7 +103,7 @@ final class EventStore {
         }
     }
 
-    /// Force write all buffered events to DB.
+    /// Force write all buffered events to DB (async — does not block UI).
     func flush() {
         flushTask?.cancel()
         flushTask = nil
@@ -112,20 +112,24 @@ final class EventStore {
         let events = buffer
         buffer = []
 
-        do {
-            try DatabaseManager.shared.write { db in
-                for event in events {
-                    try event.insert(db)
+        Task {
+            do {
+                try await DatabaseManager.shared.asyncWrite { db in
+                    for event in events {
+                        try event.insert(db)
+                    }
                 }
-            }
-        } catch {
-            wtLog("[EventStore] Failed to flush \(events.count) events: \(error)")
-            // Put events back to avoid silent data loss — but cap buffer size
-            // to prevent unbounded growth if DB stays unavailable
-            if buffer.count + events.count <= maxBufferSize {
-                buffer.insert(contentsOf: events, at: 0)
-            } else {
-                wtLog("[EventStore] Buffer at cap (\(maxBufferSize)) — dropping \(events.count) events")
+            } catch {
+                await MainActor.run {
+                    wtLog("[EventStore] Failed to flush \(events.count) events: \(error)")
+                    // Put events back to avoid silent data loss — but cap buffer size
+                    // to prevent unbounded growth if DB stays unavailable
+                    if self.buffer.count + events.count <= self.maxBufferSize {
+                        self.buffer.insert(contentsOf: events, at: 0)
+                    } else {
+                        wtLog("[EventStore] Buffer at cap (\(self.maxBufferSize)) — dropping \(events.count) events")
+                    }
+                }
             }
         }
     }

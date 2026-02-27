@@ -13,6 +13,15 @@ final class MessageStore {
 
     // MARK: - Read
 
+    /// Lightweight existence check — uses SELECT EXISTS to avoid loading all messages.
+    func hasMessages(sessionId: String) -> Bool {
+        (try? db.read { db in
+            try Bool.fetchOne(db, sql: """
+                SELECT EXISTS(SELECT 1 FROM messages WHERE session_id = ?)
+                """, arguments: [sessionId])
+        }) ?? false
+    }
+
     /// Get messages for a session, with branch fork indicators
     func getMessages(sessionId: String, limit: Int = 500) throws -> [Message] {
         try db.read { db in

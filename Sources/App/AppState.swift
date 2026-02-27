@@ -70,6 +70,14 @@ final class AppState {
             branchHistory = Array(branchHistory.prefix(branchHistoryIndex + 1))
         }
         branchHistory.append((treeId: treeId, branchId: branchId))
+
+        // Cap history at 100 entries — drop oldest when exceeded
+        if branchHistory.count > 100 {
+            let overflow = branchHistory.count - 100
+            branchHistory.removeFirst(overflow)
+            branchHistoryIndex = max(branchHistoryIndex - overflow, 0)
+        }
+
         branchHistoryIndex = branchHistory.count - 1
     }
 

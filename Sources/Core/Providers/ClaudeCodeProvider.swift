@@ -236,9 +236,13 @@ final class ClaudeCodeProvider: LLMProvider {
             }
 
             // Accumulate stderr for diagnostics on failure
-            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            // Route through parseQueue to avoid data race with terminationHandler
+            stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
-                if !data.isEmpty { stderrData.append(data) }
+                guard !data.isEmpty else { return }
+                self?.parseQueue.async {
+                    stderrData.append(data)
+                }
             }
 
             // Process termination on same serial queue for ordering

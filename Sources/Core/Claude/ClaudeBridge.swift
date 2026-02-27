@@ -327,8 +327,7 @@ final class ClaudeBridge {
 
     /// Check if a session already has messages (determines isNewSession)
     private func hasExistingSession(sessionId: String) -> Bool {
-        let messages = try? MessageStore.shared.getMessages(sessionId: sessionId)
-        return (messages?.count ?? 0) > 0
+        MessageStore.shared.hasMessages(sessionId: sessionId)
     }
 
 }

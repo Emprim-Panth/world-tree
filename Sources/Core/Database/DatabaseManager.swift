@@ -117,14 +117,18 @@ final class DatabaseManager {
 
     private func performCheckpoint() {
         guard let dbPool else { return }
-        do {
-            try dbPool.write { db in
-                // PASSIVE checkpoint — does not block readers/writers.
-                // Moves committed WAL pages back to the main database file.
-                try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE)")
+        Task.detached {
+            do {
+                try await dbPool.write { db in
+                    // PASSIVE checkpoint — does not block readers/writers.
+                    // Moves committed WAL pages back to the main database file.
+                    try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE)")
+                }
+            } catch {
+                await MainActor.run {
+                    wtLog("[DatabaseManager] WAL checkpoint failed: \(error)")
+                }
             }
-        } catch {
-            wtLog("[DatabaseManager] WAL checkpoint failed: \(error)")
         }
     }
 

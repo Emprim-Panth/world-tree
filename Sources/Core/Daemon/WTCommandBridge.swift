@@ -1,12 +1,6 @@
 import Foundation
 import AppKit
-
-private extension String {
-    var osascriptEscaped: String {
-        replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-    }
-}
+import UserNotifications
 
 // MARK: - WTCommand (local definition — no CortanaCore dependency)
 
@@ -88,8 +82,12 @@ final class WTCommandBridge: ObservableObject {
     func stop() {
         source?.cancel()
         source = nil
-        try? fileHandle?.close()
+        ioLock.lock()
+        let fh = fileHandle
         fileHandle = nil
+        bytesRead = 0
+        ioLock.unlock()
+        try? fh?.close()
     }
 
     // MARK: - Reading
@@ -191,14 +189,23 @@ final class WTCommandBridge: ObservableObject {
     // MARK: - Notifications
 
     private func sendNotification(title: String, body: String, subtitle: String?, sound: Bool) {
-        var script = "display notification \"\(body.osascriptEscaped)\" with title \"\(title.osascriptEscaped)\""
-        if let sub = subtitle { script += " subtitle \"\(sub.osascriptEscaped)\"" }
-        if sound { script += " sound name \"Ping\"" }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        if let sub = subtitle { content.subtitle = sub }
+        if sound { content.sound = .default }
 
-        let task = Process()
-        task.launchPath = "/usr/bin/osascript"
-        task.arguments = ["-e", script]
-        try? task.run()
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                wtLog("[WTCommandBridge] notification failed: \(error)")
+            }
+        }
     }
 }
 
