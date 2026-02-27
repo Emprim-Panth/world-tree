@@ -346,7 +346,12 @@ final class PeekabooBridgeServer {
         let msg = "[PeekabooBridge] Captured \(cgImage.width)×\(cgImage.height) → \(tmpPath)"
         wtLog(msg)
         try? (msg + "\n").appendToFile(atPath: "/tmp/peekaboo_bridge.log")
-        return try? JSONSerialization.data(withJSONObject: payload)
+        let responseData = try? JSONSerialization.data(withJSONObject: payload)
+
+        // Clean up temp file — client already has the base64 data in the response
+        try? FileManager.default.removeItem(atPath: tmpPath)
+
+        return responseData
     }
 
     // MARK: - Window Lookup

@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - DaemonChannel
 
-/// HTTP SSE client to the openClaude daemon's canvas message endpoint.
+/// HTTP SSE client to the Cortana daemon's canvas message endpoint.
 ///
 /// Sends messages to `POST http://localhost:8765/api/v1/canvas/message`
 /// and parses the SSE token stream back into BridgeEvents.

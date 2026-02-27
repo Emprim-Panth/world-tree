@@ -194,26 +194,49 @@ struct GraphView: View {
         }
     }
 
-    /// Simple circular layout with type-based grouping.
+    /// Circular layout with type-based grouping and spiral expansion.
+    /// Scales radius with node count to avoid overlap when count > 20.
+    /// Uses concentric rings within each type group so nodes don't pile up.
     private func layoutNodes(in size: CGSize) {
         guard !nodes.isEmpty else { return }
 
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
-        let radius = min(size.width, size.height) * 0.35
+
+        // Scale radius: base 35% of viewport, grows with sqrt(nodeCount) to spread nodes
+        let baseRadius = min(size.width, size.height) * 0.35
+        let scaleFactor = max(1.0, sqrt(CGFloat(nodes.count) / 20.0))
+        let radius = baseRadius * scaleFactor
+
+        // Minimum angular separation (in radians) to keep nodes from overlapping.
+        // ~24px node diameter + label means we need about 30px between centers.
+        let minSeparation: CGFloat = 30.0
+        let minAngle = minSeparation / max(radius, 1.0)
 
         // Group nodes by type for visual clustering
         let grouped = Dictionary(grouping: nodes, by: \.type)
         var angle: CGFloat = 0
         let typeAngleStep = (2 * .pi) / CGFloat(max(grouped.count, 1))
 
+        // How many nodes fit on one ring per type sector
+        let maxPerRing = max(Int(typeAngleStep / minAngle), 1)
+        let ringSpacing: CGFloat = 36.0 // pixels between concentric rings
+
         var newPositions: [String: CGPoint] = [:]
 
         for (_, typeNodes) in grouped {
-            let nodeAngleStep = typeAngleStep / CGFloat(max(typeNodes.count, 1))
+            let rings = (typeNodes.count + maxPerRing - 1) / maxPerRing  // ceil division
             for (i, node) in typeNodes.enumerated() {
-                let nodeAngle = angle + CGFloat(i) * nodeAngleStep
-                let jitter = CGFloat.random(in: -20...20)
-                let r = radius + jitter
+                let ring = i / maxPerRing
+                let indexInRing = i % maxPerRing
+                let nodesInThisRing = min(maxPerRing, typeNodes.count - ring * maxPerRing)
+                let nodeAngleStep = typeAngleStep / CGFloat(max(nodesInThisRing, 1))
+                let nodeAngle = angle + CGFloat(indexInRing) * nodeAngleStep
+
+                // Push outer rings further from center; slight jitter for organic look
+                let ringOffset = CGFloat(ring) * ringSpacing
+                let jitter = CGFloat.random(in: -8...8)
+                let r = radius + ringOffset + jitter
+
                 newPositions[node.id] = CGPoint(
                     x: center.x + r * cos(nodeAngle),
                     y: center.y + r * sin(nodeAngle)

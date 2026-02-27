@@ -352,22 +352,25 @@ class DocumentEditorViewModel: ObservableObject {
     private let pageSize = 100
     private var initialLoadComplete = false
 
-    // MARK: - 60fps Token Batching (CADisplayLink-equivalent via main-RunLoop Timer)
+    // MARK: - Token Batching (CADisplayLink-equivalent via main-RunLoop Timer)
 
     /// Accumulated tokens since the last frame flush.
-    /// Written per-token; flushed to streamingContent at ~15fps by streamFlushTimer.
+    /// Written per-token; flushed to streamingContent at ~10fps by streamFlushTimer.
     private var pendingTokenBuffer = ""
 
-    /// Fires at 15fps on the main RunLoop to flush pendingTokenBuffer → streamingContent.
-    /// 15fps is perceptually smooth for text streaming while reducing SwiftUI view
-    /// re-evaluation load by 4x compared to 60fps. Critical when many WKWebView-backed
+    /// Fires at 10fps (100ms) on the main RunLoop to flush pendingTokenBuffer → streamingContent.
+    /// 10fps is perceptually smooth for text streaming while cutting SwiftUI view
+    /// re-evaluation load by ~6x compared to 60fps. Critical when many WKWebView-backed
     /// code blocks are in the view tree — each evaluation walks all NSViewRepresentable wrappers.
     private var streamFlushTimer: Timer?
 
     private func startStreamBatching() {
         guard streamFlushTimer == nil else { return }
-        let timer = Timer(timeInterval: 1.0 / 15.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.flushPendingTokens() }
+        let timer = Timer(timeInterval: 1.0 / 10.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.pendingTokenBuffer.isEmpty else { return }
+                self.flushPendingTokens()
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         streamFlushTimer = timer
@@ -379,7 +382,7 @@ class DocumentEditorViewModel: ObservableObject {
         flushPendingTokens()  // drain any remaining tokens
     }
 
-    /// Drain accumulated tokens to streamingContent — called at 15fps.
+    /// Drain accumulated tokens to streamingContent — called at 10fps.
     private func flushPendingTokens() {
         guard !pendingTokenBuffer.isEmpty else { return }
         let chunk = pendingTokenBuffer
@@ -417,6 +420,10 @@ class DocumentEditorViewModel: ObservableObject {
     /// Polling timer — GRDB ValueObservation only fires for writes through the same DatabasePool.
     /// The cortana daemon writes from a separate process, so we poll every 2s to catch external writes.
     private var refreshTimer: Timer?
+    /// When true, the 2s polling timer actively queries the DB. Set to false when
+    /// GRDB ValueObservation is healthy (onChange fires), re-enabled on observation error.
+    /// This prevents redundant polling when the observation is already delivering updates.
+    private var usePollingFallback = true
     /// Retry counter for loadDocument() — prevents infinite recursion when DB is slow to initialize.
     private var loadRetryCount = 0
     /// Reference to the active streaming task — allows cancellation when user interrupts.
@@ -499,8 +506,10 @@ class DocumentEditorViewModel: ObservableObject {
             onError: { [weak self] error in
                 print("[DocumentEditor] Message observation error: \(error)")
                 self?.messageObservation = nil
+                self?.usePollingFallback = true  // observation failed — re-enable polling
             },
             onChange: { [weak self] messages in
+                self?.usePollingFallback = false  // observation healthy — suppress polling
                 self?.applyMessages(messages)
             }
         )
@@ -677,7 +686,8 @@ class DocumentEditorViewModel: ObservableObject {
             """
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, let dbPool = DatabaseManager.shared.dbPool else { return }
+                guard let self, self.usePollingFallback else { return }
+                guard let dbPool = DatabaseManager.shared.dbPool else { return }
                 guard let messages = try? await dbPool.read({ db in
                     try Message.fetchAll(db, sql: sql, arguments: [sid])
                 }) else { return }

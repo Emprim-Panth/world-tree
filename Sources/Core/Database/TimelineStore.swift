@@ -26,7 +26,7 @@ final class TimelineStore {
             // Preflight: one query to check all optional tables at once.
             let existingTables = try Set(String.fetchAll(db, sql: """
                 SELECT name FROM sqlite_master
-                WHERE type='table' AND name IN ('canvas_dispatches', 'knowledge', 'conversation_archive')
+                WHERE type='table' AND name IN ('canvas_dispatches', 'knowledge', 'conversation_archive', 'knowledge_versions', 'crew_handoffs')
                 """))
 
             // 1. Sessions
@@ -131,7 +131,76 @@ final class TimelineStore {
                 }
             }
 
-            // 4. Conversation archives
+            // 4. Knowledge updates (version > 1 means the entry was edited)
+            if eventTypes == nil || eventTypes!.contains(.knowledgeUpdate) {
+                if existingTables.contains("knowledge_versions") {
+                    let rows = try Row.fetchAll(db, sql: """
+                        SELECT kv.id, kv.knowledge_id, kv.version, kv.rationale, kv.created_at,
+                               k.title, k.project
+                        FROM knowledge_versions kv
+                        LEFT JOIN knowledge k ON k.id = kv.knowledge_id
+                        WHERE kv.version > 1 AND kv.created_at > ?
+                        ORDER BY kv.created_at DESC
+                        LIMIT ?
+                        """, arguments: [sinceStr, limit])
+
+                    for row in rows {
+                        let id: String = row["id"]
+                        let knowledgeId: String = row["knowledge_id"]
+                        let version: Int = row["version"]
+                        let rationale: String = row["rationale"] ?? ""
+                        let title: String = row["title"] ?? knowledgeId
+                        let proj: String? = row["project"]
+
+                        if let p = project, let kp = proj, kp.lowercased() != p.lowercased() { continue }
+
+                        if let ts = Self.parseDate(row["created_at"]) {
+                            events.append(UnifiedTimelineEvent(
+                                id: "knowledge-update-\(id)",
+                                timestamp: ts,
+                                eventType: .knowledgeUpdate,
+                                project: proj,
+                                summary: "v\(version) \(title)" + (rationale.isEmpty ? "" : " — \(rationale.prefix(80))"),
+                                metadata: ["knowledge_id": knowledgeId, "version": "\(version)"]
+                            ))
+                        }
+                    }
+                }
+            }
+
+            // 5. Crew dispatches (agent-to-agent handoffs)
+            if eventTypes == nil || eventTypes!.contains(.crewDispatch) {
+                if existingTables.contains("crew_handoffs") {
+                    let rows = try Row.fetchAll(db, sql: """
+                        SELECT id, from_agent, to_agent, task_summary, status, created_at
+                        FROM crew_handoffs
+                        WHERE created_at > ?
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                        """, arguments: [sinceStr, limit])
+
+                    for row in rows {
+                        let id: String = row["id"]
+                        let from: String = row["from_agent"]
+                        let to: String = row["to_agent"]
+                        let summary: String = row["task_summary"]
+                        let status: String = row["status"] ?? "pending"
+
+                        if let ts = Self.parseDate(row["created_at"]) {
+                            events.append(UnifiedTimelineEvent(
+                                id: "crew-\(id)",
+                                timestamp: ts,
+                                eventType: .crewDispatch,
+                                project: nil,
+                                summary: "[\(status)] \(from) → \(to): \(summary.prefix(80))",
+                                metadata: ["handoff_id": id, "from": from, "to": to, "status": status]
+                            ))
+                        }
+                    }
+                }
+            }
+
+            // 6. Conversation archives
             if eventTypes == nil || eventTypes!.contains(.archival) {
                 if existingTables.contains("conversation_archive") {
                     let rows = try Row.fetchAll(db, sql: """

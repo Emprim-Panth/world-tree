@@ -315,7 +315,7 @@ struct SettingsView: View {
 
     private var serverTab: some View {
         Form {
-            Section("Plugin Server (openClaude)") {
+            Section("Plugin Server (Cortana)") {
                 Toggle("Enable plugin server (port \(PluginServer.port))", isOn: $pluginEnabled)
                     .onChange(of: pluginEnabled) { _, enabled in
                         if enabled { pluginServer.start() } else { pluginServer.stop() }
@@ -333,7 +333,7 @@ struct SettingsView: View {
                 }
 
                 if pluginServer.isRunning {
-                    Text("~/.openclaude/state/plugins/world-tree.json")
+                    Text("~/.cortana/state/plugins/world-tree.json")
                         .font(.caption2)
                         .monospaced()
                         .foregroundStyle(.secondary)
@@ -765,7 +765,7 @@ struct SettingsView: View {
 
     private var connectionTab: some View {
         Form {
-            Section("Daemon Channel (openClaude)") {
+            Section("Daemon Channel (Cortana)") {
                 Toggle("Route messages through daemon", isOn: $daemonEnabled)
 
                 HStack(spacing: 6) {

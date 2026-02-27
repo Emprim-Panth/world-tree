@@ -451,6 +451,58 @@ enum MigrationManager {
             }
         }
 
+        // Migration 16: FTS5 sync triggers for conversation_archive
+        // The conversation_archive_fts table was created in v15 but has NO triggers
+        // to keep it in sync with conversation_archive. When the daemon writes to
+        // conversation_archive, the FTS index becomes stale and search returns
+        // outdated results. This adds INSERT/DELETE/UPDATE triggers matching the
+        // pattern established in v12 for messages_fts.
+        migrator.registerMigration("v16_conversation_archive_fts_triggers") { db in
+            // Guard: only create triggers if both tables exist
+            let hasFts = (try? Bool.fetchOne(db, sql: """
+                SELECT COUNT(*) > 0 FROM sqlite_master
+                WHERE type = 'table' AND name = 'conversation_archive_fts'
+                """) ?? false) ?? false
+            let hasArchive = (try? Bool.fetchOne(db, sql: """
+                SELECT COUNT(*) > 0 FROM sqlite_master
+                WHERE type = 'table' AND name = 'conversation_archive'
+                """) ?? false) ?? false
+
+            guard hasFts && hasArchive else { return }
+
+            // AFTER INSERT: index new rows
+            try db.execute(sql: """
+                CREATE TRIGGER IF NOT EXISTS conversation_archive_fts_ai
+                AFTER INSERT ON conversation_archive BEGIN
+                    INSERT INTO conversation_archive_fts(rowid, compressed_summary, key_entities, key_decisions)
+                    VALUES (new.rowid, new.compressed_summary, new.key_entities, new.key_decisions);
+                END
+                """)
+
+            // AFTER DELETE: remove deleted rows from index
+            try db.execute(sql: """
+                CREATE TRIGGER IF NOT EXISTS conversation_archive_fts_ad
+                AFTER DELETE ON conversation_archive BEGIN
+                    INSERT INTO conversation_archive_fts(conversation_archive_fts, rowid, compressed_summary, key_entities, key_decisions)
+                    VALUES('delete', old.rowid, old.compressed_summary, old.key_entities, old.key_decisions);
+                END
+                """)
+
+            // AFTER UPDATE: delete old entry, insert new entry
+            try db.execute(sql: """
+                CREATE TRIGGER IF NOT EXISTS conversation_archive_fts_au
+                AFTER UPDATE ON conversation_archive BEGIN
+                    INSERT INTO conversation_archive_fts(conversation_archive_fts, rowid, compressed_summary, key_entities, key_decisions)
+                    VALUES('delete', old.rowid, old.compressed_summary, old.key_entities, old.key_decisions);
+                    INSERT INTO conversation_archive_fts(rowid, compressed_summary, key_entities, key_decisions)
+                    VALUES (new.rowid, new.compressed_summary, new.key_entities, new.key_decisions);
+                END
+                """)
+
+            // Rebuild index from all existing conversation_archive rows
+            try db.execute(sql: "INSERT INTO conversation_archive_fts(conversation_archive_fts) VALUES('rebuild')")
+        }
+
         try migrator.migrate(dbPool)
     }
 }

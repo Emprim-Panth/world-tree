@@ -63,7 +63,7 @@ final class DaemonService: ObservableObject {
     // MARK: - Health
 
     func checkHealth() {
-        // Primary: HTTP health endpoint (openClaude Swift daemon on port 8765).
+        // Primary: HTTP health endpoint (Cortana daemon on port 8765).
         // Async — fires a background task; result lands on MainActor via @MainActor class.
         Task {
             await checkHTTPHealth()

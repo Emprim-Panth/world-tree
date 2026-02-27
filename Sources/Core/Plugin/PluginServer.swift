@@ -3,15 +3,14 @@ import Network
 
 // MARK: - PluginServer
 
-/// openClaude-swift plugin server for World Tree.
+/// Cortana plugin server for World Tree.
 ///
 /// Exposes World Tree's conversation trees, projects, and jobs as MCP tools
-/// to the openClaude daemon. Binds to localhost:9400.
+/// to the Cortana daemon. Binds to localhost:9400.
 ///
 /// Discovery: on startup this server drops a manifest file at
-/// ~/.openclaude/state/plugins/world-tree.json which the daemon picks up
-/// at next launch. Alternatively, add to ~/.openclaude/config.json:
-///   {"plugins":{"plugins":[{"id":"world-tree","url":"http://localhost:9400"}]}}
+/// ~/.cortana/state/plugins/world-tree.json which the daemon picks up
+/// at next launch.
 ///
 /// Endpoints:
 ///   GET  /manifest  — plugin identity (daemon discovery + health check)
@@ -99,8 +98,8 @@ final class PluginServer: ObservableObject {
 
     // MARK: - Manifest File (daemon auto-discovery)
 
-    /// Drops ~/.openclaude/state/plugins/world-tree.json so the daemon
-    /// discovers this plugin at next startup without manual config.json edits.
+    /// Drops ~/.cortana/state/plugins/world-tree.json so the daemon
+    /// discovers this plugin at next startup without manual configuration.
     private func writeManifestFile() {
         let pluginsDir = URL(fileURLWithPath: AppConstants.pluginManifestDir)
         let manifestFile = pluginsDir.appendingPathComponent("world-tree.json")
@@ -218,13 +217,26 @@ final class PluginServer: ObservableObject {
     // MARK: - MCP JSON-RPC Handler
 
     private func handleMCP(_ connection: NWConnection, body: String) async {
+        guard !body.isEmpty else {
+            sendResponse(connection, status: 400, body: #"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Empty request body"}}"#)
+            return
+        }
+
         guard let data = body.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            sendResponse(connection, status: 400, body: #"{"error":"invalid JSON"}"#)
+            sendResponse(connection, status: 400, body: #"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error: invalid JSON"}}"#)
             return
         }
 
         let method = json["method"] as? String ?? ""
+        guard !method.isEmpty else {
+            let rpcId: String
+            if let n = json["id"] as? Int { rpcId = "\(n)" }
+            else if let s = json["id"] as? String { rpcId = "\"\(esc(s))\"" }
+            else { rpcId = "null" }
+            sendResponse(connection, status: 200, body: #"{"jsonrpc":"2.0","id":\#(rpcId),"error":{"code":-32600,"message":"Invalid request: missing method"}}"#)
+            return
+        }
         // id may be Int or String per JSON-RPC spec; preserve as string for embedding
         let rpcId: String
         if let n = json["id"] as? Int { rpcId = "\(n)" }
@@ -306,6 +318,9 @@ final class PluginServer: ObservableObject {
     private func toolListTrees(id: String) async -> String {
         do {
             let trees = try TreeStore.shared.listTrees()
+            guard !trees.isEmpty else {
+                return textResult(id: id, text: "[]")
+            }
             let iso = ISO8601DateFormatter()
             let items = trees.map { t in
                 #"{"id":"\#(esc(t.id))","name":"\#(esc(t.name))","project":"\#(esc(t.project ?? ""))","updated_at":"\#(iso.string(from: t.updatedAt))","message_count":\#(t.messageCount)}"#
@@ -313,7 +328,8 @@ final class PluginServer: ObservableObject {
             let payload = "[\(items.joined(separator: ","))]"
             return textResult(id: id, text: payload)
         } catch {
-            return mcpError(id: id, message: error.localizedDescription)
+            wtLog("[PluginServer] toolListTrees error: \(error)")
+            return mcpError(id: id, message: "Failed to list trees: \(error.localizedDescription)")
         }
     }
 
@@ -321,21 +337,29 @@ final class PluginServer: ObservableObject {
         guard !sessionId.isEmpty else {
             return mcpError(id: id, message: "session_id is required")
         }
+        let clampedLimit = max(1, min(limit, 500))
         do {
-            let msgs = try MessageStore.shared.getMessages(sessionId: sessionId, limit: limit)
+            let msgs = try MessageStore.shared.getMessages(sessionId: sessionId, limit: clampedLimit)
+            guard !msgs.isEmpty else {
+                return textResult(id: id, text: "[]")
+            }
             let items = msgs.map { m in
                 #"{"role":"\#(m.role.rawValue)","content":"\#(esc(m.content))"}"#
             }
             let payload = "[\(items.joined(separator: ","))]"
             return textResult(id: id, text: payload)
         } catch {
-            return mcpError(id: id, message: error.localizedDescription)
+            wtLog("[PluginServer] toolGetMessages error: \(error)")
+            return mcpError(id: id, message: "Failed to get messages: \(error.localizedDescription)")
         }
     }
 
     private func toolListProjects(id: String) async -> String {
         do {
             let projects = try ProjectCache().getAll()
+            guard !projects.isEmpty else {
+                return textResult(id: id, text: "[]")
+            }
             let iso = ISO8601DateFormatter()
             let items = projects.map { p in
                 let branch = p.gitBranch.map { "\"\(esc($0))\"" } ?? "null"
@@ -345,12 +369,16 @@ final class PluginServer: ObservableObject {
             let payload = "[\(items.joined(separator: ","))]"
             return textResult(id: id, text: payload)
         } catch {
-            return mcpError(id: id, message: error.localizedDescription)
+            wtLog("[PluginServer] toolListProjects error: \(error)")
+            return mcpError(id: id, message: "Failed to list projects: \(error.localizedDescription)")
         }
     }
 
     private func toolListActiveJobs(id: String) -> String {
         let jobs = JobQueue.shared.activeJobs()
+        guard !jobs.isEmpty else {
+            return textResult(id: id, text: "[]")
+        }
         let iso = ISO8601DateFormatter()
         let items = jobs.map { j in
             #"{"id":"\#(esc(j.id))","type":"\#(esc(j.type))","command":"\#(esc(j.command))","status":"\#(j.status.rawValue)","created_at":"\#(iso.string(from: j.createdAt))"}"#

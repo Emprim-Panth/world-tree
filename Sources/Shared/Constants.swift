@@ -7,27 +7,27 @@ enum AppConstants {
         return "\(home)/.cortana/claude-memory/conversations.db"
     }()
 
-    // MARK: - Daemon (OpenClaude paths — degrades gracefully if socket absent)
+    // MARK: - Daemon (Cortana paths — degrades gracefully if socket absent)
     static let daemonSocketPath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.openclaude/daemon/friday.sock"
+        return "\(home)/.cortana/daemon/cortana.sock"
     }()
 
     static let daemonHealthPath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.openclaude/daemon/.health"
+        return "\(home)/.cortana/daemon/.health"
     }()
 
     static let daemonLogsDir: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.openclaude/logs"
+        return "\(home)/.cortana/logs"
     }()
 
-    // MARK: - Plugin Server (openClaude-swift integration, port 9400)
+    // MARK: - Plugin Server (Cortana plugin integration, port 9400)
     static let pluginServerEnabledKey = "cortana.pluginEnabled"
     static let pluginManifestDir: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.openclaude/state/plugins"
+        return "\(home)/.cortana/state/plugins"
     }()
 
     // MARK: - Daemon Channel (HTTP API, port 8765)
@@ -38,12 +38,12 @@ enum AppConstants {
     // MARK: - Activity
     static let activityDir: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.openclaude/activity"
+        return "\(home)/.cortana/activity"
     }()
 
     static let completedMarkersDir: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.openclaude/daemon"
+        return "\(home)/.cortana/daemon"
     }()
 
     // MARK: - Defaults

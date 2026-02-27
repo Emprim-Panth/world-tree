@@ -77,16 +77,17 @@ final class SidebarViewModel: ObservableObject {
         }
     }
 
-    @Published var trees: [ConversationTree] = [] {
-        didSet { rebuildProjectGroups() }
-    }
-    @Published var cachedProjects: [CachedProject] = [] {
-        didSet { rebuildProjectGroups() }
-    }
+    @Published var trees: [ConversationTree] = []
+    @Published var cachedProjects: [CachedProject] = []
     @Published var searchText: String = "" {
         didSet {
-            rebuildProjectGroups()
-            scheduleContentSearch()
+            searchDebounceTask?.cancel()
+            searchDebounceTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled else { return }
+                self?.rebuildProjectGroups()
+                self?.scheduleContentSearch()
+            }
         }
     }
     /// Pre-computed project groups — recalculated only when trees, projects, or search changes.
@@ -110,6 +111,7 @@ final class SidebarViewModel: ObservableObject {
     private var observation: AnyDatabaseCancellable?
     private var projectObserver: Any?
     private var searchTask: Task<Void, Never>?
+    private var searchDebounceTask: Task<Void, Never>?
     /// Cached branches per tree ID — survives GRDB observation refreshes.
     private var cachedBranches: [String: [Branch]] = [:]
 
@@ -260,6 +262,7 @@ final class SidebarViewModel: ObservableObject {
         do {
             trees = try TreeStore.shared.listTrees()
             cachedProjects = (try? ProjectCache().getAll()) ?? []
+            rebuildProjectGroups()
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -276,6 +279,7 @@ final class SidebarViewModel: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.cachedProjects = (try? ProjectCache().getAll()) ?? []
+                self?.rebuildProjectGroups()
             }
         }
 
@@ -333,6 +337,7 @@ final class SidebarViewModel: ObservableObject {
                         }
                     }
                     self.trees = restored
+                    self.rebuildProjectGroups()
                 }
             }
         )

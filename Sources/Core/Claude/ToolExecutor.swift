@@ -387,6 +387,13 @@ actor ToolExecutor {
         let outputPath = "/tmp/canvas-\(uuid).out"
         let exitPath   = "/tmp/canvas-\(uuid).exit"
 
+        // Ensure temp files are always cleaned up, even on early return or error
+        defer {
+            try? FileManager.default.removeItem(atPath: scriptPath)
+            try? FileManager.default.removeItem(atPath: outputPath)
+            try? FileManager.default.removeItem(atPath: exitPath)
+        }
+
         // Write a self-contained script that captures output and exit code
         let script = """
             #!/bin/bash
@@ -433,11 +440,6 @@ actor ToolExecutor {
         let exitStr = (try? String(contentsOfFile: exitPath, encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? "1"
         let exitCode = Int32(exitStr) ?? 1
-
-        // Clean up temp files
-        try? FileManager.default.removeItem(atPath: scriptPath)
-        try? FileManager.default.removeItem(atPath: outputPath)
-        try? FileManager.default.removeItem(atPath: exitPath)
 
         if output.count > maxOutputSize {
             output = String(output.prefix(maxOutputSize)) + "\n[Output truncated at \(maxOutputSize) bytes]"
