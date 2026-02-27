@@ -1105,12 +1105,17 @@ extension WorldTreeServer {
     }
 
     /// Send a message to all WebSocket clients subscribed to a specific branch.
+    /// Uses SubscriptionManager's O(1) branch→clients index instead of scanning all connections.
     func broadcastToSubscribers(branchId: String, message: WSMessage) {
-        guard let json = message.toJSON() else { return }
-        for client in webSocketClients.values {
-            if client.subscribedBranchId == branchId {
-                client.wsConnection?.send(text: json)
+        let subscribers = SubscriptionManager.shared.subscribers(for: branchId)
+        guard !subscribers.isEmpty, let json = message.toJSON() else { return }
+        for clientId in subscribers {
+            guard let client = webSocketClients[clientId] else {
+                // Client disappeared — clean up stale subscription
+                SubscriptionManager.shared.remove(clientId: clientId)
+                continue
             }
+            client.wsConnection?.send(text: json)
         }
     }
 
