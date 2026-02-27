@@ -503,6 +503,134 @@ enum MigrationManager {
             try db.execute(sql: "INSERT INTO conversation_archive_fts(conversation_archive_fts) VALUES('rebuild')")
         }
 
+        // Migration 17: Denormalize sidebar stats into canvas_trees
+        // The sidebar observation query joins messages via canvas_branches on every
+        // message insert, causing O(messages) observation churn. Denormalizing
+        // message_count, last_message_at, and last_assistant_snippet into canvas_trees
+        // lets the sidebar query only canvas_trees. SQLite triggers keep the columns
+        // in sync so the observation fires only when canvas_trees rows change.
+        migrator.registerMigration("v17_denormalize_sidebar_stats") { db in
+            // 1. Add denormalized columns
+            try db.execute(sql: "ALTER TABLE canvas_trees ADD COLUMN message_count INTEGER DEFAULT 0")
+            try db.execute(sql: "ALTER TABLE canvas_trees ADD COLUMN last_message_at TIMESTAMP")
+            try db.execute(sql: "ALTER TABLE canvas_trees ADD COLUMN last_assistant_snippet TEXT")
+
+            // 2. Backfill from existing data
+            try db.execute(sql: """
+                UPDATE canvas_trees SET
+                    message_count = COALESCE((
+                        SELECT COUNT(m.id) FROM messages m
+                        JOIN canvas_branches b ON b.session_id = m.session_id
+                        WHERE b.tree_id = canvas_trees.id
+                    ), 0),
+                    last_message_at = (
+                        SELECT MAX(m.timestamp) FROM messages m
+                        JOIN canvas_branches b ON b.session_id = m.session_id
+                        WHERE b.tree_id = canvas_trees.id
+                    ),
+                    last_assistant_snippet = (
+                        SELECT m.content FROM messages m
+                        JOIN canvas_branches b ON b.session_id = m.session_id
+                        WHERE b.tree_id = canvas_trees.id AND m.role = 'assistant'
+                        ORDER BY m.timestamp DESC LIMIT 1
+                    )
+                """)
+
+            // 3. Triggers to keep denormalized columns in sync
+
+            // After new message inserted
+            try db.execute(sql: """
+                CREATE TRIGGER IF NOT EXISTS canvas_trees_msg_insert AFTER INSERT ON messages
+                WHEN EXISTS (SELECT 1 FROM canvas_branches WHERE session_id = NEW.session_id)
+                BEGIN
+                    UPDATE canvas_trees SET
+                        message_count = message_count + 1,
+                        last_message_at = MAX(COALESCE(last_message_at, ''), NEW.timestamp),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = (SELECT tree_id FROM canvas_branches WHERE session_id = NEW.session_id LIMIT 1);
+
+                    UPDATE canvas_trees SET
+                        last_assistant_snippet = NEW.content
+                    WHERE NEW.role = 'assistant'
+                    AND id = (SELECT tree_id FROM canvas_branches WHERE session_id = NEW.session_id LIMIT 1);
+                END
+                """)
+
+            // After message deleted
+            try db.execute(sql: """
+                CREATE TRIGGER IF NOT EXISTS canvas_trees_msg_delete AFTER DELETE ON messages
+                WHEN EXISTS (SELECT 1 FROM canvas_branches WHERE session_id = OLD.session_id)
+                BEGIN
+                    UPDATE canvas_trees SET
+                        message_count = MAX(message_count - 1, 0),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = (SELECT tree_id FROM canvas_branches WHERE session_id = OLD.session_id LIMIT 1);
+                END
+                """)
+        }
+
+        // Migration 18: Security approvals table + FK cascade triggers for branch deletes
+        //
+        // Fix 1: PermissionStore was using UserDefaults — move to database so approvals
+        //         persist in the shared SQLite DB and survive container resets.
+        // Fix 2: canvas_branch_tags and canvas_api_state had no cascade on branch delete,
+        //         leaving orphaned rows. Add cleanup + AFTER DELETE triggers.
+        migrator.registerMigration("v18_security_approvals_and_branch_cascade") { db in
+            // --- Fix 1: Security approvals table ---
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_security_approvals (
+                    pattern TEXT PRIMARY KEY,
+                    approved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+
+            // Migrate existing UserDefaults data into the new table
+            let existingApprovals = UserDefaults.standard.stringArray(
+                forKey: "com.worldtree.security.approved-patterns"
+            ) ?? []
+            for pattern in existingApprovals {
+                try db.execute(
+                    sql: "INSERT OR IGNORE INTO canvas_security_approvals (pattern) VALUES (?)",
+                    arguments: [pattern]
+                )
+            }
+            // Clean up UserDefaults after successful migration
+            UserDefaults.standard.removeObject(forKey: "com.worldtree.security.approved-patterns")
+
+            // --- Fix 2: FK cascade for branch-dependent tables ---
+
+            // Clean up any existing orphans from past deletes
+            try db.execute(sql: """
+                DELETE FROM canvas_branch_tags
+                WHERE branch_id NOT IN (SELECT id FROM canvas_branches)
+                """)
+            try db.execute(sql: """
+                DELETE FROM canvas_api_state
+                WHERE session_id NOT IN (
+                    SELECT session_id FROM canvas_branches WHERE session_id IS NOT NULL
+                )
+                """)
+
+            // Cascade trigger: clean up branch tags when a branch is deleted
+            try db.execute(sql: """
+                CREATE TRIGGER IF NOT EXISTS canvas_branch_cascade_tags
+                AFTER DELETE ON canvas_branches
+                BEGIN
+                    DELETE FROM canvas_branch_tags WHERE branch_id = OLD.id;
+                END
+                """)
+
+            // Cascade trigger: clean up API state when a branch is deleted
+            // canvas_api_state is keyed by session_id, so match on OLD.session_id
+            try db.execute(sql: """
+                CREATE TRIGGER IF NOT EXISTS canvas_branch_cascade_api_state
+                AFTER DELETE ON canvas_branches
+                BEGIN
+                    DELETE FROM canvas_api_state WHERE session_id = OLD.session_id;
+                END
+                """)
+        }
+
         try migrator.migrate(dbPool)
     }
 }

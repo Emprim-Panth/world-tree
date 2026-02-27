@@ -20,9 +20,22 @@ final class NativeWebSocketConnection: @unchecked Sendable {
     let id: String
     let connection: NWConnection
 
-    var onMessage: (@Sendable (String) -> Void)?
-    var onClose: (@Sendable (UInt16, String?) -> Void)?
-    var onPong: (@Sendable () -> Void)?
+    private var _onMessage: (@Sendable (String) -> Void)?
+    private var _onClose: (@Sendable (UInt16, String?) -> Void)?
+    private var _onPong: (@Sendable () -> Void)?
+
+    var onMessage: (@Sendable (String) -> Void)? {
+        get { lock.withLock { _onMessage } }
+        set { lock.withLock { _onMessage = newValue } }
+    }
+    var onClose: (@Sendable (UInt16, String?) -> Void)? {
+        get { lock.withLock { _onClose } }
+        set { lock.withLock { _onClose = newValue } }
+    }
+    var onPong: (@Sendable () -> Void)? {
+        get { lock.withLock { _onPong } }
+        set { lock.withLock { _onPong = newValue } }
+    }
 
     private var isClosed = false
     private let lock = NSLock()

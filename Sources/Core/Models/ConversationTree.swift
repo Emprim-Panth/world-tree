@@ -51,8 +51,12 @@ extension ConversationTree: FetchableRecord {
         createdAt = row["created_at"] as? Date ?? Date()
         updatedAt = row["updated_at"] as? Date ?? Date()
         archived = (row["archived"] as? Int ?? 0) != 0
+        // Denormalized columns (v17 migration) — read directly from canvas_trees.
+        // Falls back to query aliases for backwards compatibility with older DBs.
+        messageCount = row["message_count"] ?? 0
         lastMessageAt = row["last_message_at"] as? Date
-        lastMessageSnippet = row["last_message_snippet"] as? String
+        lastMessageSnippet = (row["last_assistant_snippet"] as? String)
+            ?? (row["last_message_snippet"] as? String)
     }
 }
 

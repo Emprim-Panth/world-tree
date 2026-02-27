@@ -285,31 +285,17 @@ final class SidebarViewModel: ObservableObject {
 
         guard let dbPool = DatabaseManager.shared.dbPool else { return }
 
-        // GRDB ValueObservation: auto-refreshes when canvas_trees changes
-        // trackingConstantRegion: observed tables (canvas_trees, canvas_branches, messages)
-        // are fixed regardless of data values, enabling concurrent reads that don't block writes.
+        // GRDB ValueObservation: auto-refreshes when canvas_trees changes.
+        // trackingConstantRegion: only observes canvas_trees — no join on messages.
+        // Denormalized columns (message_count, last_message_at, last_assistant_snippet)
+        // are kept in sync by SQLite triggers (v17 migration), so the observation
+        // only fires when canvas_trees rows actually change, NOT on every message insert.
         let observation = ValueObservation.trackingConstantRegion { db -> [ConversationTree] in
             let sql = """
-                SELECT t.*,
-                    COALESCE(msg_agg.message_count, 0) as message_count,
-                    msg_agg.last_message_at,
-                    msg_agg.last_message_snippet
+                SELECT t.*
                 FROM canvas_trees t
-                LEFT JOIN (
-                    SELECT b.tree_id, COUNT(m.id) as message_count,
-                           MAX(m.timestamp) as last_message_at,
-                           (SELECT m2.content
-                            FROM messages m2
-                            JOIN canvas_branches b2 ON b2.session_id = m2.session_id
-                            WHERE b2.tree_id = b.tree_id AND m2.role = 'assistant'
-                            ORDER BY m2.timestamp DESC
-                            LIMIT 1) as last_message_snippet
-                    FROM canvas_branches b
-                    JOIN messages m ON m.session_id = b.session_id
-                    GROUP BY b.tree_id
-                ) msg_agg ON msg_agg.tree_id = t.id
                 WHERE t.archived = 0
-                ORDER BY COALESCE(msg_agg.last_message_at, t.updated_at) DESC
+                ORDER BY COALESCE(t.last_message_at, t.updated_at) DESC
                 """
             return try Row.fetchAll(db, sql: sql).map { row in
                 var tree = ConversationTree(row: row)
@@ -328,13 +314,19 @@ final class SidebarViewModel: ObservableObject {
             }, onChange: { [weak self] trees in
                 Task { @MainActor in
                     guard let self else { return }
-                    // Restore previously-loaded branches — the observation query doesn't
-                    // include branches, so each refresh would wipe them without this.
+                    // Batch-fetch all branches in one query instead of per-tree lookups
+                    let treeIds = trees.map(\.id)
+                    let allBranches = (try? TreeStore.shared.getBranchesByTreeIds(treeIds)) ?? [:]
+
                     var restored = trees
                     for i in restored.indices {
-                        if let cached = self.cachedBranches[restored[i].id] {
-                            restored[i].branches = cached
-                        }
+                        restored[i].branches = allBranches[restored[i].id]
+                            ?? self.cachedBranches[restored[i].id]
+                            ?? []
+                    }
+                    // Update cache with freshly fetched branches
+                    for (treeId, branches) in allBranches {
+                        self.cachedBranches[treeId] = branches
                     }
                     self.trees = restored
                     self.rebuildProjectGroups()

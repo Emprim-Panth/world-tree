@@ -465,6 +465,26 @@ final class TreeStore {
         }
     }
 
+    /// Batch-fetch branches grouped by tree ID in a single IN query.
+    /// Returns a dictionary keyed by tree_id for O(1) lookup per tree.
+    func getBranchesByTreeIds(_ treeIds: [String]) throws -> [String: [Branch]] {
+        guard !treeIds.isEmpty else { return [:] }
+        return try db.read { db in
+            let placeholders = treeIds.map { _ in "?" }.joined(separator: ", ")
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT * FROM canvas_branches WHERE tree_id IN (\(placeholders)) ORDER BY created_at",
+                arguments: StatementArguments(treeIds)
+            )
+            var result: [String: [Branch]] = [:]
+            for row in rows {
+                let branch = Branch(row: row)
+                result[branch.treeId, default: []].append(branch)
+            }
+            return result
+        }
+    }
+
     // MARK: - Branch Navigation
 
     /// Returns the path from the root branch to the given branch (inclusive).
