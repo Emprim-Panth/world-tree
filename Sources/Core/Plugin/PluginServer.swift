@@ -231,6 +231,7 @@ final class PluginServer: ObservableObject {
         else if let s = json["id"] as? String { rpcId = "\"\(esc(s))\"" }
         else { rpcId = "null" }
 
+        wtLog("[PluginServer] handleMCP: method=\(method)")
         switch method {
         case "initialize":
             let result = """
@@ -245,7 +246,9 @@ final class PluginServer: ObservableObject {
             let params = json["params"] as? [String: Any] ?? [:]
             let toolName = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
+            wtLog("[PluginServer] callTool start: \(toolName)")
             let result = await callTool(name: toolName, arguments: arguments, id: rpcId)
+            wtLog("[PluginServer] callTool done: \(toolName)")
             sendResponse(connection, status: 200, body: result)
 
         case let m where m.hasPrefix("notifications/"):

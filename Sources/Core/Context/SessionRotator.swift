@@ -141,6 +141,29 @@ enum SessionRotator {
         }
     }
 
+    // MARK: - Snapshot (no-rotate)
+
+    /// Write a plain-text continuity snapshot without rotating the session.
+    /// Called on document close/disappear — no API call, just persists recent turns.
+    /// The next open will restore this as context if it's the most recent checkpoint.
+    static func writeSnapshot(sessionId: String, branchId: String, summary: String, messageCount: Int) {
+        do {
+            try DatabaseManager.shared.write { db in
+                try db.execute(
+                    sql: """
+                        INSERT INTO canvas_context_checkpoints
+                        (session_id, branch_id, summary, estimated_tokens_at_rotation, message_count_at_rotation, created_at)
+                        VALUES (?, ?, ?, 0, ?, datetime('now'))
+                        """,
+                    arguments: [sessionId, branchId, summary, messageCount]
+                )
+            }
+            wtLog("[SessionRotator] Snapshot checkpoint written for \(sessionId.prefix(8))… (\(summary.count) chars, \(messageCount) turns)")
+        } catch {
+            wtLog("[SessionRotator] Failed to write snapshot: \(error)")
+        }
+    }
+
     // MARK: - Query
 
     /// Get the most recent checkpoint for a session (for display/debugging).

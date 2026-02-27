@@ -1,4 +1,7 @@
 import Foundation
+import ScreenCaptureKit
+import CoreGraphics
+import ImageIO
 
 struct ToolResult: Sendable {
     let content: String
@@ -1027,34 +1030,73 @@ actor ToolExecutor {
         let filename = "\(UUID().uuidString).png"
         let outputPath = "\(screenshotsDir)/\(filename)"
 
-        let command: String
         if target == "simulator" {
+            // iOS Simulator — use simctl (doesn't need Screen Recording TCC)
+            let command: String
             if let deviceId {
-                // Sanitize: UDIDs are hex + hyphens only
                 let safeId = deviceId.filter { $0.isHexDigit || $0 == "-" }
                 command = "xcrun simctl io '\(safeId)' screenshot '\(outputPath)' 2>&1"
             } else {
                 command = "xcrun simctl io booted screenshot '\(outputPath)' 2>&1"
             }
+
+            let result = await bash(["command": AnyCodable(command)])
+            if result.isError {
+                return ToolResult(content: "Failed to capture screenshot: \(result.content)", isError: true)
+            }
+
+            guard FileManager.default.fileExists(atPath: outputPath) else {
+                return ToolResult(content: "Screenshot command ran but file not found at \(outputPath). Output: \(result.content)", isError: true)
+            }
+
+            return ToolResult(content: "Screenshot captured (iOS Simulator).\nFile: \(outputPath)", isError: false)
         } else {
-            // Full Mac screen capture
-            command = "screencapture -x '\(outputPath)' 2>&1"
-        }
+            // macOS screen — use ScreenCaptureKit in-process (inherits World Tree's TCC grant)
+            let bundleId = input["bundle_id"]?.value as? String
+            do {
+                let content = try await SCShareableContent.current
+                let config = SCStreamConfiguration()
+                config.showsCursor = false
 
-        let result = await bash(["command": AnyCodable(command)])
-        if result.isError {
-            return ToolResult(content: "Failed to capture screenshot: \(result.content)", isError: true)
-        }
+                let cgImage: CGImage
+                if let bid = bundleId,
+                   let window = content.windows.first(where: {
+                       $0.owningApplication?.bundleIdentifier == bid && $0.isOnScreen
+                   }) {
+                    config.width = max(1, Int(window.frame.width * 2))
+                    config.height = max(1, Int(window.frame.height * 2))
+                    let filter = SCContentFilter(desktopIndependentWindow: window)
+                    cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                } else if let display = content.displays.first {
+                    config.width = display.width
+                    config.height = display.height
+                    let filter = SCContentFilter(display: display, excludingWindows: [])
+                    cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                } else {
+                    return ToolResult(content: "No display available for screenshot", isError: true)
+                }
 
-        guard FileManager.default.fileExists(atPath: outputPath) else {
-            return ToolResult(content: "Screenshot command ran but file not found at \(outputPath). Output: \(result.content)", isError: true)
-        }
+                // Write PNG
+                let url = URL(fileURLWithPath: outputPath) as CFURL
+                guard let dest = CGImageDestinationCreateWithURL(url, "public.png" as CFString, 1, nil) else {
+                    return ToolResult(content: "Failed to create image destination at \(outputPath)", isError: true)
+                }
+                CGImageDestinationAddImage(dest, cgImage, nil)
+                guard CGImageDestinationFinalize(dest) else {
+                    return ToolResult(content: "Failed to write screenshot to \(outputPath)", isError: true)
+                }
 
-        let targetLabel = target == "simulator" ? "iOS Simulator" : "Mac screen"
-        return ToolResult(
-            content: "Screenshot captured (\(targetLabel)).\nFile: \(outputPath)",
-            isError: false
-        )
+                return ToolResult(
+                    content: "Screenshot captured (Mac screen, \(cgImage.width)×\(cgImage.height)).\nFile: \(outputPath)",
+                    isError: false
+                )
+            } catch {
+                return ToolResult(
+                    content: "Screenshot failed: \(error.localizedDescription). Ensure Screen Recording is granted in System Settings > Privacy & Security > Screen Recording.",
+                    isError: true
+                )
+            }
+        }
     }
 
     // MARK: - search_conversation

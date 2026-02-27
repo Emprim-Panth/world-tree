@@ -144,6 +144,9 @@ struct DocumentEditorView: View {
                         }
                     }
                 }
+                .onDisappear {
+                    viewModel.writeSnapshotCheckpoint()
+                }
                 .sheet(item: $viewModel.pendingForkMessage) { message in
                     ForkMenu(
                         sourceMessage: message,
@@ -411,6 +414,9 @@ class DocumentEditorViewModel: ObservableObject {
     private var stableSectionIds: [String: UUID] = [:]
     /// GRDB ValueObservation cancellable — auto-cancels when view model is deallocated.
     private var messageObservation: AnyDatabaseCancellable?
+    /// Polling timer — GRDB ValueObservation only fires for writes through the same DatabasePool.
+    /// The cortana daemon writes from a separate process, so we poll every 2s to catch external writes.
+    private var refreshTimer: Timer?
     /// Retry counter for loadDocument() — prevents infinite recursion when DB is slow to initialize.
     private var loadRetryCount = 0
     /// Reference to the active streaming task — allows cancellation when user interrupts.
@@ -421,6 +427,7 @@ class DocumentEditorViewModel: ObservableObject {
 
     deinit {
         streamFlushTimer?.invalidate()
+        refreshTimer?.invalidate()
         if let observer = externalSourceObserver {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -498,6 +505,11 @@ class DocumentEditorViewModel: ObservableObject {
             }
         )
 
+        // Poll for external writes — the cortana daemon is a separate process,
+        // so GRDB's ValueObservation (which only fires for writes through this pool)
+        // can't see those changes. A 2s timer bridges the gap.
+        startExternalRefreshTimer()
+
         // Listen for external message sources (e.g. Telegram → 📱 indicator)
         if externalSourceObserver == nil {
             let sid = sessionId
@@ -554,7 +566,7 @@ class DocumentEditorViewModel: ObservableObject {
             // Without this, `checkpointContext` stays nil and we fall back to the
             // much shallower "stale session" context injection (12 turns × 500 chars).
             if let (summary, createdAt) = SessionRotator.latestCheckpoint(sessionId: self.sessionId),
-               Date().timeIntervalSince(createdAt) < 7200 {  // within 2 hours
+               Date().timeIntervalSince(createdAt) < 86400 {  // within 24 hours
                 self.checkpointContext = summary
                 wtLog("[DocumentEditor] Restored rotation checkpoint from DB (\(summary.count) chars, age \(Int(Date().timeIntervalSince(createdAt)))s)")
             }
@@ -647,6 +659,32 @@ class DocumentEditorViewModel: ObservableObject {
             initialLoadComplete = true
             hasMoreMessages = messages.count >= pageSize
         }
+    }
+
+    private func startExternalRefreshTimer() {
+        refreshTimer?.invalidate()
+        let sid = sessionId
+        let sql = """
+            SELECT * FROM (
+                SELECT m.*,
+                    (SELECT COUNT(*) FROM canvas_branches cb
+                     WHERE cb.fork_from_message_id = m.id) as has_branches
+                FROM messages m
+                WHERE m.session_id = ?
+                ORDER BY m.timestamp DESC
+                LIMIT 100
+            ) sub ORDER BY sub.timestamp ASC
+            """
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, let dbPool = DatabaseManager.shared.dbPool else { return }
+                guard let messages = try? await dbPool.read({ db in
+                    try Message.fetchAll(db, sql: sql, arguments: [sid])
+                }) else { return }
+                self.applyMessages(messages)
+            }
+        }
+        RunLoop.main.add(refreshTimer!, forMode: .common)
     }
 
     /// Fetches the previous page of messages and prepends them to the document.
@@ -772,6 +810,33 @@ class DocumentEditorViewModel: ObservableObject {
             Please diagnose and fix this.
             """
         submitInput()
+    }
+
+    /// Write a plain-text snapshot of recent turns to the checkpoint table.
+    /// Called on document disappear — no API call required.
+    /// Ensures cross-restart context even when context pressure never triggered a rotation.
+    func writeSnapshotCheckpoint() {
+        let sections = document.sections
+        guard sections.count >= 4 else { return }
+        let recent = Array(sections.suffix(40))
+        let lines = recent.map { section -> String in
+            let role: String
+            switch section.author {
+            case .user: role = "User"
+            case .assistant: role = "Cortana"
+            case .system: role = "System"
+            }
+            let text = String(section.content.characters.prefix(800))
+            return "[\(role)]: \(text)"
+        }
+        let summary = "SESSION SNAPSHOT — last \(recent.count) turns before restart:\n\n"
+            + lines.joined(separator: "\n\n")
+        SessionRotator.writeSnapshot(
+            sessionId: sessionId,
+            branchId: branchId,
+            summary: summary,
+            messageCount: recent.count
+        )
     }
 
     func cancelStream() {
