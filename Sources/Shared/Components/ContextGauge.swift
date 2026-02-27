@@ -73,6 +73,9 @@ struct ContextGauge: View {
             }
         }
         .help(helpText)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(helpText)
     }
 }
 
@@ -130,5 +133,16 @@ struct ActivityPulse: View {
             .onChange(of: shouldPulse) { _, newValue in
                 isPulsing = newValue
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Activity")
+            .accessibilityValue(activityDescription)
+    }
+
+    private var activityDescription: String {
+        if isResponding { return "Responding" }
+        if eventCount > 10 { return "High activity, \(eventCount) events" }
+        if eventCount > 3 { return "Moderate activity, \(eventCount) events" }
+        if eventCount > 0 { return "Low activity, \(eventCount) events" }
+        return "Idle"
     }
 }

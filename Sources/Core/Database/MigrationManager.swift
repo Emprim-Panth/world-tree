@@ -631,6 +631,11 @@ enum MigrationManager {
                 """)
         }
 
+        // Migration 19: Add model column to canvas_token_usage for per-turn model tracking
+        migrator.registerMigration("v19_token_usage_model") { db in
+            try db.execute(sql: "ALTER TABLE canvas_token_usage ADD COLUMN model TEXT")
+        }
+
         try migrator.migrate(dbPool)
     }
 }

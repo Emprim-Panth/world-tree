@@ -570,7 +570,20 @@ final class WorldTreeServer: ObservableObject {
                 fullResponse += token
                 sendSSEChunk(connection, #"{"token":"\#(esc(token))"}"#)
 
-            case .done:
+            case .done(let usage):
+                // Record token usage
+                if usage.totalInputTokens > 0 || usage.totalOutputTokens > 0 {
+                    let resolvedModel = UserDefaults.standard.string(forKey: "defaultModel") ?? AppConstants.defaultModel
+                    TokenTracker.shared.record(
+                        sessionId: resolved.sessionId,
+                        branchId: resolved.branchId,
+                        inputTokens: usage.totalInputTokens,
+                        outputTokens: usage.totalOutputTokens,
+                        cacheHitTokens: usage.cacheHitTokens,
+                        model: resolvedModel
+                    )
+                }
+
                 do {
                     _ = try MessageStore.shared.sendMessage(
                         sessionId: resolved.sessionId, role: .assistant, content: fullResponse)

@@ -16,6 +16,7 @@ struct ProjectCardView: View {
                 Circle()
                     .fill(activity.isActive ? Color.green : Color.gray.opacity(0.4))
                     .frame(width: 8, height: 8)
+                    .accessibilityLabel(activity.isActive ? "Active" : "Inactive")
 
                 // Project icon + name
                 Image(systemName: project.type.icon)
@@ -37,6 +38,7 @@ struct ProjectCardView: View {
                         .padding(.vertical, 1)
                         .background(Color.green)
                         .clipShape(Capsule())
+                        .accessibilityLabel("\(activity.totalActiveTasks) active tasks")
                 }
             }
 
@@ -57,6 +59,7 @@ struct ProjectCardView: View {
                     Text("modified")
                         .font(.system(size: 9))
                         .foregroundStyle(.orange)
+                        .accessibilityLabel("Uncommitted changes")
                 }
 
                 Spacer()
@@ -128,5 +131,9 @@ struct ProjectCardView: View {
                 isExpanded.toggle()
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("\(project.name) project card")
+        .accessibilityHint(isExpanded ? "Tap to collapse details" : "Tap to expand details")
     }
 }

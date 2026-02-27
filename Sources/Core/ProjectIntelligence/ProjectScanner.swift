@@ -205,6 +205,14 @@ final class ProjectScanner {
         process.terminationHandler = { _ in sem.signal() }
         if sem.wait(timeout: .now() + .seconds(10)) == .timedOut {
             process.terminate()
+            // Verify the process actually stopped — escalate if it didn't
+            if process.isRunning {
+                process.interrupt()  // Escalate to SIGINT
+                usleep(100_000)      // 100ms grace
+                if process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                }
+            }
             pipe.fileHandleForReading.readabilityHandler = nil
             return nil
         }

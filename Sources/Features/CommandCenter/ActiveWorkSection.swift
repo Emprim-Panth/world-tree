@@ -39,7 +39,9 @@ struct ActiveWorkSection: View {
             Text("\(dispatches.count + jobs.count)")
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundStyle(.green)
+                .accessibilityLabel("\(dispatches.count + jobs.count) active tasks")
         }
+        .accessibilityElement(children: .combine)
     }
 
     private func dispatchRow(_ dispatch: WorldTreeDispatch) -> some View {
@@ -49,11 +51,13 @@ struct ActiveWorkSection: View {
                 ProgressView()
                     .scaleEffect(0.45)
                     .frame(width: 12, height: 12)
+                    .accessibilityLabel("Running")
             } else {
                 Image(systemName: "clock")
                     .font(.system(size: 9))
                     .foregroundStyle(.orange)
                     .frame(width: 12, height: 12)
+                    .accessibilityLabel("Queued")
             }
 
             // Project badge
@@ -102,6 +106,8 @@ struct ActiveWorkSection: View {
             }
             .buttonStyle(.plain)
             .help("Cancel dispatch")
+            .accessibilityLabel("Cancel dispatch")
+            .accessibilityHint("Stops this running dispatch")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -115,11 +121,13 @@ struct ActiveWorkSection: View {
                 ProgressView()
                     .scaleEffect(0.45)
                     .frame(width: 12, height: 12)
+                    .accessibilityLabel("Job running")
             } else {
                 Image(systemName: "terminal")
                     .font(.system(size: 9))
                     .foregroundStyle(.orange)
                     .frame(width: 12, height: 12)
+                    .accessibilityLabel("Job queued")
             }
 
             Text("job")

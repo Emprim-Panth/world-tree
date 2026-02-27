@@ -5,6 +5,7 @@ struct DashboardView: View {
     @StateObject private var daemonService = DaemonService.shared
     @State private var recentTrees: [ConversationTree] = []
     @State private var treeCount: Int = 0
+    @State private var sessionStates: [SessionStateStore.SessionState] = []
 
     var body: some View {
         ScrollView {
@@ -59,6 +60,20 @@ struct DashboardView: View {
                     .buttonStyle(.bordered)
                 }
 
+                // Session Intelligence
+                if !sessionStates.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Session Intelligence")
+                            .font(.headline)
+                            .padding(.horizontal)
+
+                        ForEach(sessionStates, id: \.sessionId) { state in
+                            sessionStateCard(state)
+                        }
+                    }
+                    .frame(maxWidth: 600)
+                }
+
                 // Recent trees (or first-run empty state)
                 if !recentTrees.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
@@ -106,6 +121,7 @@ struct DashboardView: View {
         } catch {
             wtLog("[Dashboard] Failed to load trees: \(error)")
         }
+        sessionStates = SessionStateStore.shared.getActiveStates()
     }
 
     private func statusCard(icon: String, title: String, value: String, color: Color) -> some View {
@@ -124,6 +140,72 @@ struct DashboardView: View {
         .padding(16)
         .background(.quaternary)
         .cornerRadius(12)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title): \(value)")
+    }
+
+    private func sessionStateCard(_ state: SessionStateStore.SessionState) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Header: project + phase
+            HStack(spacing: 6) {
+                Image(systemName: state.phaseIcon)
+                    .foregroundStyle(.blue)
+                    .font(.caption)
+                if let project = state.project, !project.isEmpty {
+                    Text(project)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                }
+                Text(state.phaseLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.blue.opacity(0.12))
+                    .cornerRadius(4)
+                Spacer()
+                Text(state.lastUpdated, style: .relative)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            // Goal
+            if let goal = state.goal, !goal.isEmpty {
+                Text(goal)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+            }
+
+            // Blockers + errors
+            HStack(spacing: 8) {
+                if !state.blockers.isEmpty {
+                    HStack(spacing: 3) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                        Text("\(state.blockers.count) blocker\(state.blockers.count == 1 ? "" : "s")")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    }
+                }
+                if state.errorCount > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                        Text("\(state.errorCount) error\(state.errorCount == 1 ? "" : "s")")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.5))
+        .cornerRadius(8)
+        .padding(.horizontal)
+        .accessibilityElement(children: .combine)
     }
 
     private func recentTreeRow(_ tree: ConversationTree) -> some View {

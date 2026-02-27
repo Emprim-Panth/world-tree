@@ -46,6 +46,7 @@ struct TreeNodeView: View {
                     .fill(Color.green)
                     .frame(width: 6, height: 6)
                     .help("Terminal active")
+                    .accessibilityLabel("Terminal active")
             }
 
             statusIndicator
@@ -74,10 +75,13 @@ struct TreeNodeView: View {
             switch branch.branchType {
             case .conversation:
                 Image(systemName: "bubble.left")
+                    .accessibilityLabel("Conversation branch")
             case .implementation:
                 Image(systemName: "gearshape")
+                    .accessibilityLabel("Implementation branch")
             case .exploration:
                 Image(systemName: "magnifyingglass")
+                    .accessibilityLabel("Exploration branch")
             }
         }
     }
@@ -102,14 +106,17 @@ struct TreeNodeView: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.caption2)
                 .foregroundStyle(.green)
+                .accessibilityLabel("Completed")
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
                 .font(.caption2)
                 .foregroundStyle(.red)
+                .accessibilityLabel("Failed")
         case .archived:
             Image(systemName: "archivebox")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .accessibilityLabel("Archived")
         }
     }
 }

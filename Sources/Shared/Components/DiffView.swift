@@ -53,6 +53,8 @@ struct DiffView: View {
                         .padding(.vertical, 1)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(line.background)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(line.accessibilityDescription)
                     }
                 }
                 .padding(.vertical, 4)
@@ -69,6 +71,14 @@ struct DiffView: View {
         let text: String
         let color: Color
         let background: Color
+
+        var accessibilityDescription: String {
+            switch prefix {
+            case "+": return "Added: \(text)"
+            case "-": return "Removed: \(text)"
+            default: return text
+            }
+        }
     }
 
     private var diffLines: [DiffLine] {

@@ -41,6 +41,7 @@ struct ImplementationView: View {
             Image(systemName: "gearshape.fill")
                 .font(.title3)
                 .foregroundStyle(.orange)
+                .accessibilityLabel("Implementation branch")
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(branch.displayTitle)
@@ -95,6 +96,7 @@ struct ImplementationView: View {
                 Circle()
                     .fill(.green)
                     .frame(width: 6, height: 6)
+                    .accessibilityHidden(true)
                 Text("Running")
                     .font(.caption)
                     .foregroundStyle(.green)

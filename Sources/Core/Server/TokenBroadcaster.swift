@@ -166,6 +166,19 @@ final class TokenBroadcaster {
             )
 
         case .done(let usage):
+            // Record token usage to canvas_token_usage + project metrics
+            if usage.totalInputTokens > 0 || usage.totalOutputTokens > 0 {
+                let resolvedModel = UserDefaults.standard.string(forKey: "defaultModel") ?? AppConstants.defaultModel
+                TokenTracker.shared.record(
+                    sessionId: sessionId,
+                    branchId: branchId,
+                    inputTokens: usage.totalInputTokens,
+                    outputTokens: usage.totalOutputTokens,
+                    cacheHitTokens: usage.cacheHitTokens,
+                    model: resolvedModel
+                )
+            }
+
             // Persist assistant message; fall back to a generated id on failure
             let savedId: String
             if let msg = try? MessageStore.shared.sendMessage(

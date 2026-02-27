@@ -129,6 +129,7 @@ struct SettingsView: View {
             .fill(color)
             .frame(width: 8, height: 8)
             .help(health?.statusLabel ?? "Unknown")
+            .accessibilityLabel("Health: \(health?.statusLabel ?? "Unknown")")
     }
 
     private func providerDescription(_ identifier: String) -> String {
@@ -152,6 +153,7 @@ struct SettingsView: View {
             .background(active ? Color.blue.opacity(0.15) : Color.secondary.opacity(0.1))
             .foregroundStyle(active ? .blue : .secondary)
             .cornerRadius(4)
+            .accessibilityLabel("\(label): \(active ? "supported" : "not supported")")
     }
 
     // MARK: - General
@@ -262,6 +264,7 @@ struct SettingsView: View {
                         Image(systemName: showAPIKey ? "eye.slash" : "eye")
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(showAPIKey ? "Hide API key" : "Show API key")
                 }
 
                 Button("Save to Keychain") {
@@ -325,12 +328,14 @@ struct SettingsView: View {
                     Circle()
                         .fill(pluginServer.isRunning ? Color.green : Color.red)
                         .frame(width: 8, height: 8)
+                        .accessibilityHidden(true)
                     Text(pluginServer.isRunning
                          ? "Running — MCP tools exposed to Friday"
                          : (pluginServer.lastError ?? "Stopped"))
                         .font(.caption)
                         .foregroundStyle(pluginServer.isRunning ? .primary : .secondary)
                 }
+                .accessibilityElement(children: .combine)
 
                 if pluginServer.isRunning {
                     Text("~/.cortana/state/plugins/world-tree.json")
@@ -351,12 +356,14 @@ struct SettingsView: View {
                     Circle()
                         .fill(server.isRunning ? Color.green : Color.red)
                         .frame(width: 8, height: 8)
+                        .accessibilityHidden(true)
                     Text(server.isRunning
                          ? "Running — \(server.requestCount) requests"
                          : (server.lastError ?? "Stopped"))
                         .font(.caption)
                         .foregroundStyle(server.isRunning ? .primary : .secondary)
                 }
+                .accessibilityElement(children: .combine)
 
                 Toggle("Advertise via Bonjour (_worldtree._tcp.)", isOn: $bonjourEnabled)
                     .font(.callout)
@@ -402,6 +409,7 @@ struct SettingsView: View {
                         Image(systemName: showToken ? "eye.slash" : "eye")
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(showToken ? "Hide token" : "Show token")
 
                     if !serverToken.isEmpty {
                         Button(tokenCopied ? "Copied!" : "Copy") {
@@ -539,6 +547,7 @@ struct SettingsView: View {
                     Circle()
                         .fill(isActive ? Color.green : Color.secondary.opacity(0.4))
                         .frame(width: 8, height: 8)
+                        .accessibilityHidden(true)
                     Text(isActive ? "Active — routing to Studio" : "Inactive — local providers in use")
                         .font(.caption)
                         .foregroundStyle(isActive ? .primary : .secondary)
@@ -588,6 +597,7 @@ struct SettingsView: View {
                         Image(systemName: showRemoteToken ? "eye.slash" : "eye")
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(showRemoteToken ? "Hide token" : "Show token")
                     Button("Save") {
                         let trimmed = remoteTokenInput.trimmingCharacters(in: .whitespaces)
                         guard !trimmed.isEmpty else { return }
@@ -772,12 +782,14 @@ struct SettingsView: View {
                     Circle()
                         .fill(daemonService.isConnected ? Color.green : Color.secondary.opacity(0.4))
                         .frame(width: 8, height: 8)
+                        .accessibilityHidden(true)
                     Text(daemonService.isConnected
                          ? "Connected — \(AppConstants.daemonAPIURL)"
                          : "Not connected — daemon not running")
                         .font(.caption)
                         .foregroundStyle(daemonService.isConnected ? .primary : .secondary)
                 }
+                .accessibilityElement(children: .combine)
 
                 Text(daemonEnabled && daemonService.isConnected
                      ? "World Tree → Cortana (memory + identity)"

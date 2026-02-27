@@ -86,6 +86,7 @@ struct CommandCenterView: View {
                     .font(.system(size: 12))
             }
             .buttonStyle(.bordered)
+            .accessibilityLabel("Refresh projects")
         }
     }
 
@@ -97,6 +98,7 @@ struct CommandCenterView: View {
                 .font(.system(size: 10, weight: .medium))
         }
         .foregroundStyle(color)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Project Grid
@@ -172,6 +174,7 @@ struct CommandCenterView: View {
             Image(systemName: dispatch.status == .completed ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .font(.system(size: 10))
                 .foregroundStyle(dispatch.status == .completed ? .green : .red)
+                .accessibilityLabel(dispatch.status == .completed ? "Completed" : "Failed")
 
             Text(dispatch.project)
                 .font(.system(size: 10, weight: .medium))

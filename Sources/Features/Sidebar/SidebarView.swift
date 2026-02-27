@@ -72,6 +72,8 @@ struct SidebarView: View {
             .padding(.horizontal, 8)
             .padding(.top, 6)
             .padding(.bottom, 4)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Navigation")
 
             Divider()
                 .padding(.horizontal, 8)
@@ -144,6 +146,8 @@ struct SidebarView: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("Sort order: \(viewModel.sortOrder.label)")
+                .accessibilityLabel("Sort order")
+                .accessibilityValue(viewModel.sortOrder.label)
             }
             .padding(.horizontal, 10)
             .padding(.top, 8)
@@ -172,10 +176,13 @@ struct SidebarView: View {
                     Spacer()
                     if viewModel.isSearching {
                         ProgressView().controlSize(.mini)
+                            .accessibilityLabel("Searching")
                     }
                 }
                 .padding(.horizontal, 10)
                 .padding(.bottom, 4)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Search scope")
             }
 
             // Unified project list — projects ARE the grouping, trees live inside them
@@ -227,6 +234,7 @@ struct SidebarView: View {
                                             .frame(width: 6, height: 6)
                                             .padding(.leading, 8)
                                             .padding(.trailing, 2)
+                                            .accessibilityLabel("Active project")
                                     }
 
                                     ProjectGroupHeader(
@@ -341,6 +349,7 @@ struct SidebarView: View {
                             .padding(.vertical, 1)
                             .background(Color.blue)
                             .cornerRadius(6)
+                            .accessibilityLabel("\(total) active sessions")
                     }
                 }
             }
@@ -477,6 +486,7 @@ struct SidebarView: View {
                 .font(.caption2)
                 .foregroundStyle(result.role == .user ? Color.blue : Color.purple)
                 .frame(width: 14)
+                .accessibilityLabel(result.role == .user ? "User message" : "Assistant message")
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.treeName)
@@ -500,6 +510,9 @@ struct SidebarView: View {
         .onTapGesture {
             appState.selectBranch(result.branchId, in: result.treeId)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens this search result")
     }
 
     // MARK: - Tree Row
@@ -515,6 +528,7 @@ struct SidebarView: View {
                 Image(systemName: "iphone.radiowaves.left.and.right")
                     .font(.caption)
                     .foregroundStyle(.teal)
+                    .accessibilityLabel("Phone bridge")
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -545,6 +559,7 @@ struct SidebarView: View {
                 .padding(.vertical, 2)
                 .background(.quaternary)
                 .cornerRadius(6)
+                .accessibilityLabel("\(tree.messageCount) messages")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -561,6 +576,9 @@ struct SidebarView: View {
             appState.selectedTreeId = tree.id
             loadTreeBranches(tree.id)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens this conversation tree")
     }
 
     @ViewBuilder
@@ -635,6 +653,7 @@ struct SidebarView: View {
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 2)
+        .accessibilityLabel("\(tree.branches.count) branches")
     }
 
     /// Load full tree with branches when selected — always selects root branch.
@@ -905,6 +924,8 @@ struct ProjectGroupHeader: View {
                         .animation(.easeInOut(duration: 0.15), value: isExpanded)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(isExpanded ? "Collapse \(projectName)" : "Expand \(projectName)")
+                .accessibilityHint("Toggles project group visibility")
 
                 Image(systemName: typeIcon)
                     .font(.caption2)
@@ -925,6 +946,7 @@ struct ProjectGroupHeader: View {
                         .padding(.vertical, 1)
                         .background(.quaternary)
                         .cornerRadius(3)
+                        .accessibilityLabel("Git branch: \(git)")
                 }
 
                 Spacer()
@@ -933,6 +955,7 @@ struct ProjectGroupHeader: View {
                     Text("\(treeCount)")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
+                        .accessibilityLabel("\(treeCount) trees")
                 }
 
                 Button(action: onNewTree) {
@@ -942,6 +965,7 @@ struct ProjectGroupHeader: View {
                 }
                 .buttonStyle(.plain)
                 .help("New tree in \(projectName)")
+                .accessibilityLabel("New tree in \(projectName)")
             }
 
         }

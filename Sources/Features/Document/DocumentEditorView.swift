@@ -1111,8 +1111,18 @@ class DocumentEditorViewModel: ObservableObject {
                 case .toolEnd:
                     currentTool = nil
 
-                case .done:
-                    break
+                case .done(let usage):
+                    // Record token usage to canvas_token_usage + project metrics
+                    if usage.totalInputTokens > 0 || usage.totalOutputTokens > 0 {
+                        TokenTracker.shared.record(
+                            sessionId: sessionId,
+                            branchId: branchId,
+                            inputTokens: usage.totalInputTokens,
+                            outputTokens: usage.totalOutputTokens,
+                            cacheHitTokens: usage.cacheHitTokens,
+                            model: model
+                        )
+                    }
 
                 case .error(let msg):
                     hadExplicitError = true

@@ -27,6 +27,7 @@ struct ForkMenu: View {
             HStack {
                 Image(systemName: "arrow.triangle.branch")
                     .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
                 Text("Branch from message")
                     .font(.headline)
             }

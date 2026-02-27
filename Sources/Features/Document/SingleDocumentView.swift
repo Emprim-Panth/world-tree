@@ -53,6 +53,8 @@ struct SingleDocumentView: View {
                                             .foregroundColor(.secondary)
                                     }
                                     .buttonStyle(.plain)
+                                    .accessibilityLabel("Close branch")
+                                    .accessibilityHint("Closes this branch column")
                                 }
                                 .padding(12)
                                 .background(Color(nsColor: .controlBackgroundColor))
@@ -277,6 +279,7 @@ struct TerminalPanelView: View {
                 Image(systemName: "terminal")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
 
                 Text(directoryName)
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
@@ -297,6 +300,7 @@ struct TerminalPanelView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Close terminal (⌘`)")
+                .accessibilityLabel("Close terminal")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)

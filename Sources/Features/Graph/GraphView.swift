@@ -43,12 +43,15 @@ struct GraphView: View {
                         Label(filterType ?? "All", systemImage: "line.3.horizontal.decrease.circle")
                             .font(.caption)
                     }
+                    .accessibilityLabel("Filter node types")
+                    .accessibilityValue(filterType ?? "All types")
 
                     Button {
                         Task { await loadGraph() }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
+                    .accessibilityLabel("Refresh graph")
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
@@ -75,6 +78,7 @@ struct GraphView: View {
                     HStack {
                         Image(systemName: "circle.fill")
                             .foregroundStyle(nodeColor(for: node.type))
+                            .accessibilityLabel("Node type: \(node.type)")
                         Text(node.label)
                             .font(.headline)
                     }
@@ -123,44 +127,64 @@ struct GraphView: View {
 
     private var graphCanvas: some View {
         GeometryReader { geometry in
-            Canvas { context, size in
-                // Draw edges
-                for edge in edges {
-                    guard let from = positions[edge.fromId],
-                          let to = positions[edge.toId] else { continue }
-                    var path = Path()
-                    path.move(to: from)
-                    path.addLine(to: to)
-                    context.stroke(path, with: .color(.secondary.opacity(0.3)), lineWidth: 1)
-                }
+            ZStack {
+                Canvas { context, size in
+                    // Draw edges
+                    for edge in edges {
+                        guard let from = positions[edge.fromId],
+                              let to = positions[edge.toId] else { continue }
+                        var path = Path()
+                        path.move(to: from)
+                        path.addLine(to: to)
+                        context.stroke(path, with: .color(.secondary.opacity(0.3)), lineWidth: 1)
+                    }
 
-                // Draw nodes
-                for node in nodes {
-                    guard let pos = positions[node.id] else { continue }
-                    let radius: CGFloat = node.id == selectedNode?.id ? 10 : 6
-                    let rect = CGRect(x: pos.x - radius, y: pos.y - radius,
-                                     width: radius * 2, height: radius * 2)
-                    context.fill(Path(ellipseIn: rect), with: .color(nodeColor(for: node.type)))
+                    // Draw nodes
+                    for node in nodes {
+                        guard let pos = positions[node.id] else { continue }
+                        let radius: CGFloat = node.id == selectedNode?.id ? 10 : 6
+                        let rect = CGRect(x: pos.x - radius, y: pos.y - radius,
+                                         width: radius * 2, height: radius * 2)
+                        context.fill(Path(ellipseIn: rect), with: .color(nodeColor(for: node.type)))
 
-                    // Label
-                    let text = Text(String(node.label.prefix(20)))
-                        .font(.system(size: 9))
-                        .foregroundStyle(.primary)
-                    context.draw(text, at: CGPoint(x: pos.x, y: pos.y + radius + 8))
+                        // Label
+                        let text = Text(String(node.label.prefix(20)))
+                            .font(.system(size: 9))
+                            .foregroundStyle(.primary)
+                        context.draw(text, at: CGPoint(x: pos.x, y: pos.y + radius + 8))
+                    }
                 }
-            }
-            .onTapGesture { location in
-                // Find nearest node
-                let tapped = nodes.min { a, b in
-                    let posA = positions[a.id] ?? .zero
-                    let posB = positions[b.id] ?? .zero
-                    let dA = hypot(posA.x - location.x, posA.y - location.y)
-                    let dB = hypot(posB.x - location.x, posB.y - location.y)
-                    return dA < dB
+                .onTapGesture { location in
+                    // Find nearest node
+                    let tapped = nodes.min { a, b in
+                        let posA = positions[a.id] ?? .zero
+                        let posB = positions[b.id] ?? .zero
+                        let dA = hypot(posA.x - location.x, posA.y - location.y)
+                        let dB = hypot(posB.x - location.x, posB.y - location.y)
+                        return dA < dB
+                    }
+                    if let tapped, let pos = positions[tapped.id] {
+                        let dist = hypot(pos.x - location.x, pos.y - location.y)
+                        selectedNode = dist < 30 ? tapped : nil
+                    }
                 }
-                if let tapped, let pos = positions[tapped.id] {
-                    let dist = hypot(pos.x - location.x, pos.y - location.y)
-                    selectedNode = dist < 30 ? tapped : nil
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Knowledge graph visualization")
+                .accessibilityValue("\(nodes.count) nodes, \(edges.count) edges" + (selectedNode.map { ". Selected: \($0.label)" } ?? ""))
+                .accessibilityHint("Tap a node to view its details")
+
+                // Hidden accessibility list of graph nodes for VoiceOver navigation
+                ForEach(nodes) { node in
+                    if let pos = positions[node.id] {
+                        Color.clear
+                            .frame(width: 24, height: 24)
+                            .position(pos)
+                            .accessibilityElement()
+                            .accessibilityLabel("\(node.type): \(node.label)")
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityHint("Select this node to view details")
+                            .onTapGesture { selectedNode = node }
+                    }
                 }
             }
             .onChange(of: nodes) { _, _ in

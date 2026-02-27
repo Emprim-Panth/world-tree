@@ -15,11 +15,13 @@ struct ProcessingBanner: View {
                 ProgressView()
                     .scaleEffect(0.5)
                     .frame(width: 12, height: 12)
+                    .accessibilityHidden(true)
                 Text("Cortana working…")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
                 Spacer()
             }
+            .accessibilityElement(children: .combine)
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
             .background(Color.accentColor.opacity(0.07))
@@ -103,11 +105,13 @@ private struct JobRow: View {
                 ProgressView()
                     .scaleEffect(0.5)
                     .frame(width: 12, height: 12)
+                    .accessibilityLabel("Running")
             } else {
                 Image(systemName: "clock")
                     .font(.system(size: 9))
                     .foregroundColor(.orange.opacity(0.7))
                     .frame(width: 12, height: 12)
+                    .accessibilityLabel("Queued")
             }
 
             Text(job.displayCommand)

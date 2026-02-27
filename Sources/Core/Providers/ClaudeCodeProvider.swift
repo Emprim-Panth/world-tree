@@ -38,6 +38,9 @@ final class ClaudeCodeProvider: LLMProvider {
     private static let sessionTTL: TimeInterval = 30 * 60  // 30 minutes
     private let mapLock = NSLock()
 
+    /// Periodic save timer — persists session map every 60s to guard against crash data loss
+    private var periodicSaveTimer: Timer?
+
     /// File-based session map — written synchronously on the parse queue so there
     /// is no async gap between capturing a session ID and it being durable.
     /// Supplements the DB-backed load (which has MainActor/Task timing risks).
@@ -53,6 +56,22 @@ final class ClaudeCodeProvider: LLMProvider {
     init() {
         Task { @MainActor [weak self] in
             self?.loadSessionMap()
+            self?.startPeriodicSave()
+        }
+    }
+
+    deinit {
+        periodicSaveTimer?.invalidate()
+    }
+
+    /// Start a repeating timer that persists the session map every 60 seconds.
+    /// Prevents data loss if the app crashes between session updates.
+    @MainActor
+    private func startPeriodicSave() {
+        periodicSaveTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.persistSessionMap()
+            }
         }
     }
 

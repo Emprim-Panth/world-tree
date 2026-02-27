@@ -12,6 +12,7 @@ struct ModelBadge: View {
             .background(color.opacity(0.15))
             .foregroundStyle(color)
             .cornerRadius(4)
+            .accessibilityLabel("Model: \(displayName)")
     }
 
     private var displayName: String {

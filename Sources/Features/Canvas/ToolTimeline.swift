@@ -140,6 +140,14 @@ enum ToolPairStatus {
         case .failed: return .red
         }
     }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .running: return "Running"
+        case .completed: return "Completed"
+        case .failed: return "Failed"
+        }
+    }
 }
 
 // MARK: - Tool Pair Row
@@ -162,6 +170,7 @@ struct ToolPairRow: View {
                 Image(systemName: pair.status.icon)
                     .foregroundColor(pair.status.color)
                     .font(.system(size: 9))
+                    .accessibilityLabel(pair.status.accessibilityLabel)
 
                 Text(pair.name)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -174,6 +183,7 @@ struct ToolPairRow: View {
                     .foregroundColor(.secondary)
             }
             .padding(.vertical, 2)
+            .accessibilityElement(children: .combine)
 
             if let path = screenshotPath {
                 ScreenshotThumbnail(path: path)
@@ -204,6 +214,9 @@ struct ScreenshotThumbnail: View {
                         )
                         .onTapGesture { isExpanded.toggle() }
                         .animation(.easeInOut(duration: 0.2), value: isExpanded)
+                        .accessibilityLabel("Screenshot capture")
+                        .accessibilityHint(isExpanded ? "Tap to collapse" : "Tap to expand")
+                        .accessibilityAddTraits(.isImage)
                     Text(isExpanded ? "Tap to collapse" : "Tap to expand")
                         .font(.system(size: 9))
                         .foregroundColor(.secondary.opacity(0.6))

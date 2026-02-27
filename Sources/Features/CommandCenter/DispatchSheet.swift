@@ -32,6 +32,7 @@ struct DispatchSheet: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Close")
             }
 
             // Project picker — keyed by path to avoid index-shift bugs

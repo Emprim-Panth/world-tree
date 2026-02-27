@@ -66,6 +66,7 @@ struct EventTimelineView: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
+                .accessibilityLabel("Refresh timeline")
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
@@ -120,6 +121,7 @@ struct TimelineEventRow: View {
                 .font(.title3)
                 .foregroundStyle(iconColor)
                 .frame(width: 24)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {

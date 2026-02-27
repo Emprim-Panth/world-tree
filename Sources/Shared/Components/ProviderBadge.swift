@@ -12,6 +12,7 @@ struct ProviderBadge: View {
             .background(color.opacity(0.15))
             .foregroundStyle(color)
             .cornerRadius(4)
+            .accessibilityLabel("Provider: \(providerManager.activeProviderBadge)")
     }
 
     private var color: Color {

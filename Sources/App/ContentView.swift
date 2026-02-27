@@ -34,6 +34,7 @@ struct ContentView: View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 350)
+                .accessibilityLabel("Sidebar")
         } detail: {
             if let treeId = appState.selectedTreeId {
                 // .id() keyed on both tree and branch forces SwiftUI to fully recreate

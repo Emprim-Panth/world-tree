@@ -18,6 +18,7 @@ struct GlobalSearchView: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
 
                 TextField("Search everything…", text: $query)
                     .textFieldStyle(.plain)
@@ -119,6 +120,7 @@ struct GlobalSearchView: View {
                 .font(.title3)
                 .foregroundStyle(sourceColor(result.source))
                 .frame(width: 24)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
