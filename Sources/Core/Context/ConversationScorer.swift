@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 
 /// Heuristic scorer that replaces dumb last-N slicing for context injection.
 ///
