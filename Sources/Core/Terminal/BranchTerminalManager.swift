@@ -40,6 +40,13 @@ final class CapturingTerminalView: LocalProcessTerminalView {
         let lines = cleaned.components(separatedBy: "\n")
         return lines.suffix(60).joined(separator: "\n")
     }
+
+    /// Release captured output buffer and terminate the underlying PTY process.
+    /// Call this instead of bare `terminate()` to ensure resources are fully freed.
+    func cleanup() {
+        capturedBytes = Data()
+        terminate()
+    }
 }
 
 // MARK: - BranchTerminalManager
@@ -216,8 +223,9 @@ final class BranchTerminalManager: ObservableObject {
 
     /// Terminate a branch's terminal process (branch archived or deleted).
     /// Also kills the tmux session so it doesn't linger as an orphan.
+    /// Releases captured output buffers and cleans up the PTY file descriptors.
     func terminate(branchId: String) {
-        terminals[branchId]?.terminate()
+        terminals[branchId]?.cleanup()
         terminals.removeValue(forKey: branchId)
         workingDirs.removeValue(forKey: branchId)
 
@@ -227,6 +235,8 @@ final class BranchTerminalManager: ObservableObject {
             let task = Process()
             task.executableURL = URL(fileURLWithPath: tmuxExecutable)
             task.arguments = ["kill-session", "-t", sessionName]
+            task.standardOutput = FileHandle.nullDevice
+            task.standardError = FileHandle.nullDevice
             try? task.run()
         }
 
@@ -235,8 +245,9 @@ final class BranchTerminalManager: ObservableObject {
 
     /// Terminate all terminals (app quit).
     /// Does NOT kill tmux sessions on quit — that's the whole point of persistence.
+    /// Releases all captured output buffers and cleans up PTY file descriptors.
     func terminateAll() {
-        for (_, tv) in terminals { tv.terminate() }
+        for (_, tv) in terminals { tv.cleanup() }
         terminals.removeAll()
         workingDirs.removeAll()
         tmuxNames.removeAll()
@@ -301,6 +312,8 @@ final class BranchTerminalManager: ObservableObject {
 
         proc.terminationHandler = { [weak self] _ in
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            // Close the pipe's read handle — process is done, no more data coming.
+            try? pipe.fileHandleForReading.close()
             guard let output = String(data: data, encoding: .utf8) else { return }
 
             let canvasSessions = output.split(separator: "\n")
@@ -317,6 +330,12 @@ final class BranchTerminalManager: ObservableObject {
             }
         }
 
-        try? proc.run()
+        do {
+            try proc.run()
+        } catch {
+            // Process failed to launch — close the pipe to avoid leaking the fd.
+            try? pipe.fileHandleForReading.close()
+            wtLog("[BranchTerminalManager] Failed to list tmux sessions: \(error)")
+        }
     }
 }

@@ -84,6 +84,10 @@ struct SystemBlock: Codable {
     let text: String
     var cacheControl: CacheControl?
 
+    /// Whether this block is pinned (cached). Derived from cacheControl.
+    /// Use this instead of checking cacheControl != nil directly.
+    var isPinned: Bool { cacheControl != nil }
+
     init(text: String, cached: Bool = false, longCache: Bool = false) {
         self.type = "text"
         self.text = text

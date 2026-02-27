@@ -172,8 +172,8 @@ struct ForkMenu: View {
         error = nil
 
         do {
-            // Build context
-            let context: String
+            // Build context — nil means parent branch has no session yet
+            let context: String?
             if branchType == .implementation {
                 context = try ContextBuilder.buildImplementationContext(
                     parentBranch: parentBranch,

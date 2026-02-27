@@ -264,6 +264,8 @@ final class TimelineStore {
         // Fallback for non-ISO formats
         let df = DateFormatter()
         df.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return df.date(from: str)
+        if let date = df.date(from: str) { return date }
+        wtLog("[TimelineStore] WARNING: Failed to parse date '\(str)' — skipping event")
+        return nil
     }
 }

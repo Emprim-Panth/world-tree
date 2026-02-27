@@ -62,10 +62,14 @@ extension Message: FetchableRecord {
         if let timestampStr = row["timestamp"] as? String {
             if let date = Message.iso8601Formatter.date(from: timestampStr.replacingOccurrences(of: " ", with: "T") + "Z") {
                 createdAt = date
+            } else if let date = Message.sqliteFormatter.date(from: timestampStr) {
+                createdAt = date
             } else {
-                createdAt = Message.sqliteFormatter.date(from: timestampStr) ?? Date()
+                wtLog("[Message] WARNING: Failed to parse timestamp '\(timestampStr)' for message id=\(id) — falling back to Date()")
+                createdAt = Date()
             }
         } else {
+            wtLog("[Message] WARNING: No timestamp value for message id=\(id) — falling back to Date()")
             createdAt = Date()
         }
 

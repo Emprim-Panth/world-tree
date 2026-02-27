@@ -11,14 +11,15 @@ enum ContextBuilder {
     ///   - parentBranch: The branch being forked from
     ///   - forkMessageId: The message to fork from (context includes this message and prior)
     ///   - depth: How many recent messages to include (default: Constants.defaultContextDepth)
-    /// - Returns: Formatted context string for system message injection
+    /// - Returns: Formatted context string for system message injection, or `nil` if no parent session exists
     static func buildForkContext(
         parentBranch: Branch,
         forkMessageId: String,
         depth: Int = AppConstants.defaultContextDepth
-    ) throws -> String {
+    ) throws -> String? {
         guard let sessionId = parentBranch.sessionId else {
-            return "[New branch — no parent context]"
+            wtLog("[ContextBuilder] buildForkContext: parentBranch '\(parentBranch.displayTitle)' has nil sessionId — returning nil instead of placeholder")
+            return nil
         }
 
         var sections: [String] = []
@@ -75,12 +76,14 @@ enum ContextBuilder {
         parentBranch: Branch,
         forkMessageId: String,
         instruction: String? = nil
-    ) throws -> String {
-        let baseContext = try buildForkContext(
+    ) throws -> String? {
+        guard let baseContext = try buildForkContext(
             parentBranch: parentBranch,
             forkMessageId: forkMessageId,
             depth: 5 // Fewer messages, more focused
-        )
+        ) else {
+            return nil
+        }
 
         var result = baseContext
 

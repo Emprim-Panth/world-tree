@@ -368,10 +368,12 @@ final class ClaudeCodeProvider: LLMProvider {
 
     /// Clear the CLI session mapping for a Canvas session.
     /// Next send() will start a fresh CLI session instead of resuming.
+    /// Also proactively prunes any other expired sessions while holding the lock.
     func rotateSession(for canvasSessionId: String) {
         mapLock.lock()
         cliSessionMap.removeValue(forKey: canvasSessionId)
         cliSessionLastUsed.removeValue(forKey: canvasSessionId)
+        pruneExpiredSessionsLocked()
         mapLock.unlock()
         wtLog("[ClaudeCodeProvider] Rotated session mapping for \(canvasSessionId)")
     }
@@ -413,6 +415,7 @@ final class ClaudeCodeProvider: LLMProvider {
         mapLock.lock()
         cliSessionMap[canvasSessionId] = cliSessionId
         cliSessionLastUsed[canvasSessionId] = Date()
+        pruneExpiredSessionsLocked()
         let snapshot = cliSessionMap
         mapLock.unlock()
         // Write to file synchronously — no MainActor/Task timing risk.
@@ -423,6 +426,28 @@ final class ClaudeCodeProvider: LLMProvider {
     private func writeSessionMapFile(_ map: [String: String]) {
         guard let data = try? JSONEncoder().encode(map) else { return }
         try? data.write(to: sessionMapFileURL, options: .atomic)
+    }
+
+    /// Remove all session entries whose last-used timestamp exceeds the TTL.
+    /// MUST be called while mapLock is held — does not acquire the lock itself.
+    /// Lightweight: iterates timestamps once, removes expired keys from both maps.
+    private func pruneExpiredSessionsLocked() {
+        let now = Date()
+        let expiredKeys = cliSessionLastUsed.compactMap { (key, lastUsed) -> String? in
+            now.timeIntervalSince(lastUsed) > Self.sessionTTL ? key : nil
+        }
+        // Also prune entries with no timestamp — they were loaded from DB/file
+        // with unknown age and should not linger indefinitely.
+        let noTimestampKeys = cliSessionMap.keys.filter { cliSessionLastUsed[$0] == nil }
+
+        let allStale = Set(expiredKeys).union(noTimestampKeys)
+        guard !allStale.isEmpty else { return }
+
+        for key in allStale {
+            cliSessionMap.removeValue(forKey: key)
+            cliSessionLastUsed.removeValue(forKey: key)
+        }
+        wtLog("[ClaudeCodeProvider] Pruned \(allStale.count) expired session(s)")
     }
 
     @MainActor
@@ -464,6 +489,8 @@ final class ClaudeCodeProvider: LLMProvider {
     @MainActor
     private func persistSessionMap() {
         mapLock.lock()
+        // Prune before persisting so stale entries don't get written to DB/file
+        pruneExpiredSessionsLocked()
         let snapshot = cliSessionMap
         mapLock.unlock()
 

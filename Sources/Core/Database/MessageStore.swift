@@ -388,7 +388,9 @@ final class MessageStore {
         if let date = iso.date(from: str) { return date }
         let df = DateFormatter()
         df.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return df.date(from: str)
+        if let date = df.date(from: str) { return date }
+        wtLog("[MessageStore] WARNING: Failed to parse timestamp '\(str)' — skipping result")
+        return nil
     }
 
     /// Get the working directory for a session

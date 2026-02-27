@@ -186,7 +186,7 @@ class ContextInspectorViewModel: ObservableObject {
                         content: snippet,
                         tokenCount: tokens,
                         timestamp: Date(timeIntervalSinceNow: -3600),
-                        isPinned: block.cacheControl != nil,
+                        isPinned: block.isPinned,
                         canDelete: false
                     ))
                 }
@@ -310,7 +310,11 @@ class ContextInspectorViewModel: ObservableObject {
 
         // Sync to cached system blocks (message turns don't have a pin mechanism in the API)
         if index < systemBlockCount {
-            if cachedSystemBlocks[index].cacheControl != nil {
+            guard index < cachedSystemBlocks.count else {
+                wtLog("[ContextInspector] togglePin: section index \(index) exceeds cachedSystemBlocks count \(cachedSystemBlocks.count) — skipping cache sync")
+                return
+            }
+            if cachedSystemBlocks[index].isPinned {
                 cachedSystemBlocks[index].cacheControl = nil
             } else {
                 cachedSystemBlocks[index].cacheControl = CacheControl(type: "ephemeral")
@@ -327,10 +331,12 @@ class ContextInspectorViewModel: ObservableObject {
 
         // Remove from cached messages (only message turns can be deleted — system blocks have canDelete: false)
         let messageIndex = index - systemBlockCount
-        if messageIndex >= 0 && messageIndex < cachedApiMessages.count {
-            cachedApiMessages.remove(at: messageIndex)
+        guard messageIndex >= 0 && messageIndex < cachedApiMessages.count else {
+            wtLog("[ContextInspector] deleteSection: computed messageIndex \(messageIndex) out of bounds (sections: \(sections.count), systemBlockCount: \(systemBlockCount), apiMessages: \(cachedApiMessages.count)) — aborting delete to prevent data corruption")
+            return
         }
 
+        cachedApiMessages.remove(at: messageIndex)
         sections.remove(at: index)
         currentTokens -= tokenCount
         persistMutations()
@@ -360,7 +366,11 @@ class ContextInspectorViewModel: ObservableObject {
         for id in sectionsToRemoveIds {
             if let idx = sections.firstIndex(where: { $0.id == id }) {
                 let msgIdx = idx - systemBlockCount
-                if msgIdx >= 0 { messageIndicesToRemove.append(msgIdx) }
+                if msgIdx >= 0 && msgIdx < cachedApiMessages.count {
+                    messageIndicesToRemove.append(msgIdx)
+                } else if msgIdx >= 0 {
+                    wtLog("[ContextInspector] compactNow: computed msgIdx \(msgIdx) out of bounds (apiMessages: \(cachedApiMessages.count)) — skipping removal for section \(id)")
+                }
             }
         }
 
@@ -368,7 +378,7 @@ class ContextInspectorViewModel: ObservableObject {
         currentTokens -= tokensFreed
 
         for msgIdx in messageIndicesToRemove.sorted().reversed() {
-            if msgIdx < cachedApiMessages.count { cachedApiMessages.remove(at: msgIdx) }
+            cachedApiMessages.remove(at: msgIdx)
         }
 
         persistMutations()
