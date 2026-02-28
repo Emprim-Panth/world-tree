@@ -504,7 +504,7 @@ class DocumentEditorViewModel: ObservableObject {
             in: dbPool,
             scheduling: .async(onQueue: .main),
             onError: { [weak self] error in
-                print("[DocumentEditor] Message observation error: \(error)")
+                wtLog("[DocumentEditor] Message observation error: \(error)")
                 self?.messageObservation = nil
                 self?.usePollingFallback = true  // observation failed — re-enable polling
             },
