@@ -44,8 +44,11 @@ struct ConversationScorer {
                 .filter { !$0.isEmpty }
         )
 
+        // Pre-compute plain text once per section (avoids repeated AttributedString→String conversion)
+        let candidateTexts: [String] = candidates.map { String($0.content.characters).lowercased() }
+
         let scored: [ScoredSection] = candidates.enumerated().map { idx, section in
-            let text = String(section.content.characters).lowercased()
+            let text = candidateTexts[idx]
             var score = 0.0
 
             // Recency: older candidates score lower (linear 0→0.4 from oldest→newest)

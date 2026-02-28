@@ -4,7 +4,7 @@ import Foundation
 
 /// Future implementation: local VMs per branch for true isolation.
 /// Uses Apple's Virtualization.framework for macOS-native lightweight VMs.
-/// Currently a stub that falls back to local execution.
+/// Currently a stub that throws — callers must check `isAvailable` first.
 struct VMExecutor: ExecutionEnvironment {
     let name = "vm"
     let branchId: String
@@ -15,16 +15,23 @@ struct VMExecutor: ExecutionEnvironment {
         // - Mount workspace directory as shared folder
         // - Execute commands inside VM
         // - Capture stdout/stderr via virtio-console
-        //
-        // For now, fall back to local execution with a warning
-        wtLog("[VMExecutor] VM isolation not yet implemented, falling back to local execution")
-        let local = LocalExecutor()
-        return try await local.execute(command: command, workingDirectory: workingDirectory)
+        throw VMExecutorError.notImplemented
     }
 
     /// Check if Virtualization.framework is available on this system.
-    /// Returns false because execute() always falls back to LocalExecutor — VM isolation is not yet implemented.
+    /// Returns false — VM isolation is not yet implemented.
     static var isAvailable: Bool {
         return false
+    }
+}
+
+enum VMExecutorError: LocalizedError {
+    case notImplemented
+
+    var errorDescription: String? {
+        switch self {
+        case .notImplemented:
+            return "VM isolation not yet implemented — use LocalExecutor or SandboxedExecutor instead"
+        }
     }
 }

@@ -148,16 +148,17 @@ final class ProjectScanner {
         let status = runGitCommand(at: path, args: ["status", "--porcelain"])
         let isDirty = !(status?.isEmpty ?? true)
         
-        // Get last commit message
-        let lastCommit = runGitCommand(at: path, args: ["log", "-1", "--pretty=%s"])
-        
-        // Get last commit date
-        let lastCommitDateStr = runGitCommand(at: path, args: ["log", "-1", "--pretty=%ct"])
-        let lastCommitDate = lastCommitDateStr.flatMap { str -> Date? in
-            guard let timestamp = TimeInterval(str.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-                return nil
-            }
-            return Date(timeIntervalSince1970: timestamp)
+        // Get last commit message + date in one process (%s = subject, %ct = committer timestamp)
+        let commitInfo = runGitCommand(at: path, args: ["log", "-1", "--pretty=%s%n%ct"])
+        let lastCommit: String?
+        let lastCommitDate: Date?
+        if let info = commitInfo {
+            let parts = info.components(separatedBy: "\n")
+            lastCommit = parts.first
+            lastCommitDate = parts.count > 1 ? TimeInterval(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)).map { Date(timeIntervalSince1970: $0) } : nil
+        } else {
+            lastCommit = nil
+            lastCommitDate = nil
         }
         
         return GitStatus(

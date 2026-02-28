@@ -418,7 +418,7 @@ final class PluginServer: ObservableObject {
         let header = "HTTP/1.1 \(status) \(statusText)\r\n" +
                      "Content-Type: application/json\r\n" +
                      "Content-Length: \(bodyBytes.count)\r\n" +
-                     "Access-Control-Allow-Origin: *\r\n" +
+                     "Access-Control-Allow-Origin: http://localhost\r\n" +
                      "Connection: close\r\n\r\n"
         var resp = Data(header.utf8)
         resp.append(bodyBytes)

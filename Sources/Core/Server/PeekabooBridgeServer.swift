@@ -114,7 +114,11 @@ final class PeekabooBridgeServer {
                     accept(currentFD, $0, &clientLen)
                 }
             }
-            guard clientFD >= 0 else { continue }
+            guard clientFD >= 0 else {
+                // Prevent spin-loop if server FD becomes invalid
+                Thread.sleep(forTimeInterval: 0.001)
+                continue
+            }
             connectionSemaphore.wait()
             Thread.detachNewThread { [weak self] in
                 guard let self else {

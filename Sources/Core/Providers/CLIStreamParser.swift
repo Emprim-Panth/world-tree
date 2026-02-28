@@ -252,8 +252,9 @@ final class CLIStreamParser {
             }
         }
 
-        // Clear emitted tool IDs — this assistant turn is complete
-        emittedToolIds.removeAll()
+        // Don't clear emittedToolIds here — clearing on `assistant` events causes
+        // duplicates when the same turn's `tool` event arrives later.
+        // emittedToolIds is cleared on `result` events (end of turn) instead.
 
         return events.isEmpty ? nil : events
     }
@@ -272,6 +273,10 @@ final class CLIStreamParser {
 
     /// `{"type":"result","num_turns":1,"cost_usd":0.01,"session_id":"...","is_error":false,"usage":{...}}`
     private func parseResult(_ json: [String: Any]) -> [BridgeEvent]? {
+        // End of turn — safe to clear emitted tool IDs for the next turn
+        emittedToolIds.removeAll()
+        hasEmittedText = false
+
         numTurns = json["num_turns"] as? Int ?? 0
         costUSD = json["cost_usd"] as? Double ?? json["total_cost_usd"] as? Double ?? 0
         isError = json["is_error"] as? Bool ?? false

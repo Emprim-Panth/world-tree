@@ -243,6 +243,8 @@ final class AnthropicAPIProvider: LLMProvider {
                             }
 
                             state.addToolResults(toolResults)
+                            // Persist after each tool iteration to survive crashes
+                            try? state.persist()
                             textAccumulator = ""
                             toolUseBlocks = []
                         } else {

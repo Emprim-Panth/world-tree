@@ -84,7 +84,7 @@ final class RemoteWorldTreeProvider: LLMProvider {
 
             self.currentTask = Task { [weak self] in
                 guard let self else { return }
-                defer { Task { @MainActor in self.isRunning = false } }
+                defer { Task { @MainActor [weak self] in self?.isRunning = false } }
 
                 do {
                     try await self.streamMessage(context: context, continuation: continuation)

@@ -61,26 +61,35 @@ actor DaemonSocket {
             totalSent += sent
         }
 
-        // Read response — buffer until first newline delimiter (handles > 64KB payloads)
-        var responseData = Data()
-        var chunk = [UInt8](repeating: 0, count: 65536)
-        while true {
-            let received = Darwin.recv(fd, &chunk, chunk.count, 0)
-            if received <= 0 { break }
-            responseData.append(contentsOf: chunk[0..<received])
-            // Check if buffer contains a newline — return everything up to it
-            if let nlIndex = responseData.firstIndex(of: UInt8(ascii: "\n")) {
-                let messageData = responseData[responseData.startIndex..<nlIndex]
-                guard !messageData.isEmpty else {
-                    throw DaemonError.receiveFailed(errno: errno)
+        // Read response — offload blocking recv to a GCD thread so we don't
+        // stall the Swift concurrency cooperative thread pool.
+        let responseData: Data = try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                var buffer = Data()
+                var chunk = [UInt8](repeating: 0, count: 65536)
+                while true {
+                    let received = Darwin.recv(fd, &chunk, chunk.count, 0)
+                    if received <= 0 { break }
+                    buffer.append(contentsOf: chunk[0..<received])
+                    // Check if buffer contains a newline — return everything up to it
+                    if let nlIndex = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+                        let messageData = Data(buffer[buffer.startIndex..<nlIndex])
+                        if messageData.isEmpty {
+                            continuation.resume(throwing: DaemonError.receiveFailed(errno: errno))
+                        } else {
+                            continuation.resume(returning: messageData)
+                        }
+                        return
+                    }
                 }
-                return try JSONDecoder().decode(DaemonResponse.self, from: messageData)
+                if buffer.isEmpty {
+                    continuation.resume(throwing: DaemonError.receiveFailed(errno: errno))
+                } else {
+                    // No newline found — try decoding whatever we got
+                    continuation.resume(returning: buffer)
+                }
             }
         }
-        guard !responseData.isEmpty else {
-            throw DaemonError.receiveFailed(errno: errno)
-        }
-        // No newline found — try decoding whatever we got
         return try JSONDecoder().decode(DaemonResponse.self, from: responseData)
     }
 
