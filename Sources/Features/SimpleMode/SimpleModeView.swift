@@ -39,11 +39,11 @@ final class SimpleModeViewModel: ObservableObject {
     @Published var error: String?
     @Published var searchText: String = ""
     @Published var sortOrder: SimpleModeSortOrder = {
-        guard let raw = UserDefaults.standard.string(forKey: "simpleModeSortOrder"),
+        guard let raw = UserDefaults.standard.string(forKey: AppConstants.simpleModeSortOrderKey),
               let order = SimpleModeSortOrder(rawValue: raw) else { return .recentDesc }
         return order
     }() {
-        didSet { UserDefaults.standard.set(sortOrder.rawValue, forKey: "simpleModeSortOrder") }
+        didSet { UserDefaults.standard.set(sortOrder.rawValue, forKey: AppConstants.simpleModeSortOrderKey) }
     }
 
     var filteredProjects: [CachedProject] {

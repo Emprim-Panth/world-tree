@@ -20,12 +20,10 @@ struct CommandCenterView: View {
         }
         .onAppear {
             viewModel.startObserving()
-            daemonService.startMonitoring()
             daemonService.refreshTmuxSessions()
         }
         .onDisappear {
             viewModel.stopObserving()
-            daemonService.stopMonitoring()
         }
         .sheet(isPresented: $viewModel.isShowingDispatchSheet) {
             DispatchSheet(projects: viewModel.projects) { message, project, model in

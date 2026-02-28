@@ -148,7 +148,7 @@ actor ToolExecutor {
         let resolvedPath = resolvePath(path)
 
         // Diff review: show before/after and wait for user approval when enabled
-        if UserDefaults.standard.bool(forKey: "fileWriteReviewEnabled") {
+        if UserDefaults.standard.bool(forKey: AppConstants.fileWriteReviewEnabledKey) {
             let oldContent = (try? String(contentsOfFile: resolvedPath, encoding: .utf8)) ?? ""
             let approved = await ApprovalCoordinator.shared.requestFileDiffApproval(
                 filePath: resolvedPath,
@@ -225,7 +225,7 @@ actor ToolExecutor {
             let updated = content.replacingOccurrences(of: oldString, with: newString)
 
             // Diff review: show before/after and wait for user approval when enabled
-            if UserDefaults.standard.bool(forKey: "fileWriteReviewEnabled") {
+            if UserDefaults.standard.bool(forKey: AppConstants.fileWriteReviewEnabledKey) {
                 let approved = await ApprovalCoordinator.shared.requestFileDiffApproval(
                     filePath: resolvedPath,
                     oldContent: content,

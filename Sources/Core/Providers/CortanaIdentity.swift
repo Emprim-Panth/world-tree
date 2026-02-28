@@ -118,7 +118,7 @@ enum CortanaIdentity {
         }
         if let sid = sessionId {
             let safeSid = sid.replacingOccurrences(of: "'", with: "''")
-            let dbPath = UserDefaults.standard.string(forKey: "databasePath").flatMap {
+            let dbPath = UserDefaults.standard.string(forKey: AppConstants.databasePathKey).flatMap {
                 $0.isEmpty ? nil : $0
             } ?? AppConstants.databasePath
             prompt += """

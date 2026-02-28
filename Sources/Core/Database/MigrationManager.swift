@@ -219,7 +219,7 @@ enum MigrationManager {
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_screenshots_branch ON canvas_screenshots(branch_id)")
         }
 
-        // Migration 10: Index on fork_from_message_id for branchesFromMessage() performance
+        // Migration 10: Index on fork_from_message_id for getBranches(fromMessage:) performance
         migrator.registerMigration("v10_fork_message_index") { db in
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_branches_fork_message ON canvas_branches(fork_from_message_id)")
         }

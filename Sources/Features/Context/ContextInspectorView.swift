@@ -139,7 +139,7 @@ class ContextInspectorViewModel: ObservableObject {
     @Published var maxTokens: Int = 200_000
     @Published var thresholdPercentage: Double = 75.0
     @Published var autoCompactEnabled: Bool =
-        UserDefaults.standard.object(forKey: "cortana.autoCompactEnabled") as? Bool ?? true
+        UserDefaults.standard.object(forKey: AppConstants.autoCompactEnabledKey) as? Bool ?? true
 
     private let sessionId: String
 
@@ -407,7 +407,7 @@ class ContextInspectorViewModel: ObservableObject {
 
     func toggleAutoCompact() {
         autoCompactEnabled.toggle()
-        UserDefaults.standard.set(autoCompactEnabled, forKey: "cortana.autoCompactEnabled")
+        UserDefaults.standard.set(autoCompactEnabled, forKey: AppConstants.autoCompactEnabledKey)
     }
 }
 

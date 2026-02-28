@@ -210,7 +210,7 @@ struct GraphView: View {
         defer { isLoading = false }
 
         do {
-            let stats = try await GraphStore.shared.stats()
+            let stats = try await GraphStore.shared.getStats()
             nodeCount = stats.nodeCount
             edgeCount = stats.edgeCount
             nodeTypes = stats.nodeTypes

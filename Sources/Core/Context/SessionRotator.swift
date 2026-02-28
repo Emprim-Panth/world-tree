@@ -40,7 +40,7 @@ enum SessionRotator {
 
         guard level.shouldRotate else { return nil }
 
-        guard UserDefaults.standard.object(forKey: "cortana.autoCompactEnabled") as? Bool ?? true else {
+        guard UserDefaults.standard.object(forKey: AppConstants.autoCompactEnabledKey) as? Bool ?? true else {
             wtLog("[SessionRotator] Auto-compact disabled — skipping rotation")
             return nil
         }

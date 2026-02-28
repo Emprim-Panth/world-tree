@@ -6,8 +6,8 @@ import GRDB
 /// Called after each LLM response completes (`.done` event). Data feeds into
 /// the Command Center dashboard and per-project cost analytics.
 @MainActor
-final class TokenTracker {
-    static let shared = TokenTracker()
+final class TokenStore {
+    static let shared = TokenStore()
 
     private var db: DatabaseManager { .shared }
 
@@ -36,7 +36,7 @@ final class TokenTracker {
                 )
             }
         } catch {
-            wtLog("[TokenTracker] Failed to record usage: \(error)")
+            wtLog("[TokenStore] Failed to record usage: \(error)")
         }
 
         // Also update canvas_project_metrics if we can resolve the project
@@ -47,52 +47,66 @@ final class TokenTracker {
 
     /// Total tokens for a session (all branches).
     func totalsForSession(_ sessionId: String) -> (input: Int, output: Int) {
-        let row = try? db.read { db in
-            try Row.fetchOne(db, sql: """
-                SELECT COALESCE(SUM(input_tokens), 0) as total_in,
-                       COALESCE(SUM(output_tokens), 0) as total_out
-                FROM canvas_token_usage
-                WHERE session_id = ?
-                """, arguments: [sessionId])
+        do {
+            let row = try db.read { db in
+                try Row.fetchOne(db, sql: """
+                    SELECT COALESCE(SUM(input_tokens), 0) as total_in,
+                           COALESCE(SUM(output_tokens), 0) as total_out
+                    FROM canvas_token_usage
+                    WHERE session_id = ?
+                    """, arguments: [sessionId])
+            }
+            guard let row else { return (0, 0) }
+            return (row["total_in"] ?? 0, row["total_out"] ?? 0)
+        } catch {
+            wtLog("[TokenStore] totalsForSession failed for \(sessionId): \(error)")
+            return (0, 0)
         }
-        guard let row else { return (0, 0) }
-        return (row["total_in"] ?? 0, row["total_out"] ?? 0)
     }
 
     /// Total tokens for a project (resolved through canvas_branches -> canvas_trees).
     func totalsForProject(_ project: String) -> (input: Int, output: Int) {
-        let row = try? db.read { db in
-            try Row.fetchOne(db, sql: """
-                SELECT COALESCE(SUM(tu.input_tokens), 0) as total_in,
-                       COALESCE(SUM(tu.output_tokens), 0) as total_out
-                FROM canvas_token_usage tu
-                JOIN canvas_branches b ON b.session_id = tu.session_id
-                JOIN canvas_trees t ON t.id = b.tree_id
-                WHERE t.project = ?
-                """, arguments: [project])
+        do {
+            let row = try db.read { db in
+                try Row.fetchOne(db, sql: """
+                    SELECT COALESCE(SUM(tu.input_tokens), 0) as total_in,
+                           COALESCE(SUM(tu.output_tokens), 0) as total_out
+                    FROM canvas_token_usage tu
+                    JOIN canvas_branches b ON b.session_id = tu.session_id
+                    JOIN canvas_trees t ON t.id = b.tree_id
+                    WHERE t.project = ?
+                    """, arguments: [project])
+            }
+            guard let row else { return (0, 0) }
+            return (row["total_in"] ?? 0, row["total_out"] ?? 0)
+        } catch {
+            wtLog("[TokenStore] totalsForProject failed for '\(project)': \(error)")
+            return (0, 0)
         }
-        guard let row else { return (0, 0) }
-        return (row["total_in"] ?? 0, row["total_out"] ?? 0)
     }
 
     /// Recent usage entries for a branch (for timeline/detail view).
     func recentUsage(branchId: String, limit: Int = 20) -> [(input: Int, output: Int, model: String?, recordedAt: Date)] {
-        guard let rows = try? db.read({ db in
-            try Row.fetchAll(db, sql: """
-                SELECT input_tokens, output_tokens, model, recorded_at
-                FROM canvas_token_usage
-                WHERE branch_id = ?
-                ORDER BY recorded_at DESC
-                LIMIT ?
-                """, arguments: [branchId, limit])
-        }) else { return [] }
-
-        return rows.compactMap { row in
-            guard let input: Int = row["input_tokens"],
-                  let output: Int = row["output_tokens"] else { return nil }
-            let model: String? = row["model"]
-            let recordedAt: Date = row["recorded_at"] ?? Date()
-            return (input, output, model, recordedAt)
+        do {
+            let rows = try db.read { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT input_tokens, output_tokens, model, recorded_at
+                    FROM canvas_token_usage
+                    WHERE branch_id = ?
+                    ORDER BY recorded_at DESC
+                    LIMIT ?
+                    """, arguments: [branchId, limit])
+            }
+            return rows.compactMap { row in
+                guard let input: Int = row["input_tokens"],
+                      let output: Int = row["output_tokens"] else { return nil }
+                let model: String? = row["model"]
+                let recordedAt: Date = row["recorded_at"] ?? Date()
+                return (input, output, model, recordedAt)
+            }
+        } catch {
+            wtLog("[TokenStore] recentUsage failed for branch \(branchId): \(error)")
+            return []
         }
     }
 
@@ -126,7 +140,7 @@ final class TokenTracker {
                 )
             }
         } catch {
-            wtLog("[TokenTracker] Failed to update project metrics: \(error)")
+            wtLog("[TokenStore] Failed to update project metrics: \(error)")
         }
     }
 }

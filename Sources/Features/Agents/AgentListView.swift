@@ -69,7 +69,6 @@ struct AgentListView: View {
                 await daemonService.refreshSessions()
                 daemonService.refreshTmuxSessions()
             }
-            daemonService.startMonitoring()
         }
     }
 

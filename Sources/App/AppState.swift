@@ -18,20 +18,18 @@ final class AppState {
     static let shared = AppState()
 
     var selectedTreeId: String? {
-        didSet { UserDefaults.standard.set(selectedTreeId, forKey: "lastSelectedTreeId") }
+        didSet { UserDefaults.standard.set(selectedTreeId, forKey: AppConstants.lastSelectedTreeIdKey) }
     }
     var selectedBranchId: String? {
-        didSet { UserDefaults.standard.set(selectedBranchId, forKey: "lastSelectedBranchId") }
+        didSet { UserDefaults.standard.set(selectedBranchId, forKey: AppConstants.lastSelectedBranchIdKey) }
     }
     var selectedProjectPath: String?
     var sidebarDestination: SidebarDestination = .commandCenter
     var showGlobalSearch: Bool = false
     var daemonConnected: Bool = false
     var simpleMode: Bool = false {
-        didSet { UserDefaults.standard.set(simpleMode, forKey: "worldtree.simpleMode") }
+        didSet { UserDefaults.standard.set(simpleMode, forKey: AppConstants.simpleModeKey) }
     }
-    /// Mermaid source code currently shown in the diagram side panel. nil = panel hidden.
-    var activeMermaidCode: String? = nil
     /// Non-nil if the database failed to initialize — surfaced as an alert in WorldTreeApp.
     var dbSetupError: Error? = nil
     /// Number of active tasks across all projects (dispatches + jobs)
@@ -54,11 +52,11 @@ final class AppState {
             dbSetupError = error
         }
 
-        simpleMode = UserDefaults.standard.bool(forKey: "worldtree.simpleMode")
+        simpleMode = UserDefaults.standard.bool(forKey: AppConstants.simpleModeKey)
 
         // Restore last selected conversation from previous session
-        selectedTreeId = UserDefaults.standard.string(forKey: "lastSelectedTreeId")
-        selectedBranchId = UserDefaults.standard.string(forKey: "lastSelectedBranchId")
+        selectedTreeId = UserDefaults.standard.string(forKey: AppConstants.lastSelectedTreeIdKey)
+        selectedBranchId = UserDefaults.standard.string(forKey: AppConstants.lastSelectedBranchIdKey)
     }
 
     func selectBranch(_ branchId: String, in treeId: String) {

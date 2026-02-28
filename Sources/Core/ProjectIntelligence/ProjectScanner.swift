@@ -53,7 +53,7 @@ final class ProjectScanner {
     /// Priority: UserDefaults override → ~/Documents/Development → ~/Development
     private func resolveDevDirectory() -> String {
         let home = fileManager.homeDirectoryForCurrentUser.path
-        if let override = UserDefaults.standard.string(forKey: "developmentDirectory"),
+        if let override = UserDefaults.standard.string(forKey: AppConstants.developmentDirectoryKey),
            !override.isEmpty,
            fileManager.fileExists(atPath: override) {
             return override

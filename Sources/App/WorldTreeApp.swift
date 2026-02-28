@@ -37,6 +37,9 @@ struct WorldTreeApp: App {
                     DispatchSupervisor.shared.start()
                     DispatchSupervisor.shared.pruneOldDispatches()
                     BranchTerminalManager.shared.recoverOrphanedSessions()
+                    if UserDefaults.standard.bool(forKey: AppConstants.daemonChannelEnabledKey) {
+                        DaemonService.shared.startMonitoring()
+                    }
                     startWorldTreeServerIfEnabled()
                     startPluginServerIfEnabled()
                     PeekabooBridgeServer.shared.start()
@@ -184,5 +187,4 @@ extension Notification.Name {
     static let createNewBranch = Notification.Name("createNewBranch")
     static let showConversationSearch = Notification.Name("showConversationSearch")
     static let forkLastMessage = Notification.Name("forkLastMessage")
-    static let showGlobalSearch = Notification.Name("showGlobalSearch")
 }

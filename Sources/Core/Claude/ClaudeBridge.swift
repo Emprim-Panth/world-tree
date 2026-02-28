@@ -197,7 +197,7 @@ final class ClaudeBridge {
         let parentSessionId = resolveParentSessionId(branchId: branchId)
         let isNewSession = !hasExistingSession(sessionId: sessionId)
 
-        let thinkingEnabled = UserDefaults.standard.bool(forKey: "extendedThinkingEnabled")
+        let thinkingEnabled = UserDefaults.standard.bool(forKey: AppConstants.extendedThinkingEnabledKey)
         let cwd = workingDirectory ?? resolveWorkingDirectory(nil, project: project)
 
         var context = ProviderSendContext(

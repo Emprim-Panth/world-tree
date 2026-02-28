@@ -117,12 +117,12 @@ struct ForkMenu: View {
                         panel.canChooseDirectories = true
                         panel.canChooseFiles = false
                         panel.allowsMultipleSelection = false
-                        let lastDir = UserDefaults.standard.string(forKey: "lastWorkingDirectory")
+                        let lastDir = UserDefaults.standard.string(forKey: AppConstants.lastWorkingDirectoryKey)
                             ?? "\(FileManager.default.homeDirectoryForCurrentUser.path)/Development"
                         panel.directoryURL = URL(fileURLWithPath: lastDir)
                         if panel.runModal() == .OK, let url = panel.url {
                             workingDirectory = url.path
-                            UserDefaults.standard.set(url.path, forKey: "lastWorkingDirectory")
+                            UserDefaults.standard.set(url.path, forKey: AppConstants.lastWorkingDirectoryKey)
                         }
                     }
                     .controlSize(.small)

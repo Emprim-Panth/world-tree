@@ -50,6 +50,7 @@ enum AppConstants {
     static let defaultContextDepth = 10
     static let defaultModel = "claude-sonnet-4-6"
     static let defaultProvider = "claude-code"
+    static let defaultProjectName = "General"
 
     // MARK: - Remote Studio (MacBook client mode)
     static let remoteEnabledKey = "cortana.remoteCanvasEnabled"  // string kept for UserDefaults compat
@@ -61,4 +62,62 @@ enum AppConstants {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/.local/bin/claude"
     }()
+
+    // MARK: - UserDefaults Keys
+    // All bare UserDefaults key strings are defined here so they're refactored
+    // in one place. Key STRING VALUES must never change — that would silently
+    // reset saved user preferences.
+
+    // Navigation / selection (AppState)
+    static let lastSelectedTreeIdKey = "lastSelectedTreeId"
+    static let lastSelectedBranchIdKey = "lastSelectedBranchId"
+    static let simpleModeKey = "worldtree.simpleMode"
+
+    // Sidebar (SidebarViewModel)
+    static let sidebarSortOrderKey = "sidebarSortOrder"
+    static let projectOrderKey = "projectOrder"
+
+    // Simple mode (SimpleModeViewModel)
+    static let simpleModeSortOrderKey = "simpleModeSortOrder"
+
+    // Provider / model (DocumentEditorView, ClaudeBridge, SettingsView, ModelPickerButton)
+    static let defaultModelKey = "defaultModel"
+    static let extendedThinkingEnabledKey = "extendedThinkingEnabled"
+
+    // Voice (SettingsView, DocumentEditorView)
+    static let voiceAutoSpeakKey = "voiceAutoSpeak"
+    static let voiceSpeedKey = "voiceSpeed"
+    static let voicePitchKey = "voicePitch"
+
+    // Security (ToolExecutor, SettingsView)
+    static let fileWriteReviewEnabledKey = "fileWriteReviewEnabled"
+
+    // File picker memory (SidebarView, ForkMenu)
+    static let lastWorkingDirectoryKey = "lastWorkingDirectory"
+
+    // Global hotkey (GlobalHotKey, SettingsView)
+    static let globalHotKeyEnabledKey = "globalHotKeyEnabled"
+    static let globalHotKeyCodeKey = "globalHotKeyCode"
+    static let globalHotKeyModifiersKey = "globalHotKeyModifiers"
+
+    // Project scanner (ProjectScanner)
+    static let developmentDirectoryKey = "developmentDirectory"
+
+    // Database / context (SettingsView)
+    static let databasePathKey = "databasePath"
+    static let contextDepthKey = "contextDepth"
+
+    // WorldTree server (WorldTreeServer — keys moved here from WorldTreeServer)
+    static let serverTokenKey = "cortana.serverToken"
+    static let serverEnabledKey = "cortana.serverEnabled"
+    static let bonjourEnabledKey = "cortana.bonjourEnabled"
+
+    // Provider selection (ProviderManager)
+    static let selectedProviderKey = "cortana.selectedProvider"
+
+    // Auto-compact (SessionRotator, ContextInspectorView)
+    static let autoCompactEnabledKey = "cortana.autoCompactEnabled"
+
+    // Daemon API base URL override (DaemonChannel)
+    static let daemonAPIBaseURLKey = "cortana.daemonAPIBaseURL"
 }

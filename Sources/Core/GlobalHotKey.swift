@@ -16,12 +16,12 @@ final class GlobalHotKey {
     private init() {}
 
     func register() {
-        guard UserDefaults.standard.bool(forKey: "globalHotKeyEnabled") else { return }
+        guard UserDefaults.standard.bool(forKey: AppConstants.globalHotKeyEnabledKey) else { return }
         guard hotKeyRef == nil else { return }
 
         // Read user-configured key combo; fall back to ⌘⇧Space
-        let keyCode = UInt32(UserDefaults.standard.integer(forKey: "globalHotKeyCode").nonZero ?? kVK_Space)
-        let modifiers = UInt32(UserDefaults.standard.integer(forKey: "globalHotKeyModifiers").nonZero
+        let keyCode = UInt32(UserDefaults.standard.integer(forKey: AppConstants.globalHotKeyCodeKey).nonZero ?? kVK_Space)
+        let modifiers = UInt32(UserDefaults.standard.integer(forKey: AppConstants.globalHotKeyModifiersKey).nonZero
             ?? (cmdKey | shiftKey))
 
         // Install Carbon event handler

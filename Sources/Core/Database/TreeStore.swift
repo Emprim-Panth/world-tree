@@ -1,6 +1,11 @@
 import Foundation
 import GRDB
 
+/// Returns a comma-separated list of `?` placeholders for SQL IN clauses.
+private func sqlPlaceholders(count: Int) -> String {
+    repeatElement("?", count: count).joined(separator: ", ")
+}
+
 /// CRUD operations for conversation trees and branches.
 /// Reads/writes canvas_* tables and creates sessions in the existing sessions table.
 @MainActor
@@ -33,7 +38,7 @@ final class TreeStore {
         return tree
     }
 
-    func listTrees(includeArchived: Bool = false) throws -> [ConversationTree] {
+    func getTrees(includeArchived: Bool = false) throws -> [ConversationTree] {
         try db.read { db in
             let archiveFilter = includeArchived ? "" : "WHERE t.archived = 0"
             let sql = """
@@ -177,7 +182,7 @@ final class TreeStore {
     /// Archive all trees in a project group — removes them from the active sidebar.
     func archiveProject(_ projectName: String) throws {
         try db.write { db in
-            if projectName == "General" {
+            if projectName == AppConstants.defaultProjectName {
                 // "General" encompasses trees with NULL, empty, or literal 'General' project
                 try db.execute(
                     sql: "UPDATE canvas_trees SET archived = 1, updated_at = datetime('now') WHERE project IS NULL OR project = '' OR project = 'General'"
@@ -196,7 +201,7 @@ final class TreeStore {
     func deleteProject(_ projectName: String) throws {
         try db.write { db in
             let rows: [Row]
-            if projectName == "General" {
+            if projectName == AppConstants.defaultProjectName {
                 rows = try Row.fetchAll(db, sql: "SELECT id FROM canvas_trees WHERE project IS NULL OR project = '' OR project = 'General'")
             } else {
                 rows = try Row.fetchAll(db, sql: "SELECT id FROM canvas_trees WHERE project = ?", arguments: [projectName])
@@ -229,7 +234,7 @@ final class TreeStore {
         // 1. Delete from tables that reference branch_id or session_id
         //    These must go first while the IDs still exist in canvas_branches.
         if !branchIds.isEmpty {
-            let branchPlaceholders = branchIds.map { _ in "?" }.joined(separator: ", ")
+            let branchPlaceholders = sqlPlaceholders(count: branchIds.count)
             let branchArgs = StatementArguments(branchIds)
 
             try db.execute(
@@ -255,7 +260,7 @@ final class TreeStore {
         }
 
         if !sessionIds.isEmpty {
-            let sessionPlaceholders = sessionIds.map { _ in "?" }.joined(separator: ", ")
+            let sessionPlaceholders = sqlPlaceholders(count: sessionIds.count)
             let sessionArgs = StatementArguments(sessionIds)
 
             try db.execute(
@@ -266,7 +271,7 @@ final class TreeStore {
 
         // 2. Delete messages (references sessions via session_id)
         if !sessionIds.isEmpty {
-            let placeholders = sessionIds.map { _ in "?" }.joined(separator: ", ")
+            let placeholders = sqlPlaceholders(count: sessionIds.count)
             try db.execute(
                 sql: "DELETE FROM messages WHERE session_id IN (\(placeholders))",
                 arguments: StatementArguments(sessionIds)
@@ -279,7 +284,7 @@ final class TreeStore {
 
         // 4. Delete sessions (now safe — no branches reference them)
         if !sessionIds.isEmpty {
-            let placeholders = sessionIds.map { _ in "?" }.joined(separator: ", ")
+            let placeholders = sqlPlaceholders(count: sessionIds.count)
             try db.execute(
                 sql: "DELETE FROM sessions WHERE id IN (\(placeholders))",
                 arguments: StatementArguments(sessionIds)
@@ -477,7 +482,7 @@ final class TreeStore {
     }
 
     /// Returns branches that fork from a specific message
-    func branchesFromMessage(_ messageId: Int) throws -> [Branch] {
+    func getBranches(fromMessage messageId: Int) throws -> [Branch] {
         try db.read { db in
             try Branch.filter(Column("fork_from_message_id") == messageId).fetchAll(db)
         }
@@ -525,7 +530,7 @@ final class TreeStore {
     func getBranchesBySessionIds(_ sessionIds: [String]) throws -> [String: Branch] {
         guard !sessionIds.isEmpty else { return [:] }
         return try db.read { db in
-            let placeholders = sessionIds.map { _ in "?" }.joined(separator: ", ")
+            let placeholders = sqlPlaceholders(count: sessionIds.count)
             let sql = "SELECT * FROM canvas_branches WHERE session_id IN (\(placeholders))"
             let args = StatementArguments(sessionIds)
             let branches = try Branch.fetchAll(db, sql: sql, arguments: args)
@@ -541,7 +546,7 @@ final class TreeStore {
     func getBranchesByTreeIds(_ treeIds: [String]) throws -> [String: [Branch]] {
         guard !treeIds.isEmpty else { return [:] }
         return try db.read { db in
-            let placeholders = treeIds.map { _ in "?" }.joined(separator: ", ")
+            let placeholders = sqlPlaceholders(count: treeIds.count)
             let rows = try Row.fetchAll(
                 db,
                 sql: "SELECT * FROM canvas_branches WHERE tree_id IN (\(placeholders)) ORDER BY created_at",
@@ -560,7 +565,7 @@ final class TreeStore {
 
     /// Returns the path from the root branch to the given branch (inclusive).
     /// Uses a recursive CTE instead of loading every branch in the tree.
-    func branchPath(to branchId: String) throws -> [Branch] {
+    func getBranchPath(to branchId: String) throws -> [Branch] {
         try db.read { db in
             let sql = """
                 WITH RECURSIVE ancestors(id) AS (

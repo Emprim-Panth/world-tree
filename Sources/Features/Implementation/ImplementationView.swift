@@ -4,11 +4,11 @@ import SwiftUI
 /// Shows context at top, streaming log output below.
 struct ImplementationView: View {
     let branch: Branch
-    @StateObject private var viewModel: ImplementationVM
+    @StateObject private var viewModel: ImplementationViewModel
 
     init(branch: Branch) {
         self.branch = branch
-        _viewModel = StateObject(wrappedValue: ImplementationVM(branch: branch))
+        _viewModel = StateObject(wrappedValue: ImplementationViewModel(branch: branch))
     }
 
     var body: some View {

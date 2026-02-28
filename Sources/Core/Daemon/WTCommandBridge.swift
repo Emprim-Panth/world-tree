@@ -32,7 +32,7 @@ private struct WTCommand: Decodable {
     var name: String?
 }
 
-// MARK: - PeekabooBridgeServer
+// MARK: - WTCommandBridge
 
 /// Watches ~/.cortana/wt-commands.jsonl for commands pushed by cortana-daemon.
 /// This is the reverse channel: daemon → World Tree.

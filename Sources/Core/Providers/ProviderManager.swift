@@ -15,7 +15,7 @@ final class ProviderManager: ObservableObject {
     /// Currently selected provider identifier (persisted to UserDefaults)
     @Published var selectedProviderId: String {
         didSet {
-            UserDefaults.standard.set(selectedProviderId, forKey: "cortana.selectedProvider")
+            UserDefaults.standard.set(selectedProviderId, forKey: AppConstants.selectedProviderKey)
         }
     }
 
@@ -23,7 +23,7 @@ final class ProviderManager: ObservableObject {
     @Published private(set) var healthStatus: [String: ProviderHealth] = [:]
 
     private init() {
-        self.selectedProviderId = UserDefaults.standard.string(forKey: "cortana.selectedProvider")
+        self.selectedProviderId = UserDefaults.standard.string(forKey: AppConstants.selectedProviderKey)
             ?? AppConstants.defaultProvider
 
         registerProviders()

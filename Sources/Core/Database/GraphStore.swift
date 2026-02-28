@@ -1,6 +1,11 @@
 import Foundation
 import GRDB
 
+/// Returns a comma-separated list of `?` placeholders for SQL IN clauses.
+private func sqlPlaceholders(count: Int) -> String {
+    repeatElement("?", count: count).joined(separator: ", ")
+}
+
 /// Graph node from the knowledge graph (cg_nodes table).
 struct GraphNode: Identifiable, Hashable {
     let id: String
@@ -64,7 +69,7 @@ final class GraphStore {
             }
 
             if let nodeTypes, !nodeTypes.isEmpty {
-                let placeholders = nodeTypes.map { _ in "?" }.joined(separator: ",")
+                let placeholders = sqlPlaceholders(count: nodeTypes.count)
                 sql += " AND type IN (\(placeholders))"
                 args.append(contentsOf: nodeTypes)
             }
@@ -89,7 +94,7 @@ final class GraphStore {
 
             // Get edges between these nodes
             let nodeIds = nodes.map(\.id)
-            let placeholders = nodeIds.map { _ in "?" }.joined(separator: ",")
+            let placeholders = sqlPlaceholders(count: nodeIds.count)
             let edgeRows = try Row.fetchAll(db, sql: """
                 SELECT id, from_id, to_id, relation
                 FROM cg_edges
@@ -121,7 +126,7 @@ final class GraphStore {
             for _ in 0..<depth {
                 guard !frontier.isEmpty else { break }
 
-                let placeholders = frontier.map { _ in "?" }.joined(separator: ",")
+                let placeholders = sqlPlaceholders(count: frontier.count)
 
                 // Get outgoing edges
                 let edgeRows = try Row.fetchAll(db, sql: """
@@ -148,7 +153,7 @@ final class GraphStore {
 
                 // Fetch node details for new discoveries
                 if !nextFrontier.isEmpty {
-                    let np = nextFrontier.map { _ in "?" }.joined(separator: ",")
+                    let np = sqlPlaceholders(count: nextFrontier.count)
                     let nodeRows = try Row.fetchAll(db, sql: """
                         SELECT id, type, label, content, project, meta
                         FROM cg_nodes WHERE id IN (\(np))
@@ -174,7 +179,7 @@ final class GraphStore {
     }
 
     /// Graph statistics.
-    func stats() async throws -> (nodeCount: Int, edgeCount: Int, nodeTypes: [String: Int]) {
+    func getStats() async throws -> (nodeCount: Int, edgeCount: Int, nodeTypes: [String: Int]) {
         try await db.asyncRead { db in
             let hasCgNodes = try Bool.fetchOne(db, sql: """
                 SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='cg_nodes'

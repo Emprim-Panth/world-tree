@@ -236,7 +236,7 @@ final class TreeStoreTests: XCTestCase {
         try createTree(name: "Beta", project: "ProjectB")
         try createTree(name: "Gamma", project: "ProjectA")
 
-        // listTrees uses a complex query with JOINs — replicate the core part
+        // getTrees uses a complex query with JOINs — replicate the core part
         let trees = try dbPool.read { db in
             let sql = """
                 SELECT t.*,

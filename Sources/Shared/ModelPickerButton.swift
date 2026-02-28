@@ -4,7 +4,7 @@ import SwiftUI
 /// Reads/writes the same UserDefaults key that ClaudeCodeProvider uses,
 /// so the next chat message immediately uses the new model.
 struct ModelPickerButton: View {
-    @AppStorage("defaultModel") private var defaultModel = AppConstants.defaultModel
+    @AppStorage(AppConstants.defaultModelKey) private var defaultModel = AppConstants.defaultModel
 
     private struct ModelOption {
         let id: String

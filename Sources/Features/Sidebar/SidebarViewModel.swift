@@ -38,8 +38,8 @@ final class SidebarViewModel: ObservableObject {
     /// User's preferred project order — persisted across sessions.
     /// Active projects always float above this, but within inactive the user's order wins.
     private(set) var projectOrder: [String] {
-        get { UserDefaults.standard.stringArray(forKey: "projectOrder") ?? [] }
-        set { UserDefaults.standard.set(newValue, forKey: "projectOrder") }
+        get { UserDefaults.standard.stringArray(forKey: AppConstants.projectOrderKey) ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: AppConstants.projectOrderKey) }
     }
 
     /// A project is "active" if it has a tree updated in the last 24 hours.
@@ -67,12 +67,12 @@ final class SidebarViewModel: ObservableObject {
     }
 
     @Published var sortOrder: SidebarSortOrder = {
-        guard let raw = UserDefaults.standard.string(forKey: "sidebarSortOrder"),
+        guard let raw = UserDefaults.standard.string(forKey: AppConstants.sidebarSortOrderKey),
               let order = SidebarSortOrder(rawValue: raw) else { return .recentDesc }
         return order
     }() {
         didSet {
-            UserDefaults.standard.set(sortOrder.rawValue, forKey: "sidebarSortOrder")
+            UserDefaults.standard.set(sortOrder.rawValue, forKey: AppConstants.sidebarSortOrderKey)
             rebuildProjectGroups()
         }
     }
@@ -169,28 +169,13 @@ final class SidebarViewModel: ObservableObject {
         }
     }
 
-    /// Group trees by project for sidebar sections
-    var groupedTrees: [(project: String, trees: [ConversationTree])] {
-        let grouped = Dictionary(grouping: filteredTrees) {
-            let p = $0.project ?? ""
-            return p.isEmpty ? "General" : p
-        }
-        return grouped.sorted { lhs, rhs in
-            // "General" always sorts last
-            if lhs.key == "General" { return false }
-            if rhs.key == "General" { return true }
-            return lhs.key < rhs.key
-        }
-        .map { (project: $0.key, trees: $0.value) }
-    }
-
     /// Rebuild allProjectGroups from current source data.
     /// Sort order: most recently active project first, "General" always last.
     /// The latest tree.updatedAt across all trees in a project determines its rank.
     private func rebuildProjectGroups() {
         let treesByProject = Dictionary(grouping: filteredTrees) {
             let p = $0.project ?? ""
-            return p.isEmpty ? "General" : p
+            return p.isEmpty ? AppConstants.defaultProjectName : p
         }
 
         // Collect all known project names (union of ProjectCache + tree groups)
@@ -200,12 +185,12 @@ final class SidebarViewModel: ObservableObject {
         let filteredCache = searchText.isEmpty
             ? cachedProjects
             : cachedProjects.filter { $0.name.lowercased().contains(searchText.lowercased()) }
-        for p in filteredCache where p.name != "General" {
+        for p in filteredCache where p.name != AppConstants.defaultProjectName {
             if seen.insert(p.name).inserted { allNames.append(p.name) }
         }
-        for group in groupedTrees where group.project != "General" && !seen.contains(group.project) {
-            seen.insert(group.project)
-            allNames.append(group.project)
+        for project in treesByProject.keys where project != AppConstants.defaultProjectName && !seen.contains(project) {
+            seen.insert(project)
+            allNames.append(project)
         }
 
         let sorted = allNames.sorted { a, b in
@@ -228,8 +213,8 @@ final class SidebarViewModel: ObservableObject {
         var result: [(project: String, trees: [ConversationTree])] = sorted.map {
             (project: $0, trees: sortTrees(treesByProject[$0] ?? []))
         }
-        if let general = treesByProject["General"] {
-            result.append((project: "General", trees: sortTrees(general)))
+        if let general = treesByProject[AppConstants.defaultProjectName] {
+            result.append((project: AppConstants.defaultProjectName, trees: sortTrees(general)))
         }
 
         allProjectGroups = result
@@ -252,6 +237,8 @@ final class SidebarViewModel: ObservableObject {
     }
 
     deinit {
+        searchTask?.cancel()
+        searchDebounceTask?.cancel()
         if let observer = projectObserver {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -260,7 +247,7 @@ final class SidebarViewModel: ObservableObject {
     func loadTrees() {
         isLoading = true
         do {
-            trees = try TreeStore.shared.listTrees()
+            trees = try TreeStore.shared.getTrees()
             cachedProjects = (try? ProjectCache().getAll()) ?? []
             rebuildProjectGroups()
             error = nil
@@ -438,7 +425,7 @@ final class SidebarViewModel: ObservableObject {
     func archiveProject(_ projectName: String) {
         do {
             // Terminate any live terminals in this project's trees
-            for tree in trees where (tree.project ?? "General") == projectName {
+            for tree in trees where (tree.project ?? AppConstants.defaultProjectName) == projectName {
                 if let full = try? TreeStore.shared.getTree(tree.id) {
                     for branch in full.branches {
                         BranchTerminalManager.shared.terminate(branchId: branch.id)
@@ -460,7 +447,7 @@ final class SidebarViewModel: ObservableObject {
     /// Delete all trees in a project group (permanent, with cascade).
     func deleteProject(_ projectName: String) {
         do {
-            for tree in trees where (tree.project ?? "General") == projectName {
+            for tree in trees where (tree.project ?? AppConstants.defaultProjectName) == projectName {
                 if let full = try? TreeStore.shared.getTree(tree.id) {
                     for branch in full.branches {
                         BranchTerminalManager.shared.terminate(branchId: branch.id)
@@ -492,7 +479,7 @@ final class SidebarViewModel: ObservableObject {
         if let cached = try? ProjectCache().getByName(projectName) {
             return cached.path
         }
-        return groupedTrees
+        return allProjectGroups
             .first { $0.project == projectName }?
             .trees.first?.workingDirectory
     }

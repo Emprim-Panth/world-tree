@@ -22,17 +22,20 @@ final class MessageStore {
         }) ?? false
     }
 
-    /// Get messages for a session, with branch fork indicators
+    /// Get messages for a session, with branch fork indicators.
+    /// When a limit is applied, returns the *newest* N messages in chronological order.
     func getMessages(sessionId: String, limit: Int = 500) throws -> [Message] {
         try db.read { db in
             let sql = """
-                SELECT m.*,
-                    (SELECT COUNT(*) FROM canvas_branches cb
-                     WHERE cb.fork_from_message_id = m.id) as has_branches
-                FROM messages m
-                WHERE m.session_id = ?
-                ORDER BY m.timestamp ASC
-                LIMIT ?
+                SELECT * FROM (
+                    SELECT m.*,
+                        (SELECT COUNT(*) FROM canvas_branches cb
+                         WHERE cb.fork_from_message_id = m.id) as has_branches
+                    FROM messages m
+                    WHERE m.session_id = ?
+                    ORDER BY m.timestamp DESC
+                    LIMIT ?
+                ) sub ORDER BY sub.timestamp ASC
                 """
             return try Message.fetchAll(db, sql: sql, arguments: [sessionId, limit])
         }
@@ -381,14 +384,22 @@ final class MessageStore {
         return nil
     }
 
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let sqlFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
+
     nonisolated private static func parseTimestamp(_ value: DatabaseValue?) -> Date? {
         guard let value, let str = String.fromDatabaseValue(value) else { return nil }
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = iso.date(from: str) { return date }
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        if let date = df.date(from: str) { return date }
+        if let date = isoFormatter.date(from: str) { return date }
+        if let date = sqlFormatter.date(from: str) { return date }
         wtLog("[MessageStore] WARNING: Failed to parse timestamp '\(str)' — skipping result")
         return nil
     }

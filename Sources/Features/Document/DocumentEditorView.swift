@@ -997,7 +997,7 @@ class DocumentEditorViewModel: ObservableObject {
             }
 
             // 2. Route through ClaudeCodeProvider
-            let model = UserDefaults.standard.string(forKey: "defaultModel") ?? AppConstants.defaultModel
+            let model = UserDefaults.standard.string(forKey: AppConstants.defaultModelKey) ?? AppConstants.defaultModel
 
             // Context injection strategy — two tiers to handle both cold starts and
             // back-to-back --resume failures:
@@ -1077,7 +1077,7 @@ class DocumentEditorViewModel: ObservableObject {
                 enrichedContext = recentContext
             }
 
-            let extendedThinking = UserDefaults.standard.bool(forKey: "extendedThinkingEnabled")
+            let extendedThinking = UserDefaults.standard.bool(forKey: AppConstants.extendedThinkingEnabledKey)
             let ctx = ProviderSendContext(
                 message: content,
                 sessionId: sessionId,
@@ -1129,7 +1129,7 @@ class DocumentEditorViewModel: ObservableObject {
                 case .done(let usage):
                     // Record token usage to canvas_token_usage + project metrics
                     if usage.totalInputTokens > 0 || usage.totalOutputTokens > 0 {
-                        TokenTracker.shared.record(
+                        TokenStore.shared.record(
                             sessionId: sessionId,
                             branchId: branchId,
                             inputTokens: usage.totalInputTokens,
@@ -1242,7 +1242,7 @@ class DocumentEditorViewModel: ObservableObject {
             }
 
             // Auto-speak the response if enabled
-            if UserDefaults.standard.bool(forKey: "voiceAutoSpeak"),
+            if UserDefaults.standard.bool(forKey: AppConstants.voiceAutoSpeakKey),
                !fullResponse.hasPrefix("⚠️") {
                 let speakText = fullResponse.count > 500
                     ? String(fullResponse.prefix(500)) + "..."
@@ -1253,8 +1253,8 @@ class DocumentEditorViewModel: ObservableObject {
                     .replacingOccurrences(of: "`[^`]+`", with: "", options: .regularExpression)
                     .replacingOccurrences(of: "#+ ", with: "", options: .regularExpression)
                     .replacingOccurrences(of: "**", with: "")
-                let rawSpeed = UserDefaults.standard.double(forKey: "voiceSpeed")
-                let rawPitch = UserDefaults.standard.double(forKey: "voicePitch")
+                let rawSpeed = UserDefaults.standard.double(forKey: AppConstants.voiceSpeedKey)
+                let rawPitch = UserDefaults.standard.double(forKey: AppConstants.voicePitchKey)
                 let voiceOptions = SpeechOptions(
                     speed: rawSpeed > 0 ? min(max(rawSpeed, 0.5), 2.0) : 1.0,
                     pitch: rawPitch > 0 ? min(max(rawPitch, 0.5), 2.0) : 1.0

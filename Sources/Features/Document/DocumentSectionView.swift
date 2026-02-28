@@ -278,7 +278,7 @@ struct BranchBadgeView: View {
     private func loadBranches() {
         Task { @MainActor in
             if let intId = Int(messageId) {
-                branches = (try? TreeStore.shared.branchesFromMessage(intId)) ?? []
+                branches = (try? TreeStore.shared.getBranches(fromMessage: intId)) ?? []
             }
         }
     }

@@ -317,7 +317,7 @@ final class PluginServer: ObservableObject {
 
     private func toolListTrees(id: String) async -> String {
         do {
-            let trees = try TreeStore.shared.listTrees()
+            let trees = try TreeStore.shared.getTrees()
             guard !trees.isEmpty else {
                 return textResult(id: id, text: "[]")
             }

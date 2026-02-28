@@ -3,10 +3,10 @@ import Security
 import CryptoKit
 
 struct SettingsView: View {
-    @AppStorage("databasePath") private var databasePath = AppConstants.databasePath
+    @AppStorage(AppConstants.databasePathKey) private var databasePath = AppConstants.databasePath
     @AppStorage("daemonSocketPath") private var daemonSocketPath = AppConstants.daemonSocketPath
-    @AppStorage("defaultModel") private var defaultModel = AppConstants.defaultModel
-    @AppStorage("contextDepth") private var contextDepth = AppConstants.defaultContextDepth
+    @AppStorage(AppConstants.defaultModelKey) private var defaultModel = AppConstants.defaultModel
+    @AppStorage(AppConstants.contextDepthKey) private var contextDepth = AppConstants.defaultContextDepth
     @StateObject private var providerManager = ProviderManager.shared
     @StateObject private var server = WorldTreeServer.shared
 
@@ -159,7 +159,7 @@ struct SettingsView: View {
     // MARK: - General
 
     private var appState = AppState.shared
-    @AppStorage("globalHotKeyEnabled") private var globalHotKeyEnabled = true
+    @AppStorage(AppConstants.globalHotKeyEnabledKey) private var globalHotKeyEnabled = true
 
     private var generalTab: some View {
         @Bindable var appState = appState
@@ -219,8 +219,8 @@ struct SettingsView: View {
 
     @State private var apiKeyInput = ""
     @State private var showAPIKey = false
-    @AppStorage("extendedThinkingEnabled") private var extendedThinkingEnabled = false
-    @AppStorage("fileWriteReviewEnabled") private var fileWriteReviewEnabled = false
+    @AppStorage(AppConstants.extendedThinkingEnabledKey) private var extendedThinkingEnabled = false
+    @AppStorage(AppConstants.fileWriteReviewEnabledKey) private var fileWriteReviewEnabled = false
 
     private var apiTab: some View {
         Form {
@@ -711,9 +711,9 @@ struct SettingsView: View {
 
     // MARK: - Voice
 
-    @AppStorage("voiceAutoSpeak") private var voiceAutoSpeak = false
-    @AppStorage("voiceSpeed") private var voiceSpeed = 1.0
-    @AppStorage("voicePitch") private var voicePitch = 1.0
+    @AppStorage(AppConstants.voiceAutoSpeakKey) private var voiceAutoSpeak = false
+    @AppStorage(AppConstants.voiceSpeedKey) private var voiceSpeed = 1.0
+    @AppStorage(AppConstants.voicePitchKey) private var voicePitch = 1.0
 
     private var voiceTab: some View {
         Form {

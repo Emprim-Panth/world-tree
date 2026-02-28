@@ -52,7 +52,7 @@ final class DatabaseManager {
     /// 3. Fallback to ~/.cortana/cortana.db
     private func resolveDatabasePath() -> String {
         // User-configured override (Settings → Connection tab)
-        if let override = UserDefaults.standard.string(forKey: "databasePath"),
+        if let override = UserDefaults.standard.string(forKey: AppConstants.databasePathKey),
            !override.isEmpty,
            FileManager.default.fileExists(atPath: override) {
             return override

@@ -47,7 +47,7 @@ final class SimpleProjectStore {
     /// Looks for a canvas_tree whose working_directory matches the project path
     /// and returns its first active branch.
     private func findExistingEntry(for project: CachedProject) throws -> (treeId: String, branchId: String)? {
-        let trees = try TreeStore.shared.listTrees()
+        let trees = try TreeStore.shared.getTrees()
         guard let tree = trees.first(where: { $0.workingDirectory == project.path }) else {
             return nil
         }
@@ -69,7 +69,7 @@ final class SimpleProjectStore {
 
     /// Build a brief summary of all other active projects for cross-project awareness.
     private func buildCrossProjectSummary(excludingPath: String) -> String {
-        guard let allTrees = try? TreeStore.shared.listTrees(), !allTrees.isEmpty else {
+        guard let allTrees = try? TreeStore.shared.getTrees(), !allTrees.isEmpty else {
             return ""
         }
         let others = allTrees.filter { $0.workingDirectory != excludingPath && !($0.workingDirectory ?? "").isEmpty }

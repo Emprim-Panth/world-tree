@@ -741,12 +741,12 @@ struct SidebarView: View {
                     panel.canChooseDirectories = true
                     panel.canChooseFiles = false
                     panel.allowsMultipleSelection = false
-                    let lastDir = UserDefaults.standard.string(forKey: "lastWorkingDirectory")
+                    let lastDir = UserDefaults.standard.string(forKey: AppConstants.lastWorkingDirectoryKey)
                         ?? "\(FileManager.default.homeDirectoryForCurrentUser.path)/Development"
                     panel.directoryURL = URL(fileURLWithPath: lastDir)
                     if panel.runModal() == .OK, let url = panel.url {
                         newTreeWorkingDir = url.path
-                        UserDefaults.standard.set(url.path, forKey: "lastWorkingDirectory")
+                        UserDefaults.standard.set(url.path, forKey: AppConstants.lastWorkingDirectoryKey)
                     }
                 }
                 .controlSize(.small)
@@ -851,8 +851,8 @@ struct SidebarView: View {
             return
         }
         // Move every tree in the old category to the new name
-        for tree in viewModel.trees where (tree.project ?? "General") == oldName {
-            viewModel.moveTree(tree.id, toProject: newName == "General" ? nil : newName)
+        for tree in viewModel.trees where (tree.project ?? AppConstants.defaultProjectName) == oldName {
+            viewModel.moveTree(tree.id, toProject: newName == AppConstants.defaultProjectName ? nil : newName)
         }
         showRenameCategorySheet = false
         renamingCategory = nil

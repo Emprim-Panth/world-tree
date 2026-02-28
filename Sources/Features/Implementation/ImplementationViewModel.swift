@@ -2,7 +2,7 @@ import Foundation
 
 /// ViewModel for implementation branches — dispatches to daemon, monitors progress, handles completion.
 @MainActor
-final class ImplementationVM: ObservableObject {
+final class ImplementationViewModel: ObservableObject {
     enum Phase: Equatable {
         case preparing
         case dispatching
@@ -43,7 +43,7 @@ final class ImplementationVM: ObservableObject {
 
         // Determine project from tree
         let tree = try? TreeStore.shared.getTree(branch.treeId)
-        if tree == nil { wtLog("[ImplementationVM] WARNING: Could not load tree \(branch.treeId) — defaulting project to 'cortana-core'") }
+        if tree == nil { wtLog("[ImplementationViewModel] WARNING: Could not load tree \(branch.treeId) — defaulting project to 'cortana-core'") }
         let project = tree?.project ?? "cortana-core"
 
         // Send to daemon
@@ -62,7 +62,7 @@ final class ImplementationVM: ObservableObject {
         do {
             try TreeStore.shared.updateBranch(branch.id, daemonTaskId: id)
         } catch {
-            wtLog("[ImplementationVM] WARNING: Failed to persist daemonTaskId on branch \(branch.id): \(error)")
+            wtLog("[ImplementationViewModel] WARNING: Failed to persist daemonTaskId on branch \(branch.id): \(error)")
         }
 
         phase = .running

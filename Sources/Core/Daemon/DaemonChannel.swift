@@ -30,7 +30,7 @@ actor DaemonChannel {
 
     private var apiURL: String {
         // Allow runtime override; default to constant
-        UserDefaults.standard.string(forKey: "cortana.daemonAPIBaseURL")
+        UserDefaults.standard.string(forKey: AppConstants.daemonAPIBaseURLKey)
             ?? AppConstants.daemonAPIURL
     }
 

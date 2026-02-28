@@ -18,9 +18,9 @@ final class WorldTreeServer: ObservableObject {
     /// Native WebSocket port (NWProtocolWebSocket) — iOS connects here.
     /// One above the HTTP port so clients derive it as `port + 1`.
     static let wsPort: UInt16 = 5866
-    static let tokenKey = "cortana.serverToken"
-    static let enabledKey = "cortana.serverEnabled"
-    static let bonjourEnabledKey = "cortana.bonjourEnabled"
+    static let tokenKey = AppConstants.serverTokenKey
+    static let enabledKey = AppConstants.serverEnabledKey
+    static let bonjourEnabledKey = AppConstants.bonjourEnabledKey
 
     static let maxWebSocketConnections = 10
 
@@ -416,7 +416,7 @@ final class WorldTreeServer: ObservableObject {
     // MARK: - Route Handlers
 
     private func handleHealth(_ connection: NWConnection) async {
-        let count = (try? TreeStore.shared.listTrees())?.count ?? 0
+        let count = (try? TreeStore.shared.getTrees())?.count ?? 0
         let uptime = startedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
         sendResponse(connection, status: 200,
                      body: #"{"status":"ok","sessions":\#(count),"uptime":\#(uptime)}"#)
@@ -424,7 +424,7 @@ final class WorldTreeServer: ObservableObject {
 
     private func handleSessions(_ connection: NWConnection) async {
         do {
-            let trees = try TreeStore.shared.listTrees()
+            let trees = try TreeStore.shared.getTrees()
             let iso = Self.iso8601
             let items = trees.map { t in
                 #"{"id":"\#(t.id)","name":"\#(esc(t.name))","project":"\#(esc(t.project ?? ""))","updated_at":"\#(iso.string(from: t.updatedAt))","message_count":\#(t.messageCount)}"#
@@ -573,8 +573,8 @@ final class WorldTreeServer: ObservableObject {
             case .done(let usage):
                 // Record token usage
                 if usage.totalInputTokens > 0 || usage.totalOutputTokens > 0 {
-                    let resolvedModel = UserDefaults.standard.string(forKey: "defaultModel") ?? AppConstants.defaultModel
-                    TokenTracker.shared.record(
+                    let resolvedModel = UserDefaults.standard.string(forKey: AppConstants.defaultModelKey) ?? AppConstants.defaultModel
+                    TokenStore.shared.record(
                         sessionId: resolved.sessionId,
                         branchId: resolved.branchId,
                         inputTokens: usage.totalInputTokens,
@@ -906,7 +906,7 @@ extension WorldTreeServer {
         guard let client = webSocketClients[clientId] else { return }
 
         do {
-            let trees = try TreeStore.shared.listTrees()
+            let trees = try TreeStore.shared.getTrees()
             let iso = Self.iso8601
             let treeInfos = trees.map { t in
                 WSTreeInfo(
@@ -1096,7 +1096,7 @@ extension WorldTreeServer {
 
         do {
             _ = try TreeStore.shared.createTree(name: req.name.trimmingCharacters(in: .whitespacesAndNewlines), project: req.project)
-            let trees = try TreeStore.shared.listTrees()
+            let trees = try TreeStore.shared.getTrees()
             let iso = Self.iso8601
             let treeInfos = trees.map { t in
                 WSTreeInfo(id: t.id, name: t.name, project: t.project, updatedAt: iso.string(from: t.updatedAt), messageCount: t.messageCount)

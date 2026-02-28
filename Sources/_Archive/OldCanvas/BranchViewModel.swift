@@ -43,7 +43,7 @@ final class BranchViewModel: ObservableObject {
             if let sessionId = branch?.sessionId {
                 messages = try MessageStore.shared.getMessages(sessionId: sessionId)
             }
-            branchPath = try TreeStore.shared.branchPath(to: branchId)
+            branchPath = try TreeStore.shared.getBranchPath(to: branchId)
             siblings = try TreeStore.shared.getSiblings(of: branchId)
             error = nil
         } catch {
