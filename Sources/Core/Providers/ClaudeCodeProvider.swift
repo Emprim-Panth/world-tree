@@ -20,7 +20,7 @@ final class ClaudeCodeProvider: LLMProvider {
     private var _currentProcess: Process?
     /// Per-process cancellation tracking — keyed by Process hash so concurrent
     /// sessions don't clobber each other's cancelled state.
-    private var _cancelledProcesses = Set<Int>()
+    private var _cancelledProcesses = Set<ObjectIdentifier>()
 
     var isRunning: Bool {
         stateLock.lock()
@@ -283,12 +283,12 @@ final class ClaudeCodeProvider: LLMProvider {
                         wtLog("[ClaudeCodeProvider] stderr: \(stderrText.prefix(500))")
                     }
 
-                    let procHash = ObjectIdentifier(process).hashValue
+                    let procId = ObjectIdentifier(process)
                     let wasCancelled: Bool = {
                         self?.stateLock.lock()
                         defer { self?.stateLock.unlock() }
-                        let cancelled = self?._cancelledProcesses.contains(procHash) ?? false
-                        self?._cancelledProcesses.remove(procHash)
+                        let cancelled = self?._cancelledProcesses.contains(procId) ?? false
+                        self?._cancelledProcesses.remove(procId)
                         return cancelled
                     }()
 
@@ -384,7 +384,7 @@ final class ClaudeCodeProvider: LLMProvider {
         stateLock.lock()
         let proc = _currentProcess
         if let proc {
-            _cancelledProcesses.insert(ObjectIdentifier(proc).hashValue)
+            _cancelledProcesses.insert(ObjectIdentifier(proc))
         }
         _currentProcess = nil
         _isRunning = false

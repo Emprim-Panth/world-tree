@@ -19,6 +19,28 @@ final class MemoryService {
     /// Maximum characters per individual snippet
     private let maxSnippetChars = 400
 
+    /// Cache for tableExists checks — once a table exists, it won't disappear mid-session
+    private static var tableExistsCache: [String: Bool] = [:]
+
+    /// FTS stop words — static to avoid re-allocating 100+ strings per call
+    private static let stopWords: Set<String> = [
+        "the", "a", "an", "is", "are", "was", "were", "be", "been",
+        "being", "have", "has", "had", "do", "does", "did", "will",
+        "would", "could", "should", "may", "might", "can", "shall",
+        "to", "of", "in", "for", "on", "with", "at", "by", "from",
+        "as", "into", "through", "during", "before", "after", "above",
+        "below", "between", "out", "off", "about", "up", "down",
+        "and", "but", "or", "nor", "not", "so", "yet", "both",
+        "either", "neither", "each", "every", "all", "any", "few",
+        "more", "most", "other", "some", "such", "no", "only", "own",
+        "same", "than", "too", "very", "just", "because", "if",
+        "when", "where", "how", "what", "which", "who", "whom",
+        "this", "that", "these", "those", "i", "me", "my", "we",
+        "you", "your", "he", "she", "it", "they", "them", "its",
+        "his", "her", "our", "their", "let", "lets", "please",
+        "want", "need", "like", "look", "make", "get", "go",
+    ]
+
     private init() {}
 
     // MARK: - Primary API
@@ -319,24 +341,6 @@ final class MemoryService {
     /// Build a safe FTS5 query from a natural language message.
     /// Extracts significant terms, removes FTS operators and stop words.
     private func buildFTSQuery(from message: String) -> String {
-        let stopWords: Set<String> = [
-            "the", "a", "an", "is", "are", "was", "were", "be", "been",
-            "being", "have", "has", "had", "do", "does", "did", "will",
-            "would", "could", "should", "may", "might", "can", "shall",
-            "to", "of", "in", "for", "on", "with", "at", "by", "from",
-            "as", "into", "through", "during", "before", "after", "above",
-            "below", "between", "out", "off", "about", "up", "down",
-            "and", "but", "or", "nor", "not", "so", "yet", "both",
-            "either", "neither", "each", "every", "all", "any", "few",
-            "more", "most", "other", "some", "such", "no", "only", "own",
-            "same", "than", "too", "very", "just", "because", "if",
-            "when", "where", "how", "what", "which", "who", "whom",
-            "this", "that", "these", "those", "i", "me", "my", "we",
-            "you", "your", "he", "she", "it", "they", "them", "its",
-            "his", "her", "our", "their", "let", "lets", "please",
-            "want", "need", "like", "look", "make", "get", "go",
-        ]
-
         // Strip FTS5 special characters
         let cleaned = message.lowercased()
             .replacingOccurrences(of: "\"", with: " ")
@@ -349,9 +353,10 @@ final class MemoryService {
 
         let words = cleaned
             .components(separatedBy: .whitespacesAndNewlines)
-            .filter { $0.count >= 3 && !stopWords.contains($0) }
+            .filter { $0.count >= 3 && !Self.stopWords.contains($0) }
 
-        let terms = Array(Set(words).prefix(8))
+        var seen = Set<String>()
+        let terms = words.filter { seen.insert($0).inserted }.prefix(8)
         guard !terms.isEmpty else { return "" }
 
         return terms.joined(separator: " OR ")
@@ -360,9 +365,14 @@ final class MemoryService {
     // MARK: - Utilities
 
     private func tableExists(_ db: Database, name: String) throws -> Bool {
-        try Bool.fetchOne(db, sql: """
+        if let cached = Self.tableExistsCache[name] {
+            return cached
+        }
+        let exists = try Bool.fetchOne(db, sql: """
             SELECT COUNT(*) > 0 FROM sqlite_master
             WHERE type = 'table' AND name = ?
             """, arguments: [name]) ?? false
+        Self.tableExistsCache[name] = exists
+        return exists
     }
 }

@@ -25,14 +25,28 @@ struct SandboxProfile {
     )
 
     /// Read-only with network — can browse but not modify
-    static let readOnly = SandboxProfile(
-        name: "read-only",
-        description: "Read-only filesystem access, network allowed",
-        allowNetwork: true,
-        allowedPaths: ["/"],
-        deniedPaths: [],
-        allowSubprocesses: true
-    )
+    static let readOnly: SandboxProfile = {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return SandboxProfile(
+            name: "read-only",
+            description: "Read-only filesystem access, network allowed",
+            allowNetwork: true,
+            allowedPaths: [
+                home,
+                "/tmp/",
+                "/usr/",
+                "/bin/",
+                "/opt/homebrew/",
+                "/Library/Frameworks/",
+            ],
+            deniedPaths: [
+                home + "/.ssh/",
+                home + "/.aws/",
+                home + "/.gnupg/",
+            ],
+            allowSubprocesses: true
+        )
+    }()
 
     /// Workspace-only — restricted to project directory
     static func workspace(path: String) -> SandboxProfile {
@@ -86,17 +100,19 @@ struct SandboxProfile {
         profile += "(allow sysctl-read)\n"
         profile += "(allow mach-lookup)\n"
 
-        // Denied paths FIRST — Seatbelt uses first-match
+        // Allowed paths first — then denied paths override (Seatbelt: last match wins at same specificity)
+        for path in allowedPaths {
+            profile += "(allow file-read* (subpath \"\(path)\"))\n"
+            if name != "read-only" {
+                profile += "(allow file-write* (subpath \"\(path)\"))\n"
+            }
+        }
+
+        // Denied paths AFTER allows — ensures deny takes precedence
         for path in deniedPaths {
             let expanded = path.replacingOccurrences(of: "~", with: FileManager.default.homeDirectoryForCurrentUser.path)
             profile += "(deny file-read* (subpath \"\(expanded)\"))\n"
             profile += "(deny file-write* (subpath \"\(expanded)\"))\n"
-        }
-
-        // File reads and writes — allowed paths only
-        for path in allowedPaths {
-            profile += "(allow file-read* (subpath \"\(path)\"))\n"
-            profile += "(allow file-write* (subpath \"\(path)\"))\n"
         }
 
         // Allow reading system libraries and frameworks (required for process exec)

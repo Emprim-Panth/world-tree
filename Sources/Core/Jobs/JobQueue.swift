@@ -76,6 +76,19 @@ actor JobQueue {
 
     private func execute(_ job: WorldTreeJob) async {
         var mutableJob = job
+
+        // Security gate: check command against ToolGuard before execution
+        let assessment = ToolGuard.assess(toolName: "bash", input: ["command": job.command])
+        if assessment.requiresApproval {
+            mutableJob.status = .failed
+            mutableJob.error = "Blocked by ToolGuard: \(assessment.reason) (risk: \(assessment.riskLevel))"
+            mutableJob.completedAt = Date()
+            dbWrite { db in try mutableJob.update(db) }
+            wtLog("[JobQueue] Job \(job.id) blocked by ToolGuard: \(assessment.reason)")
+            await NotificationManager.shared.notifyJobComplete(mutableJob)
+            return
+        }
+
         mutableJob.status = .running
         dbWrite { db in try mutableJob.update(db) }
 

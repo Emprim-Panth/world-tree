@@ -44,30 +44,43 @@ actor DaemonSocket {
         var tv = timeval(tv_sec: 10, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
-        // Send JSON command
-        let data = try JSONEncoder().encode(command)
-        guard let jsonString = String(data: data, encoding: .utf8).map({ $0 + "\n" }) else {
+        // Send JSON command — loop until all bytes are written (send may be partial)
+        let encodedData = try JSONEncoder().encode(command)
+        guard let jsonString = String(data: encodedData, encoding: .utf8) else {
             throw DaemonError.sendFailed(errno: EILSEQ)
         }
-        let sent = jsonString.withCString { ptr in
-            Darwin.send(fd, ptr, jsonString.utf8.count, 0)
-        }
-        guard sent > 0 else {
-            throw DaemonError.sendFailed(errno: errno)
+        let sendBytes = Array(jsonString.utf8) + [UInt8(ascii: "\n")]
+        var totalSent = 0
+        while totalSent < sendBytes.count {
+            let sent = sendBytes.withUnsafeBufferPointer { ptr in
+                Darwin.send(fd, ptr.baseAddress! + totalSent, sendBytes.count - totalSent, 0)
+            }
+            guard sent > 0 else {
+                throw DaemonError.sendFailed(errno: errno)
+            }
+            totalSent += sent
         }
 
-        // Read response — loop until newline or connection close (handles > 64KB payloads)
+        // Read response — buffer until first newline delimiter (handles > 64KB payloads)
         var responseData = Data()
         var chunk = [UInt8](repeating: 0, count: 65536)
         while true {
             let received = Darwin.recv(fd, &chunk, chunk.count, 0)
             if received <= 0 { break }
             responseData.append(contentsOf: chunk[0..<received])
-            if chunk[received - 1] == UInt8(ascii: "\n") { break }
+            // Check if buffer contains a newline — return everything up to it
+            if let nlIndex = responseData.firstIndex(of: UInt8(ascii: "\n")) {
+                let messageData = responseData[responseData.startIndex..<nlIndex]
+                guard !messageData.isEmpty else {
+                    throw DaemonError.receiveFailed(errno: errno)
+                }
+                return try JSONDecoder().decode(DaemonResponse.self, from: messageData)
+            }
         }
         guard !responseData.isEmpty else {
             throw DaemonError.receiveFailed(errno: errno)
         }
+        // No newline found — try decoding whatever we got
         return try JSONDecoder().decode(DaemonResponse.self, from: responseData)
     }
 

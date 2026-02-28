@@ -311,7 +311,7 @@ final class PluginServer: ObservableObject {
             return toolListActiveJobs(id: id)
 
         default:
-            return #"{"jsonrpc":"2.0","id":\#(id),"error":{"code":-32602,"message":"Unknown tool: \#(name)"}}"#
+            return #"{"jsonrpc":"2.0","id":\#(id),"error":{"code":-32602,"message":"Unknown tool: \#(esc(name))"}}"#
         }
     }
 

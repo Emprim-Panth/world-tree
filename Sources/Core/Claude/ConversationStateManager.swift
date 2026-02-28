@@ -41,7 +41,7 @@ final class ConversationStateManager {
     /// Stable blocks (identity + CLAUDE.md) use 1-hour cache — they're identical across
     /// sessions, so paying 2x write cost once saves 90% on all subsequent reads within the hour.
     /// KB context (per-query) uses no cache so it doesn't bust the stable cache.
-    func buildSystemPrompt(project: String?, workingDirectory: String?) async -> [SystemBlock] {
+    func buildSystemPrompt(message: String = "", project: String?, workingDirectory: String?) async -> [SystemBlock] {
         var blocks: [SystemBlock] = []
 
         // 1. Cortana identity + operational directives (stable across all sessions — 1h cache)
@@ -63,7 +63,7 @@ final class ConversationStateManager {
 
         // 4. Cross-session memory (past conversations + knowledge base)
         let memory = MemoryService.shared.recallForMessage(
-            "", project: project, sessionId: sessionId
+            message, project: project, sessionId: sessionId
         )
         if !memory.isEmpty {
             blocks.append(SystemBlock(text: memory, cached: false))

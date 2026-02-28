@@ -117,6 +117,7 @@ enum CortanaIdentity {
             prompt += "\nWorking directory: \(cwd)"
         }
         if let sid = sessionId {
+            let safeSid = sid.replacingOccurrences(of: "'", with: "''")
             let dbPath = UserDefaults.standard.string(forKey: "databasePath").flatMap {
                 $0.isEmpty ? nil : $0
             } ?? AppConstants.databasePath
@@ -128,7 +129,7 @@ enum CortanaIdentity {
             ```sql
             SELECT role, content FROM messages m
             JOIN messages_fts ON messages_fts.rowid = m.id
-            WHERE messages_fts MATCH 'your query' AND m.session_id = '\(sid)'
+            WHERE messages_fts MATCH 'your query' AND m.session_id = '\(safeSid)'
             ORDER BY rank LIMIT 10;
             ```
             Database: \(dbPath)

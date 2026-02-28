@@ -92,7 +92,36 @@ final class WTCommandBridge: ObservableObject {
 
     // MARK: - Reading
 
+    /// Validate that the command file is owned by the current user and not world-writable.
+    private nonisolated func validateFilePermissions() -> Bool {
+        let fm = FileManager.default
+        guard let attrs = try? fm.attributesOfItem(atPath: commandsPath) else {
+            wtLog("[WTCommandBridge] failed to read file attributes for \(commandsPath)")
+            return false
+        }
+        // Check owner matches current user
+        if let fileOwner = attrs[.ownerAccountID] as? NSNumber {
+            let currentUID = getuid()
+            if fileOwner.uint32Value != currentUID {
+                wtLog("[WTCommandBridge] SECURITY: command file owned by UID \(fileOwner), expected \(currentUID)")
+                return false
+            }
+        }
+        // Check not world-writable (octal: xx2 or xx3 or xx6 or xx7 in the "other" bits)
+        if let perms = attrs[.posixPermissions] as? NSNumber {
+            let otherWrite = perms.uint16Value & 0o002
+            if otherWrite != 0 {
+                wtLog("[WTCommandBridge] SECURITY: command file is world-writable (permissions: \(String(perms.uint16Value, radix: 8)))")
+                return false
+            }
+        }
+        return true
+    }
+
     private nonisolated func readNewLines() {
+        // Validate file ownership and permissions before processing commands
+        guard validateFilePermissions() else { return }
+
         ioLock.lock()
         guard let fh = fileHandle else { ioLock.unlock(); return }
         fh.seek(toFileOffset: bytesRead)
@@ -162,7 +191,12 @@ final class WTCommandBridge: ObservableObject {
             if let p = cmd.path { NSWorkspace.shared.open(URL(fileURLWithPath: p)) }
 
         case "openURL":
-            if let s = cmd.url, let url = URL(string: s) { NSWorkspace.shared.open(url) }
+            if let s = cmd.url, let url = URL(string: s),
+               let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+                NSWorkspace.shared.open(url)
+            } else if let s = cmd.url {
+                wtLog("[WTCommandBridge] SECURITY: blocked openURL with non-http(s) scheme: \(s)")
+            }
 
         case "runShortcut":
             let n = cmd.name ?? ""

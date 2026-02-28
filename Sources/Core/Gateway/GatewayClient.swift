@@ -25,7 +25,7 @@ actor GatewayClient {
         project: String?,
         tags: [String]? = nil
     ) async throws -> Int64 {
-        let endpoint = baseURL.appendingPathComponent("/v1/cortana/memory/log")
+        let endpoint = baseURL.appendingPathComponent("v1/cortana/memory/log")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -57,7 +57,7 @@ actor GatewayClient {
         limit: Int = 50
     ) async throws -> [KnowledgeEntry] {
         guard var components = URLComponents(
-            url: baseURL.appendingPathComponent("/v1/cortana/memory/search"),
+            url: baseURL.appendingPathComponent("v1/cortana/memory/search"),
             resolvingAgainstBaseURL: false
         ) else { throw GatewayError.requestFailed }
 
@@ -76,7 +76,8 @@ actor GatewayClient {
 
         components.queryItems = queryItems
 
-        var request = URLRequest(url: components.url!)
+        guard let url = components.url else { throw GatewayError.requestFailed }
+        var request = URLRequest(url: url)
         request.setValue(authToken, forHTTPHeaderField: "x-cortana-token")
 
         let (data, response) = try await session.data(for: request)
@@ -94,7 +95,7 @@ actor GatewayClient {
 
     func checkHandoffs(project: String? = nil) async throws -> [Handoff] {
         guard var components = URLComponents(
-            url: baseURL.appendingPathComponent("/v1/cortana/handoffs"),
+            url: baseURL.appendingPathComponent("v1/cortana/handoffs"),
             resolvingAgainstBaseURL: false
         ) else { throw GatewayError.requestFailed }
 
@@ -102,7 +103,8 @@ actor GatewayClient {
             components.queryItems = [URLQueryItem(name: "project", value: project)]
         }
 
-        var request = URLRequest(url: components.url!)
+        guard let url = components.url else { throw GatewayError.requestFailed }
+        var request = URLRequest(url: url)
         request.setValue(authToken, forHTTPHeaderField: "x-cortana-token")
 
         let (data, response) = try await session.data(for: request)
@@ -123,7 +125,7 @@ actor GatewayClient {
         project: String?,
         priority: String = "normal"
     ) async throws -> String {
-        let endpoint = baseURL.appendingPathComponent("/v1/cortana/handoffs")
+        let endpoint = baseURL.appendingPathComponent("v1/cortana/handoffs")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -148,7 +150,7 @@ actor GatewayClient {
     }
 
     func updateHandoff(id: String, status: String) async throws {
-        let endpoint = baseURL.appendingPathComponent("/v1/cortana/handoffs/\(id)/status")
+        let endpoint = baseURL.appendingPathComponent("v1/cortana/handoffs/\(id)/status")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -174,7 +176,7 @@ actor GatewayClient {
         project: String? = nil,
         name: String? = nil
     ) async throws -> TerminalSession {
-        let endpoint = baseURL.appendingPathComponent("/v1/cortana/terminal/start")
+        let endpoint = baseURL.appendingPathComponent("v1/cortana/terminal/start")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -202,7 +204,7 @@ actor GatewayClient {
     }
 
     func listTerminals() async throws -> [TerminalSession] {
-        let endpoint = baseURL.appendingPathComponent("/v1/cortana/terminal/list")
+        let endpoint = baseURL.appendingPathComponent("v1/cortana/terminal/list")
         var request = URLRequest(url: endpoint)
         request.setValue(authToken, forHTTPHeaderField: "x-cortana-token")
 
@@ -219,7 +221,7 @@ actor GatewayClient {
     }
 
     func killTerminal(sessionId: String) async throws {
-        let endpoint = baseURL.appendingPathComponent("/v1/cortana/terminal/\(sessionId)/kill")
+        let endpoint = baseURL.appendingPathComponent("v1/cortana/terminal/\(sessionId)/kill")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue(authToken, forHTTPHeaderField: "x-cortana-token")
@@ -239,7 +241,7 @@ actor GatewayClient {
                 let maxRetries = 10
 
                 while retries < maxRetries && !Task.isCancelled {
-                    let url = baseURL.appendingPathComponent("/v1/cortana/terminal/\(sessionId)/stream")
+                    let url = baseURL.appendingPathComponent("v1/cortana/terminal/\(sessionId)/stream")
                     var request = URLRequest(url: url)
                     request.setValue(authToken, forHTTPHeaderField: "x-cortana-token")
 
@@ -268,7 +270,7 @@ actor GatewayClient {
     }
 
     func sendTerminalCommand(sessionId: String, command: String) async throws {
-        let endpoint = baseURL.appendingPathComponent("/v1/cortana/terminal/\(sessionId)/input")
+        let endpoint = baseURL.appendingPathComponent("v1/cortana/terminal/\(sessionId)/input")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

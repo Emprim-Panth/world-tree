@@ -83,8 +83,10 @@ final class LogTailer {
     }
 
     func stop() {
+        stateLock.lock()
         source?.cancel()
         source = nil
         fileHandle = nil
+        stateLock.unlock()
     }
 }

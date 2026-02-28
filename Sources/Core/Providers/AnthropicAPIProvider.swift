@@ -251,7 +251,11 @@ final class AnthropicAPIProvider: LLMProvider {
                     }
 
                     state.recordUsage(cumulativeUsage)
-                    try? state.persist()
+                    do {
+                        try state.persist()
+                    } catch {
+                        wtLog("[AnthropicAPIProvider] persist failed: \(error)")
+                    }
                     let finalUsage = state.tokenUsage
                     WakeLock.shared.release()
                     continuation.yield(.done(usage: finalUsage))
@@ -277,9 +281,10 @@ final class AnthropicAPIProvider: LLMProvider {
     // MARK: - Cancel
 
     func cancel() {
-        // Schedule on MainActor to avoid data race on isCancelled/isRunning/currentTask
+        // Set isCancelled immediately under lock so streaming loops see it without Task dispatch latency
+        stateLock.withLock { _isCancelled = true }
+        // Schedule remaining cleanup on MainActor (currentTask, isRunning, WakeLock)
         Task { @MainActor [weak self] in
-            self?.isCancelled = true
             self?.currentTask?.cancel()
             self?.currentTask = nil
             self?.isRunning = false
@@ -329,7 +334,7 @@ final class AnthropicAPIProvider: LLMProvider {
 
         // Fresh session
         let manager = ConversationStateManager(sessionId: context.sessionId, branchId: context.branchId)
-        _ = await manager.buildSystemPrompt(project: context.project, workingDirectory: context.workingDirectory)
+        _ = await manager.buildSystemPrompt(message: context.message, project: context.project, workingDirectory: context.workingDirectory)
         stateManager = manager
         return manager
     }

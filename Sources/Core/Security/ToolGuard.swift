@@ -119,6 +119,34 @@ enum ToolGuard {
             )
         }
 
+        // Reject ANSI-C hex quoting — $'\x72\x6d' can encode "rm" etc.
+        if lowered.contains("$'\\x") || lowered.contains("$\"\\x") {
+            return Assessment(
+                riskLevel: .destructive,
+                reason: "Command uses ANSI-C hex quoting (potential obfuscation)",
+                toolName: "bash",
+                requiresApproval: true
+            )
+        }
+
+        // Reject here-strings/heredocs containing destructive commands
+        if lowered.contains("<<<") || lowered.contains("<<") {
+            let destructiveKeywords = ["rm ", "rm\t", "chmod ", "kill ", "mkfs", "dd ", "sudo "]
+            for keyword in destructiveKeywords {
+                if lowered.contains(keyword) {
+                    return Assessment(
+                        riskLevel: .destructive,
+                        reason: "Here-string/heredoc may pipe destructive command (\(keyword.trimmingCharacters(in: .whitespaces)))",
+                        toolName: "bash",
+                        requiresApproval: true
+                    )
+                }
+            }
+        }
+
+        // Expand backslash-escaped command names before pattern matching (e.g. r\m → rm)
+        let deobfuscated = lowered.replacingOccurrences(of: "\\", with: "")
+
         // Flag variable expansion — $VAR can alias to dangerous commands at runtime.
         // We allow common safe env vars ($HOME, $PATH, $USER, $PWD, etc.)
         // but flag unknown variables. This catches: ALIAS="rm -rf"; $ALIAS /
@@ -141,7 +169,8 @@ enum ToolGuard {
         }
 
         for (pattern, reason, level) in destructiveBashPatterns {
-            if lowered.contains(pattern.lowercased()) {
+            let lowerPattern = pattern.lowercased()
+            if lowered.contains(lowerPattern) || deobfuscated.contains(lowerPattern) {
                 return Assessment(
                     riskLevel: level,
                     reason: reason,
