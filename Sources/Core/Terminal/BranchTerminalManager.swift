@@ -257,8 +257,6 @@ final class BranchTerminalManager: ObservableObject {
 
     /// Verify a tmux session is still alive. If dead, clean up the stale mapping.
     /// Returns true if the session is valid, false if it was cleaned up.
-    /// Verify a tmux session is still alive. If dead, clean up the stale mapping.
-    /// Returns true if the session is valid, false if it was cleaned up.
     /// Non-blocking — uses async continuation with terminationHandler.
     @discardableResult
     func verifySession(branchId: String) async -> Bool {

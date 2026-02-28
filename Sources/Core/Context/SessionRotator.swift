@@ -14,6 +14,10 @@ import GRDB
 @MainActor
 enum SessionRotator {
 
+    /// Guard against concurrent rotation attempts — two rapid sends at high
+    /// pressure could both pass shouldRotate, wasting API calls.
+    private static var isRotating = false
+
     // MARK: - Public API
 
     /// Check if rotation is needed and perform it if so.
@@ -25,6 +29,10 @@ enum SessionRotator {
         toolEventCount: Int,
         provider: any LLMProvider
     ) async -> String? {
+        guard !isRotating else { return nil }
+        isRotating = true
+        defer { isRotating = false }
+
         let (tokens, level) = ContextPressureEstimator.estimate(
             messages: messages,
             toolEventCount: toolEventCount

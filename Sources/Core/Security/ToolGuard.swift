@@ -201,9 +201,10 @@ enum ToolGuard {
             return .safe(tool: toolName)
         }
 
-        // Check protected paths
+        // Check protected paths (case-insensitive — macOS filesystem is case-insensitive)
+        let lowerPath = path.lowercased()
         for protectedPath in protectedPaths {
-            if path.contains(protectedPath) {
+            if lowerPath.contains(protectedPath.lowercased()) {
                 return Assessment(
                     riskLevel: .destructive,
                     reason: "Writing to protected path: \(path)",

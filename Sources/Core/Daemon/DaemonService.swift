@@ -17,6 +17,9 @@ final class DaemonService: ObservableObject {
     private let socket = DaemonSocket()
     private var healthTimer: Timer?
 
+    /// Counter for health ticks — tmux discovery only runs every 3rd tick (30s).
+    private var healthTickCount = 0
+
     /// Track sessions we've already sent a /compact to, so we don't spam.
     /// Key: session name, Value: timestamp of last intervention.
     /// Pruned periodically to prevent unbounded growth.
@@ -48,9 +51,13 @@ final class DaemonService: ObservableObject {
         }
         healthTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.checkHealth()
-                await self?.refreshSessions()
-                self?.refreshTmuxSessions()
+                guard let self else { return }
+                self.checkHealth()
+                await self.refreshSessions()
+                self.healthTickCount += 1
+                if self.healthTickCount % 3 == 0 {
+                    self.refreshTmuxSessions()
+                }
             }
         }
     }

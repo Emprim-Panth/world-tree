@@ -136,6 +136,14 @@ final class DatabaseManager {
         checkpointTimer?.invalidate()
         checkpointTimer = nil
     }
+
+    /// Replace the database pool with a test database. Used by unit tests only.
+    /// Stops the checkpoint timer since test databases don't need it.
+    /// Pass nil to disconnect (for tearDown).
+    func setDatabasePoolForTesting(_ pool: DatabasePool?) {
+        stopCheckpointTimer()
+        dbPool = pool
+    }
 }
 
 enum DatabaseError: LocalizedError {

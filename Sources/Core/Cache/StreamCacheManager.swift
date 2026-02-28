@@ -7,7 +7,7 @@ import Foundation
 /// the file survives and is recovered on next launch — no lost responses.
 ///
 /// **Context cache** — per-session `.json` files holding recent message history.
-/// Loaded instead of querying the Dropbox DB for context building on each request.
+/// Loaded instead of querying the conversations DB for context building on each request.
 ///
 /// **Dynamic cap** — how deep we go per session scales with total cache size:
 /// - Cache is sparse (< 15 MB) → store up to 300 messages/session (more depth, useful)
@@ -42,6 +42,12 @@ actor StreamCacheManager {
 
     /// Hard ceiling — prune oldest files once exceeded
     private let maxCacheBytes: Int = 50 * 1_048_576    // 50 MB
+
+    // MARK: - Cached message limit
+
+    /// Cached result for contextMessageLimit to avoid scanning the directory on every access.
+    private var cachedMessageLimit: Int?
+    private var limitLastComputed: Date?
 
     // MARK: - Open write handles
 
@@ -107,8 +113,18 @@ actor StreamCacheManager {
     }
 
     /// Dynamic limit based on current total cache size.
+    /// Cached for 60 seconds to avoid scanning the directory on every access.
     var contextMessageLimit: Int {
-        dirSize(contextDir) < sparseThreshold ? longLimit : shortLimit
+        let now = Date()
+        if let cached = cachedMessageLimit,
+           let lastComputed = limitLastComputed,
+           now.timeIntervalSince(lastComputed) < 60 {
+            return cached
+        }
+        let limit = dirSize(contextDir) < sparseThreshold ? longLimit : shortLimit
+        cachedMessageLimit = limit
+        limitLastComputed = now
+        return limit
     }
 
     /// Write the most recent messages for a session to the local cache.

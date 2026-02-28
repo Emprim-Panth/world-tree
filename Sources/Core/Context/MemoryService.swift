@@ -340,7 +340,8 @@ final class MemoryService {
 
     /// Build a safe FTS5 query from a natural language message.
     /// Extracts significant terms, removes FTS operators and stop words.
-    private func buildFTSQuery(from message: String) -> String {
+    /// Internal (not private) to allow unit testing from the test target.
+    func buildFTSQuery(from message: String) -> String {
         // Strip FTS5 special characters
         let cleaned = message.lowercased()
             .replacingOccurrences(of: "\"", with: " ")
@@ -349,6 +350,9 @@ final class MemoryService {
             .replacingOccurrences(of: ")", with: " ")
             .replacingOccurrences(of: "-", with: " ")
             .replacingOccurrences(of: ":", with: " ")
+            .replacingOccurrences(of: "^", with: " ")
+            .replacingOccurrences(of: "{", with: " ")
+            .replacingOccurrences(of: "}", with: " ")
             .replacingOccurrences(of: "'", with: "")
 
         let words = cleaned
@@ -374,5 +378,10 @@ final class MemoryService {
             """, arguments: [name]) ?? false
         Self.tableExistsCache[name] = exists
         return exists
+    }
+
+    /// Reset the table-exists cache — used by tests to ensure fresh state between runs.
+    static func resetTableExistsCache() {
+        tableExistsCache.removeAll()
     }
 }

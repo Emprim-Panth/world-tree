@@ -32,7 +32,9 @@ final class AuthRateLimiter {
         purgeExpired(for: ip, now: now)
         windows[ip, default: []].append(now)
         let count = windows[ip]?.count ?? 0
-        wtLog("[AuthRateLimiter] Auth failure from \(ip) — \(count)/\(Self.maxFailures) in window")
+        if count == 1 || count >= Self.maxFailures {
+            wtLog("[AuthRateLimiter] Auth failure from \(ip) — \(count)/\(Self.maxFailures) in window")
+        }
         return count >= Self.maxFailures
     }
 

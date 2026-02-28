@@ -215,17 +215,56 @@ final class TreeStore {
     }
 
     /// Executes the cascade delete for a single tree inside an already-open GRDB write transaction.
-    /// FK-safe order: messages → canvas_branches → sessions → canvas_trees
+    /// FK-safe order: dependent tables → messages → canvas_branches → sessions → canvas_trees
     private static func deleteTreeContents(db: Database, treeId: String) throws {
-        // Collect session IDs before any deletes (branches are the FK source)
-        let sessionRows = try Row.fetchAll(
+        // Collect branch IDs and session IDs before any deletes
+        let branchRows = try Row.fetchAll(
             db,
-            sql: "SELECT session_id FROM canvas_branches WHERE tree_id = ?",
+            sql: "SELECT id, session_id FROM canvas_branches WHERE tree_id = ?",
             arguments: [treeId]
         )
-        let sessionIds: [String] = sessionRows.compactMap { $0["session_id"] }
+        let branchIds: [String] = branchRows.compactMap { $0["id"] }
+        let sessionIds: [String] = branchRows.compactMap { $0["session_id"] }
 
-        // 1. Delete messages (references sessions via session_id)
+        // 1. Delete from tables that reference branch_id or session_id
+        //    These must go first while the IDs still exist in canvas_branches.
+        if !branchIds.isEmpty {
+            let branchPlaceholders = branchIds.map { _ in "?" }.joined(separator: ", ")
+            let branchArgs = StatementArguments(branchIds)
+
+            try db.execute(
+                sql: "DELETE FROM canvas_token_usage WHERE branch_id IN (\(branchPlaceholders))",
+                arguments: branchArgs
+            )
+            try db.execute(
+                sql: "DELETE FROM canvas_events WHERE branch_id IN (\(branchPlaceholders))",
+                arguments: branchArgs
+            )
+            try db.execute(
+                sql: "DELETE FROM canvas_context_checkpoints WHERE branch_id IN (\(branchPlaceholders))",
+                arguments: branchArgs
+            )
+            try db.execute(
+                sql: "DELETE FROM canvas_screenshots WHERE branch_id IN (\(branchPlaceholders))",
+                arguments: branchArgs
+            )
+            try db.execute(
+                sql: "DELETE FROM canvas_dispatches WHERE branch_id IN (\(branchPlaceholders))",
+                arguments: branchArgs
+            )
+        }
+
+        if !sessionIds.isEmpty {
+            let sessionPlaceholders = sessionIds.map { _ in "?" }.joined(separator: ", ")
+            let sessionArgs = StatementArguments(sessionIds)
+
+            try db.execute(
+                sql: "DELETE FROM canvas_cli_sessions WHERE canvas_session_id IN (\(sessionPlaceholders))",
+                arguments: sessionArgs
+            )
+        }
+
+        // 2. Delete messages (references sessions via session_id)
         if !sessionIds.isEmpty {
             let placeholders = sessionIds.map { _ in "?" }.joined(separator: ", ")
             try db.execute(
@@ -234,10 +273,11 @@ final class TreeStore {
             )
         }
 
-        // 2. Delete canvas_branches (references sessions and canvas_trees)
+        // 3. Delete canvas_branches (references sessions and canvas_trees)
+        //    This also fires cascade triggers for canvas_branch_tags and canvas_api_state.
         try db.execute(sql: "DELETE FROM canvas_branches WHERE tree_id = ?", arguments: [treeId])
 
-        // 3. Delete sessions (now safe — no branches reference them)
+        // 4. Delete sessions (now safe — no branches reference them)
         if !sessionIds.isEmpty {
             let placeholders = sessionIds.map { _ in "?" }.joined(separator: ", ")
             try db.execute(
@@ -246,7 +286,7 @@ final class TreeStore {
             )
         }
 
-        // 4. Delete the tree (now safe — no branches reference it)
+        // 5. Delete the tree (now safe — no branches reference it)
         try db.execute(sql: "DELETE FROM canvas_trees WHERE id = ?", arguments: [treeId])
     }
 
@@ -380,27 +420,53 @@ final class TreeStore {
                 )
             }
 
-            // Delete messages for this branch's session
-            try db.execute(
-                sql: """
-                    DELETE FROM messages WHERE session_id = (
-                        SELECT session_id FROM canvas_branches WHERE id = ?
-                    )
-                    """,
-                arguments: [id]
-            )
-
-            // Capture session_id before deleting the branch (FK-safe order)
+            // Capture session_id before any deletes (FK-safe order)
             let sessionId: String? = try String.fetchOne(
                 db,
                 sql: "SELECT session_id FROM canvas_branches WHERE id = ?",
                 arguments: [id]
             )
 
-            // Delete the branch first (references sessions via FK)
+            // Delete from dependent tables that reference branch_id or session_id
+            try db.execute(
+                sql: "DELETE FROM canvas_token_usage WHERE branch_id = ?",
+                arguments: [id]
+            )
+            try db.execute(
+                sql: "DELETE FROM canvas_events WHERE branch_id = ?",
+                arguments: [id]
+            )
+            try db.execute(
+                sql: "DELETE FROM canvas_context_checkpoints WHERE branch_id = ?",
+                arguments: [id]
+            )
+            try db.execute(
+                sql: "DELETE FROM canvas_screenshots WHERE branch_id = ?",
+                arguments: [id]
+            )
+            try db.execute(
+                sql: "DELETE FROM canvas_dispatches WHERE branch_id = ?",
+                arguments: [id]
+            )
+            if let sessionId {
+                try db.execute(
+                    sql: "DELETE FROM canvas_cli_sessions WHERE canvas_session_id = ?",
+                    arguments: [sessionId]
+                )
+            }
+
+            // Delete messages for this branch's session
+            if let sessionId {
+                try db.execute(
+                    sql: "DELETE FROM messages WHERE session_id = ?",
+                    arguments: [sessionId]
+                )
+            }
+
+            // Delete the branch (fires cascade triggers for canvas_branch_tags + canvas_api_state)
             try db.execute(sql: "DELETE FROM canvas_branches WHERE id = ?", arguments: [id])
 
-            // Then delete the session (now safe — no branches reference it)
+            // Delete the session (now safe — no branches reference it)
             if let sessionId {
                 try db.execute(
                     sql: "DELETE FROM sessions WHERE id = ?",

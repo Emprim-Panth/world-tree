@@ -532,7 +532,7 @@ struct SettingsView: View {
     private var remoteTab: some View {
         Form {
             Section("Connect to Studio") {
-                Text("When enabled, all messages are sent to your Mac Studio's World Tree hub. The UI is identical — tokens stream in real time. The UI is identical — tokens stream in real time.")
+                Text("When enabled, all messages are sent to your Mac Studio's World Tree hub. The UI is identical — tokens stream in real time.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
