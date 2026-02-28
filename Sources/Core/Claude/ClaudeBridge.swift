@@ -220,6 +220,16 @@ final class ClaudeBridge {
             context.recentContext = existing.isEmpty ? projectContext : "\(projectContext)\n\n\(existing)"
         }
 
+        // Inject cross-session memory for legacy callers (WorldTreeServer, WS handler)
+        // that don't go through DocumentEditorViewModel's memory injection.
+        let memory = MemoryService.shared.recallForMessage(
+            message, project: project, sessionId: sessionId
+        )
+        if !memory.isEmpty {
+            let existing = context.recentContext ?? ""
+            context.recentContext = existing.isEmpty ? memory : "\(existing)\n\n\(memory)"
+        }
+
         wtLog("[ClaudeBridge] routing to \(ProviderManager.shared.activeProviderName), session=\(sessionId), parent=\(parentSessionId ?? "none")")
         return ProviderManager.shared.send(context: context)
     }

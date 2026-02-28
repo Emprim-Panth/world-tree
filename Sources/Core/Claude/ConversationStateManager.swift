@@ -61,10 +61,12 @@ final class ConversationStateManager {
             blocks.append(SystemBlock(text: projectContext, cached: true))
         }
 
-        // 4. Recent session context (cross-terminal conversation history)
-        let sessionContext = await loadRecentSessionContext()
-        if !sessionContext.isEmpty {
-            blocks.append(SystemBlock(text: sessionContext, cached: false))
+        // 4. Cross-session memory (past conversations + knowledge base)
+        let memory = MemoryService.shared.recallForMessage(
+            "", project: project, sessionId: sessionId
+        )
+        if !memory.isEmpty {
+            blocks.append(SystemBlock(text: memory, cached: false))
         }
 
         // 5. Active terminal output (last ~60 lines from the branch's PTY — NOT cached)
@@ -502,59 +504,11 @@ final class ConversationStateManager {
         return output
     }
 
-    // MARK: - Session Context
+    // MARK: - Session Context (DEPRECATED — replaced by MemoryService)
 
-    /// Load recent session context from conversations.db (async to avoid blocking MainActor)
-    private func loadRecentSessionContext() async -> String {
-        let dbPath = UserDefaults.standard.string(forKey: "databasePath").flatMap { $0.isEmpty ? nil : $0 }
-            ?? AppConstants.databasePath
-        guard FileManager.default.fileExists(atPath: dbPath) else { return "" }
-
-        let restorePath = "\(home)/.cortana/bin/cortana-context-restore"
-        guard FileManager.default.fileExists(atPath: restorePath) else { return "" }
-
-        let outputPath = "\(home)/.cortana/state/session-context.md"
-
-        let success: Bool = await withCheckedContinuation { continuation in
-            let resumeGuard = OneShotGuard()
-
-            @Sendable func safeResume(_ value: Bool) {
-                guard resumeGuard.tryFire() else { return }
-                continuation.resume(returning: value)
-            }
-
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: restorePath)
-            proc.standardOutput = FileHandle.nullDevice
-            proc.standardError = FileHandle.nullDevice
-
-            let timeoutWork = DispatchWorkItem { [weak proc] in
-                if let proc, proc.isRunning { proc.terminate() }
-                safeResume(false)
-            }
-            DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(5), execute: timeoutWork)
-
-            proc.terminationHandler = { process in
-                timeoutWork.cancel()
-                safeResume(process.terminationStatus == 0)
-            }
-
-            do {
-                try proc.run()
-            } catch {
-                timeoutWork.cancel()
-                safeResume(false)
-            }
-        }
-
-        if success,
-           let context = try? String(contentsOfFile: outputPath, encoding: .utf8),
-           !context.isEmpty {
-            return "[Recent Session Context]\n\(context)"
-        }
-
-        return ""
-    }
+    // loadRecentSessionContext() removed — was spawning cortana-context-restore Python
+    // script that wrote stale session-context.md files. Replaced by MemoryService.shared
+    // which queries FTS5 indexes directly via GRDB, in-process, with <50ms latency.
 
 
     // MARK: - Persistence

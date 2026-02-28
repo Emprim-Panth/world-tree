@@ -1062,6 +1062,21 @@ class DocumentEditorViewModel: ObservableObject {
                 URL(fileURLWithPath: $0).lastPathComponent
             } ?? cachedProject
 
+            // Inject cross-session memory from past conversations + knowledge base
+            let memoryBlock = MemoryService.shared.recallForMessage(
+                content,
+                project: resolvedProject,
+                sessionId: sessionId
+            )
+            let enrichedContext: String?
+            if let recent = recentContext, !memoryBlock.isEmpty {
+                enrichedContext = "\(recent)\n\n\(memoryBlock)"
+            } else if !memoryBlock.isEmpty {
+                enrichedContext = memoryBlock
+            } else {
+                enrichedContext = recentContext
+            }
+
             let extendedThinking = UserDefaults.standard.bool(forKey: "extendedThinkingEnabled")
             let ctx = ProviderSendContext(
                 message: content,
@@ -1073,7 +1088,7 @@ class DocumentEditorViewModel: ObservableObject {
                 parentSessionId: cachedParentSessionId,
                 isNewSession: isNew,
                 attachments: attachments,
-                recentContext: recentContext,
+                recentContext: enrichedContext,
                 extendedThinking: extendedThinking
             )
 
