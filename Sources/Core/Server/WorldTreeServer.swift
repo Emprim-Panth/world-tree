@@ -526,15 +526,19 @@ final class WorldTreeServer: ObservableObject {
         // Open SSE stream
         sendSSEHeader(connection)
 
-        let ctx = ProviderSendContext(
+        // Resolve working directory from tree metadata
+        let treeWorkingDir: String? = {
+            guard let tree = try? TreeStore.shared.getTree(resolved.treeId) else { return nil }
+            return tree.workingDirectory
+        }()
+
+        // Build fully-enriched context (ConversationScorer + MemoryService + project context)
+        let ctx = SendContextBuilder.build(
             message: content,
             sessionId: resolved.sessionId,
             branchId: resolved.branchId,
-            model: AppConstants.defaultModel,
-            workingDirectory: nil,
-            project: project,
-            parentSessionId: nil,
-            isNewSession: resolved.isNew
+            workingDirectory: treeWorkingDir,
+            project: project
         )
 
         var fullResponse = ""

@@ -1047,77 +1047,20 @@ class DocumentEditorViewModel: ObservableObject {
             let rotationCheckpoint = checkpointContext
             checkpointContext = nil
 
-            let allSections = document.sections
-            let maxAdditional = isSessionStale ? 20 : 4   // 24 total stale, 8 total active
-            let contextSections = ConversationScorer.select(
-                sections: allSections,
-                query: content,
-                mandatoryCount: 4,
-                maxAdditional: maxAdditional
-            )
-
-            let recentContext: String? = {
-                // If the session was just rotated, the checkpoint is the most accurate
-                // summary of the full conversation. Use it as primary context.
-                if let checkpoint = rotationCheckpoint {
-                    wtLog("[DocumentEditor] Using rotation checkpoint as context (\(checkpoint.count) chars)")
-                    return "CONTEXT CHECKPOINT (conversation was compacted — use this as your memory of earlier work):\n"
-                        + checkpoint
-                        + "\nEND CHECKPOINT"
-                }
-                guard !contextSections.isEmpty else { return nil }
-                let lines = contextSections.map { section -> String in
-                    let role: String
-                    switch section.author {
-                    case .user: role = "You"
-                    case .assistant: role = LocalAgentIdentity.name
-                    case .system: role = "System"
-                    }
-                    let text = String(section.content.characters.prefix(1000))
-                    return "[\(role)]: \(text)"
-                }
-                if isSessionStale {
-                    wtLog("[DocumentEditor] Stale session — injecting \(contextSections.count) turns")
-                }
-                return "CONVERSATION CONTEXT (recent history — use if session memory is unclear):\n"
-                    + lines.joined(separator: "\n\n")
-                    + "\nEND CONTEXT"
-            }()
-
             // Branch working directory takes priority; fall back to sidebar-selected project.
             let resolvedWorkingDir = workingDirectory ?? AppState.shared.selectedProjectPath
-            let resolvedProject = resolvedWorkingDir.flatMap {
-                URL(fileURLWithPath: $0).lastPathComponent
-            } ?? cachedProject
 
-            // Inject cross-session memory from past conversations + knowledge base
-            let memoryBlock = MemoryService.shared.recallForMessage(
-                content,
-                project: resolvedProject,
-                sessionId: sessionId
-            )
-            let enrichedContext: String?
-            if let recent = recentContext, !memoryBlock.isEmpty {
-                enrichedContext = "\(recent)\n\n\(memoryBlock)"
-            } else if !memoryBlock.isEmpty {
-                enrichedContext = memoryBlock
-            } else {
-                enrichedContext = recentContext
-            }
-
-            let extendedThinking = UserDefaults.standard.bool(forKey: AppConstants.extendedThinkingEnabledKey)
-            let ctx = ProviderSendContext(
+            let ctx = SendContextBuilder.build(
                 message: content,
                 sessionId: sessionId,
                 branchId: branchId,
                 model: model,
                 workingDirectory: resolvedWorkingDir,
-                project: resolvedProject,
-                parentSessionId: cachedParentSessionId,
-                isNewSession: isNew,
-                attachments: attachments,
-                recentContext: enrichedContext,
-                extendedThinking: extendedThinking
+                project: cachedProject,
+                checkpointContext: rotationCheckpoint,
+                sections: document.sections,
+                isSessionStale: isSessionStale,
+                attachments: attachments
             )
 
             // 4. Stream response through ClaudeBridge — routes via daemon channel if available,

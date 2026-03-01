@@ -193,44 +193,17 @@ final class ClaudeBridge {
         project: String?,
         checkpointContext: String?
     ) -> AsyncStream<BridgeEvent> {
-        // Resolve parent session for fork/resume inheritance
-        let parentSessionId = resolveParentSessionId(branchId: branchId)
-        let isNewSession = !hasExistingSession(sessionId: sessionId)
-
-        let thinkingEnabled = UserDefaults.standard.bool(forKey: AppConstants.extendedThinkingEnabledKey)
-        let cwd = workingDirectory ?? resolveWorkingDirectory(nil, project: project)
-
-        var context = ProviderSendContext(
+        let context = SendContextBuilder.build(
             message: message,
             sessionId: sessionId,
             branchId: branchId,
             model: model,
-            workingDirectory: cwd,
+            workingDirectory: workingDirectory,
             project: project,
-            parentSessionId: parentSessionId,
-            isNewSession: isNewSession,
-            extendedThinking: thinkingEnabled
+            checkpointContext: checkpointContext
         )
-        context.checkpointContext = checkpointContext
 
-        // Inject project context for CLI providers (AnthropicAPI does its own via ConversationStateManager)
-        let projectContext = loadProjectContextSync(project: project, workingDirectory: cwd)
-        if !projectContext.isEmpty {
-            let existing = context.recentContext ?? ""
-            context.recentContext = existing.isEmpty ? projectContext : "\(projectContext)\n\n\(existing)"
-        }
-
-        // Inject cross-session memory for legacy callers (WorldTreeServer, WS handler)
-        // that don't go through DocumentEditorViewModel's memory injection.
-        let memory = MemoryService.shared.recallForMessage(
-            message, project: project, sessionId: sessionId
-        )
-        if !memory.isEmpty {
-            let existing = context.recentContext ?? ""
-            context.recentContext = existing.isEmpty ? memory : "\(existing)\n\n\(memory)"
-        }
-
-        wtLog("[ClaudeBridge] routing to \(ProviderManager.shared.activeProviderName), session=\(sessionId), parent=\(parentSessionId ?? "none")")
+        wtLog("[ClaudeBridge] routing to \(ProviderManager.shared.activeProviderName), session=\(sessionId), parent=\(context.parentSessionId ?? "none")")
         return ProviderManager.shared.send(context: context)
     }
 
@@ -321,23 +294,6 @@ final class ClaudeBridge {
             output += "\n## README\n\(readme)\n"
         }
         return output
-    }
-
-    // MARK: - Helpers
-
-    /// Look up the parent branch's session ID for context inheritance
-    private func resolveParentSessionId(branchId: String) -> String? {
-        guard let branch = try? TreeStore.shared.getBranch(branchId),
-              let parentBranchId = branch.parentBranchId,
-              let parentBranch = try? TreeStore.shared.getBranch(parentBranchId) else {
-            return nil
-        }
-        return parentBranch.sessionId
-    }
-
-    /// Check if a session already has messages (determines isNewSession)
-    private func hasExistingSession(sessionId: String) -> Bool {
-        MessageStore.shared.hasMessages(sessionId: sessionId)
     }
 
 }
