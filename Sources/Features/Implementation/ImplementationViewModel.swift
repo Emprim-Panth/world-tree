@@ -172,9 +172,16 @@ final class ImplementationViewModel: ObservableObject {
                 activate
             end tell
             """
-        if let appleScript = NSAppleScript(source: script) {
-            var error: NSDictionary?
-            appleScript.executeAndReturnError(&error)
+        guard let appleScript = NSAppleScript(source: script) else {
+            wtLog("[ImplementationViewModel] Failed to compile AppleScript for openInTerminal")
+            return
+        }
+        var error: NSDictionary?
+        appleScript.executeAndReturnError(&error)
+        if let error {
+            let message = error[NSAppleScript.errorMessage] as? String ?? "Unknown AppleScript error"
+            let code = error[NSAppleScript.errorNumber] as? Int ?? -1
+            wtLog("[ImplementationViewModel] AppleScript error (\(code)): \(message)")
         }
     }
 

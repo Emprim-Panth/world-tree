@@ -94,8 +94,22 @@ final class AnthropicAPIProvider: LLMProvider {
                     let kbContext = await self.queryKnowledgeBase(message: context.message)
                     state.appendKBContext(kbContext)
 
+                    // Build effective message — prepend checkpoint context if session was rotated
+                    let effectiveMessage: String
+                    if let checkpoint = context.checkpointContext, !checkpoint.isEmpty {
+                        effectiveMessage = """
+                            [Context carried forward from previous session — continue seamlessly]
+                            \(checkpoint)
+
+                            [New message]
+                            \(context.message)
+                            """
+                    } else {
+                        effectiveMessage = context.message
+                    }
+
                     // Add user message (with any image/file attachments)
-                    state.addUserMessage(context.message, attachments: context.attachments)
+                    state.addUserMessage(effectiveMessage, attachments: context.attachments)
 
                     let selectedModel = context.model ?? AppConstants.defaultModel
                     let cwd = resolveWorkingDirectory(context.workingDirectory, project: context.project)

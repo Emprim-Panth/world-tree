@@ -333,6 +333,7 @@ final class TreeStore {
                 status: .active,
                 model: model,
                 contextSnapshot: contextSnapshot,
+                compactionMode: .auto,
                 collapsed: false,
                 createdAt: Date(),
                 updatedAt: Date()

@@ -45,6 +45,19 @@ enum SessionRotator {
             return nil
         }
 
+        // Check per-branch compaction mode
+        let mode = branchCompactionMode(branchId: branchId)
+        switch mode {
+        case .frozen:
+            wtLog("[SessionRotator] Branch \(branchId.prefix(8))… compaction frozen — skipping rotation")
+            return nil
+        case .manual:
+            wtLog("[SessionRotator] Branch \(branchId.prefix(8))… compaction manual — skipping auto-rotation (pressure: \(level.rawValue))")
+            return nil
+        case .auto:
+            break
+        }
+
         wtLog("[SessionRotator] Pressure \(level.rawValue) (\(tokens) est. tokens) — rotating session \(sessionId)")
         return await performRotation(
             sessionId: sessionId,
@@ -169,6 +182,35 @@ enum SessionRotator {
             wtLog("[SessionRotator] Snapshot checkpoint written for \(sessionId.prefix(8))… (\(summary.count) chars, \(messageCount) turns)")
         } catch {
             wtLog("[SessionRotator] Failed to write snapshot: \(error)")
+        }
+    }
+
+    // MARK: - Compaction Mode
+
+    /// Read compaction mode for a branch from DB.
+    static func branchCompactionMode(branchId: String) -> CompactionMode {
+        (try? DatabaseManager.shared.read { db in
+            let raw: String? = try Row.fetchOne(
+                db,
+                sql: "SELECT compaction_mode FROM canvas_branches WHERE id = ?",
+                arguments: [branchId]
+            )?["compaction_mode"]
+            return CompactionMode(rawValue: raw ?? "auto") ?? .auto
+        }) ?? .auto
+    }
+
+    /// Update compaction mode for a branch.
+    static func setCompactionMode(_ mode: CompactionMode, branchId: String) {
+        do {
+            try DatabaseManager.shared.write { db in
+                try db.execute(
+                    sql: "UPDATE canvas_branches SET compaction_mode = ? WHERE id = ?",
+                    arguments: [mode.rawValue, branchId]
+                )
+            }
+            wtLog("[SessionRotator] Set compaction mode to '\(mode.rawValue)' for branch \(branchId.prefix(8))…")
+        } catch {
+            wtLog("[SessionRotator] Failed to update compaction mode: \(error)")
         }
     }
 

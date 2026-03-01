@@ -636,6 +636,11 @@ enum MigrationManager {
             try db.execute(sql: "ALTER TABLE canvas_token_usage ADD COLUMN model TEXT")
         }
 
+        // Migration 20: Per-branch compaction mode
+        migrator.registerMigration("v20_compaction_mode") { db in
+            try db.execute(sql: "ALTER TABLE canvas_branches ADD COLUMN compaction_mode TEXT DEFAULT 'auto'")
+        }
+
         try migrator.migrate(dbPool)
     }
 }

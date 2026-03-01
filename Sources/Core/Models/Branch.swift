@@ -14,6 +14,16 @@ enum BranchStatus: String, Codable, CaseIterable, DatabaseValueConvertible {
     case failed
 }
 
+/// Controls how context compaction behaves for a branch.
+enum CompactionMode: String, Codable, CaseIterable, DatabaseValueConvertible {
+    /// Automatic rotation when context pressure exceeds threshold (default)
+    case auto
+    /// Show warning at threshold but don't rotate until user confirms
+    case manual
+    /// Never rotate — context grows until provider limit
+    case frozen
+}
+
 struct Branch: Identifiable, Equatable, Hashable {
     let id: String
     let treeId: String
@@ -28,6 +38,7 @@ struct Branch: Identifiable, Equatable, Hashable {
     var daemonTaskId: String?
     var contextSnapshot: String?
     var tmuxSessionName: String?
+    var compactionMode: CompactionMode
     var collapsed: Bool
     var createdAt: Date
     var updatedAt: Date
@@ -68,6 +79,7 @@ extension Branch: FetchableRecord {
         daemonTaskId = row["daemon_task_id"]
         contextSnapshot = row["context_snapshot"]
         tmuxSessionName = row["tmux_session_name"]
+        compactionMode = CompactionMode(rawValue: row["compaction_mode"] as? String ?? "auto") ?? .auto
         collapsed = (row["collapsed"] as? Int ?? 0) != 0
         createdAt = row["created_at"] as? Date ?? Date()
         updatedAt = row["updated_at"] as? Date ?? Date()
@@ -91,6 +103,7 @@ extension Branch: PersistableRecord {
         container["daemon_task_id"] = daemonTaskId
         container["context_snapshot"] = contextSnapshot
         container["tmux_session_name"] = tmuxSessionName
+        container["compaction_mode"] = compactionMode
         container["collapsed"] = collapsed ? 1 : 0
         container["created_at"] = createdAt
         container["updated_at"] = updatedAt

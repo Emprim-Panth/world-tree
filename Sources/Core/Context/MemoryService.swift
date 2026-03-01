@@ -1,12 +1,23 @@
 import Foundation
 import GRDB
 
+/// Thread-safe box for passing a String result between queues.
+/// @unchecked Sendable because access is synchronized via DispatchSemaphore
+/// (write happens-before signal, read happens-after wait).
+private final class RecallResultBox: @unchecked Sendable {
+    var value: String = ""
+}
+
 /// Cross-session memory recall — searches conversation archive, knowledge base,
 /// and recent session summaries to build contextual memory blocks injected into
 /// every message send. This gives Claude awareness of past conversations.
 ///
 /// Token-budget aware (~2000 tokens / ~8000 chars max). Degrades gracefully
 /// if tables are missing or queries fail.
+///
+/// The heavy DB/FTS work runs on a background queue with a 200ms timeout so
+/// slow queries never block the UI thread. On timeout, recall returns an empty
+/// string and the message sends without cross-session memory.
 @MainActor
 final class MemoryService {
     static let shared = MemoryService()
@@ -19,11 +30,22 @@ final class MemoryService {
     /// Maximum characters per individual snippet
     private let maxSnippetChars = 400
 
-    /// Cache for tableExists checks — once a table exists, it won't disappear mid-session
-    private static var tableExistsCache: [String: Bool] = [:]
+    /// How long to wait for DB recall before giving up (milliseconds)
+    private nonisolated static let recallTimeoutMs: Int = 200
 
-    /// FTS stop words — static to avoid re-allocating 100+ strings per call
-    private static let stopWords: Set<String> = [
+    /// Background queue for DB recall work — serial to avoid contention
+    private nonisolated static let recallQueue = DispatchQueue(label: "com.worldtree.memoryservice.recall", qos: .userInitiated)
+
+    /// Cache for tableExists checks — once a table exists, it won't disappear mid-session.
+    /// Protected by cacheLock since it's accessed from the background recall queue.
+    /// Marked nonisolated(unsafe) so the nonisolated static methods can access them —
+    /// thread safety is guaranteed by cacheLock.
+    nonisolated(unsafe) private static var tableExistsCache: [String: Bool] = [:]
+    private nonisolated static let cacheLock = NSLock()
+
+    /// FTS stop words — static to avoid re-allocating 100+ strings per call.
+    /// Nonisolated since it's immutable and accessed from the background recall queue.
+    private nonisolated static let stopWords: Set<String> = [
         "the", "a", "an", "is", "are", "was", "were", "be", "been",
         "being", "have", "has", "had", "do", "does", "did", "will",
         "would", "could", "should", "may", "might", "can", "shall",
@@ -47,26 +69,84 @@ final class MemoryService {
 
     /// Build a memory block combining recent activity + relevant past conversations.
     ///
+    /// Dispatches the DB work to a background queue and waits up to 200ms.
+    /// If the query takes longer, returns empty string so the message send is
+    /// never blocked by slow memory recall.
+    ///
     /// - Parameters:
     ///   - message: The user's current message (used for FTS query terms)
     ///   - project: Current project name (for priority filtering)
     ///   - sessionId: Current session ID (excluded from results)
-    /// - Returns: Formatted `<memory>` block, or empty string if nothing found
+    /// - Returns: Formatted `<memory>` block, or empty string if nothing found or timed out
     func recallForMessage(
         _ message: String,
         project: String?,
         sessionId: String
     ) -> String {
-        let startTime = CFAbsoluteTimeGetCurrent()
+        guard let dbPool = db.dbPool else { return "" }
 
+        let maxChars = maxMemoryChars
+        let maxSnippet = maxSnippetChars
+        let timeoutMs = Self.recallTimeoutMs
+
+        // Thread-safe box for passing the result back from the background queue.
+        // Sendable because the lock guarantees exclusive access.
+        let box = RecallResultBox()
+        let semaphore = DispatchSemaphore(value: 0)
+
+        Self.recallQueue.async {
+            let startTime = CFAbsoluteTimeGetCurrent()
+
+            let output = Self.performRecall(
+                dbPool: dbPool,
+                message: message,
+                project: project,
+                sessionId: sessionId,
+                maxMemoryChars: maxChars,
+                maxSnippetChars: maxSnippet
+            )
+
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+
+            if !output.isEmpty {
+                wtLog("[MemoryService] recall: \(output.count) chars in \(Int(elapsed))ms")
+            }
+
+            box.value = output
+            semaphore.signal()
+        }
+
+        let timeout = DispatchTime.now() + .milliseconds(timeoutMs)
+        if semaphore.wait(timeout: timeout) == .timedOut {
+            wtLog("[MemoryService] recall timed out after \(timeoutMs)ms, sending without cross-session memory")
+            return ""
+        }
+
+        return box.value
+    }
+
+    // MARK: - Background Recall (nonisolated)
+
+    /// Performs the actual DB recall work. Runs on the background recall queue.
+    /// All parameters are passed by value — no actor-isolated state accessed.
+    private nonisolated static func performRecall(
+        dbPool: DatabasePool,
+        message: String,
+        project: String?,
+        sessionId: String,
+        maxMemoryChars: Int,
+        maxSnippetChars: Int
+    ) -> String {
         var sections: [String] = []
         var charBudget = maxMemoryChars
 
         // 1. Recent activity summary (always included — cheap, high value)
         let activity = recentActivitySummary(
+            dbPool: dbPool,
             project: project,
             excludeSession: sessionId,
-            charBudget: charBudget / 2
+            charBudget: charBudget / 2,
+            maxSnippetChars: maxSnippetChars
         )
         if !activity.isEmpty {
             sections.append("## Recent Activity\n\(activity)")
@@ -76,36 +156,35 @@ final class MemoryService {
         // 2. FTS-matched past conversations (query-dependent)
         if charBudget > 500 && !message.isEmpty {
             let relevant = searchRelevantContext(
+                dbPool: dbPool,
                 query: message,
                 project: project,
                 excludeSession: sessionId,
-                charBudget: charBudget
+                charBudget: charBudget,
+                maxSnippetChars: maxSnippetChars
             )
             if !relevant.isEmpty {
                 sections.append("## Relevant Past Conversations\n\(relevant)")
             }
         }
 
-        let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
-
         guard !sections.isEmpty else { return "" }
-
-        let result = "<memory>\n\(sections.joined(separator: "\n\n"))\n</memory>"
-        wtLog("[MemoryService] recall: \(result.count) chars in \(Int(elapsed))ms")
-        return result
+        return "<memory>\n\(sections.joined(separator: "\n\n"))\n</memory>"
     }
 
     // MARK: - Recent Activity Summary
 
     /// Last N sessions' summaries from conversation_archive.
     /// Project-prioritized: current project's sessions come first.
-    private func recentActivitySummary(
+    private nonisolated static func recentActivitySummary(
+        dbPool: DatabasePool,
         project: String?,
         excludeSession: String,
-        charBudget: Int
+        charBudget: Int,
+        maxSnippetChars: Int
     ) -> String {
         do {
-            return try db.read { db -> String in
+            return try dbPool.read { db -> String in
                 // Check table exists
                 guard try tableExists(db, name: "conversation_archive") else { return "" }
 
@@ -172,17 +251,19 @@ final class MemoryService {
     // MARK: - Relevant Context Search (FTS5)
 
     /// Search conversation_archive_fts and knowledge_fts for content matching the query.
-    private func searchRelevantContext(
+    private nonisolated static func searchRelevantContext(
+        dbPool: DatabasePool,
         query: String,
         project: String?,
         excludeSession: String,
-        charBudget: Int
+        charBudget: Int,
+        maxSnippetChars: Int
     ) -> String {
         let ftsQuery = buildFTSQuery(from: query)
         guard !ftsQuery.isEmpty else { return "" }
 
         do {
-            return try db.read { db -> String in
+            return try dbPool.read { db -> String in
                 var results: [String] = []
                 var remaining = charBudget
                 let halfBudget = charBudget / 2
@@ -240,7 +321,7 @@ final class MemoryService {
         let content: String
     }
 
-    private func searchArchiveFTS(
+    private nonisolated static func searchArchiveFTS(
         db: Database,
         query: String,
         excludeSession: String,
@@ -272,7 +353,7 @@ final class MemoryService {
         }
     }
 
-    private func searchKnowledgeFTS(
+    private nonisolated static func searchKnowledgeFTS(
         db: Database,
         query: String,
         limit: Int
@@ -341,7 +422,13 @@ final class MemoryService {
     /// Build a safe FTS5 query from a natural language message.
     /// Extracts significant terms, removes FTS operators and stop words.
     /// Internal (not private) to allow unit testing from the test target.
+    /// Instance convenience that delegates to the static implementation.
     func buildFTSQuery(from message: String) -> String {
+        Self.buildFTSQuery(from: message)
+    }
+
+    /// Static implementation — callable from both the main actor and background queue.
+    nonisolated static func buildFTSQuery(from message: String) -> String {
         // Strip FTS5 special characters
         let cleaned = message.lowercased()
             .replacingOccurrences(of: "\"", with: " ")
@@ -357,7 +444,7 @@ final class MemoryService {
 
         let words = cleaned
             .components(separatedBy: .whitespacesAndNewlines)
-            .filter { $0.count >= 3 && !Self.stopWords.contains($0) }
+            .filter { $0.count >= 3 && !stopWords.contains($0) }
 
         var seen = Set<String>()
         let terms = words.filter { seen.insert($0).inserted }.prefix(8)
@@ -368,20 +455,33 @@ final class MemoryService {
 
     // MARK: - Utilities
 
-    private func tableExists(_ db: Database, name: String) throws -> Bool {
-        if let cached = Self.tableExistsCache[name] {
+    /// Thread-safe table existence check with caching.
+    /// Uses NSLock since this is called from the background recall queue.
+    private nonisolated static func tableExists(_ db: Database, name: String) throws -> Bool {
+        cacheLock.lock()
+        let cached = tableExistsCache[name]
+        cacheLock.unlock()
+
+        if let cached {
             return cached
         }
+
         let exists = try Bool.fetchOne(db, sql: """
             SELECT COUNT(*) > 0 FROM sqlite_master
             WHERE type = 'table' AND name = ?
             """, arguments: [name]) ?? false
-        Self.tableExistsCache[name] = exists
+
+        cacheLock.lock()
+        tableExistsCache[name] = exists
+        cacheLock.unlock()
+
         return exists
     }
 
     /// Reset the table-exists cache — used by tests to ensure fresh state between runs.
     static func resetTableExistsCache() {
+        cacheLock.lock()
         tableExistsCache.removeAll()
+        cacheLock.unlock()
     }
 }

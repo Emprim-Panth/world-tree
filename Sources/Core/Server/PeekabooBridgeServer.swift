@@ -41,6 +41,12 @@ final class PeekabooBridgeServer {
         guard !isRunning else { lock.unlock(); return }
         lock.unlock()
 
+        // Request Screen Recording permission if not already granted.
+        // Deferred here from app startup — only needed when the bridge actually starts.
+        if !CGPreflightScreenCaptureAccess() {
+            CGRequestScreenCaptureAccess()
+        }
+
         // Clean up stale socket from a previous run.
         try? FileManager.default.removeItem(atPath: socketPath)
 

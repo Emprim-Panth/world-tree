@@ -1,8 +1,6 @@
+import ApplicationServices
 import Foundation
 import UserNotifications
-import AVFoundation
-import Speech
-import CoreGraphics
 
 /// Manages system permission requests — checks and requests on every launch.
 ///
@@ -21,6 +19,9 @@ actor PermissionsService {
     ///
     /// Always wires the notification delegate (required every launch for notification taps).
     /// Checks all permission statuses and requests any that are not yet granted.
+    ///
+    /// Voice permissions are deferred to first use (VoiceControlViewModel.toggleListening).
+    /// Screen Recording is deferred to PeekabooBridgeServer.start() — only needed for capture.
     func setup() async {
         // Notification delegate must be registered on every launch — not just first.
         await MainActor.run {
@@ -28,8 +29,6 @@ actor PermissionsService {
         }
 
         await requestNotificationsIfNeeded()
-        _ = await VoiceService.shared.requestPermissions()
-        requestScreenRecordingIfNeeded()
         requestAccessibilityIfNeeded()
     }
 
@@ -39,16 +38,6 @@ actor PermissionsService {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         guard settings.authorizationStatus == .notDetermined else { return }
         await NotificationManager.shared.requestAuthorization()
-    }
-
-    // MARK: - Screen Recording
-
-    /// Requests Screen Recording access if not already granted.
-    /// Required for PeekabooBridgeServer (ScreenCaptureKit).
-    /// On macOS 14+, CGRequestScreenCaptureAccess() directs the user to System Settings.
-    private func requestScreenRecordingIfNeeded() {
-        guard !CGPreflightScreenCaptureAccess() else { return }
-        CGRequestScreenCaptureAccess()
     }
 
     // MARK: - Accessibility

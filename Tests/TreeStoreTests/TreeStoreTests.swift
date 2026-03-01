@@ -100,6 +100,7 @@ final class TreeStoreTests: XCTestCase {
                 status: .active,
                 model: model,
                 contextSnapshot: contextSnapshot,
+                compactionMode: .auto,
                 collapsed: false,
                 createdAt: Date(),
                 updatedAt: Date()
@@ -837,25 +838,25 @@ final class TreeStoreTests: XCTestCase {
         let root = Branch(
             id: "root", treeId: "t1", sessionId: "s1", parentBranchId: nil,
             forkFromMessageId: nil, branchType: .conversation, title: "Root",
-            status: .active, model: nil, contextSnapshot: nil, collapsed: false,
+            status: .active, model: nil, contextSnapshot: nil, compactionMode: .auto, collapsed: false,
             createdAt: Date(), updatedAt: Date()
         )
         let child1 = Branch(
             id: "child1", treeId: "t1", sessionId: "s2", parentBranchId: "root",
             forkFromMessageId: nil, branchType: .exploration, title: "Child 1",
-            status: .active, model: nil, contextSnapshot: nil, collapsed: false,
+            status: .active, model: nil, contextSnapshot: nil, compactionMode: .auto, collapsed: false,
             createdAt: Date().addingTimeInterval(1), updatedAt: Date().addingTimeInterval(1)
         )
         let child2 = Branch(
             id: "child2", treeId: "t1", sessionId: "s3", parentBranchId: "root",
             forkFromMessageId: nil, branchType: .implementation, title: "Child 2",
-            status: .active, model: nil, contextSnapshot: nil, collapsed: false,
+            status: .active, model: nil, contextSnapshot: nil, compactionMode: .auto, collapsed: false,
             createdAt: Date().addingTimeInterval(2), updatedAt: Date().addingTimeInterval(2)
         )
         let grandchild = Branch(
             id: "grandchild", treeId: "t1", sessionId: "s4", parentBranchId: "child1",
             forkFromMessageId: nil, branchType: .conversation, title: "Grandchild",
-            status: .active, model: nil, contextSnapshot: nil, collapsed: false,
+            status: .active, model: nil, contextSnapshot: nil, compactionMode: .auto, collapsed: false,
             createdAt: Date().addingTimeInterval(3), updatedAt: Date().addingTimeInterval(3)
         )
 
@@ -886,7 +887,7 @@ final class TreeStoreTests: XCTestCase {
         let root = Branch(
             id: "solo", treeId: "t1", sessionId: "s1", parentBranchId: nil,
             forkFromMessageId: nil, branchType: .conversation, title: "Solo",
-            status: .active, model: nil, contextSnapshot: nil, collapsed: false,
+            status: .active, model: nil, contextSnapshot: nil, compactionMode: .auto, collapsed: false,
             createdAt: Date(), updatedAt: Date()
         )
 
