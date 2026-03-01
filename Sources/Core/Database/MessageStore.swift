@@ -260,11 +260,36 @@ final class MessageStore {
                         title: row["role"] as String? ?? "message",
                         snippet: String(content.prefix(200)),
                         project: Self.extractProject(from: wd),
-                        timestamp: Self.parseTimestamp(row["timestamp"])
+                        timestamp: Self.parseTimestamp(row["timestamp"]),
+                        sessionId: row["session_id"] as String?
                     ))
                 }
             } catch {
                 wtLog("[GlobalSearch] messages FTS failed: \(error)")
+            }
+
+            // Batch-resolve session IDs → canvas_branches for message results
+            let msgSessionIds = results.filter { $0.source == .message }.compactMap(\.sessionId)
+            if !msgSessionIds.isEmpty {
+                let placeholders = msgSessionIds.map { _ in "?" }.joined(separator: ", ")
+                if let branchRows = try? Row.fetchAll(db, sql: """
+                    SELECT session_id, id, tree_id FROM canvas_branches
+                    WHERE session_id IN (\(placeholders))
+                    """, arguments: StatementArguments(msgSessionIds)) {
+                    let branchMap = Dictionary(uniqueKeysWithValues: branchRows.compactMap { row -> (String, (String, String))? in
+                        guard let sid: String = row["session_id"],
+                              let bid: String = row["id"],
+                              let tid: String = row["tree_id"] else { return nil }
+                        return (sid, (bid, tid))
+                    })
+                    results = results.map { r in
+                        guard r.source == .message, let sid = r.sessionId, let (bid, tid) = branchMap[sid] else { return r }
+                        var updated = r
+                        updated.branchId = bid
+                        updated.treeId = tid
+                        return updated
+                    }
+                }
             }
 
             // 2. Knowledge FTS

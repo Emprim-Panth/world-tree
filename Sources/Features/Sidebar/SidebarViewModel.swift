@@ -355,14 +355,11 @@ final class SidebarViewModel: ObservableObject {
 
             AppState.shared.selectBranch(branch.id, in: tree.id)
 
-            // If template has an initial prompt, send it as the first message
+            // If template has an initial prompt, queue it for auto-send via the provider pipeline.
+            // DocumentEditorView.onAppear checks this key and submits through viewModel.submitInput().
             if let initialPrompt = template?.initialPrompt,
                let sessionId = branch.sessionId {
-                _ = try MessageStore.shared.sendMessage(
-                    sessionId: sessionId,
-                    role: .user,
-                    content: initialPrompt
-                )
+                UserDefaults.standard.set(initialPrompt, forKey: "pending_synthesis_\(sessionId)")
             }
         } catch {
             self.error = error.localizedDescription

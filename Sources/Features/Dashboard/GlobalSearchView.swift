@@ -78,6 +78,16 @@ struct GlobalSearchView: View {
             } else {
                 List(filteredResults) { result in
                     searchResultRow(result)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            navigateToResult(result)
+                        }
+                        .onHover { hovering in
+                            if result.branchId != nil {
+                                NSCursor.pointingHand.set()
+                                if !hovering { NSCursor.arrow.set() }
+                            }
+                        }
                 }
                 .listStyle(.inset)
             }
@@ -112,6 +122,12 @@ struct GlobalSearchView: View {
             wtLog("[GlobalSearch] Search failed: \(error)")
             results = []
         }
+    }
+
+    private func navigateToResult(_ result: GlobalSearchResult) {
+        guard let branchId = result.branchId, let treeId = result.treeId else { return }
+        appState.selectBranch(branchId, in: treeId)
+        dismiss()
     }
 
     private func searchResultRow(_ result: GlobalSearchResult) -> some View {
@@ -156,6 +172,12 @@ struct GlobalSearchView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
+            }
+
+            if result.branchId != nil {
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.vertical, 2)

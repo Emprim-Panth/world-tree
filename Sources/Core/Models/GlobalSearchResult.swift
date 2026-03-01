@@ -9,6 +9,11 @@ struct GlobalSearchResult: Identifiable, Hashable {
     let project: String?
     let timestamp: Date?
 
+    // Navigation — only populated for .message results that map to a canvas branch
+    var sessionId: String?
+    var treeId: String?
+    var branchId: String?
+
     enum Source: String, CaseIterable {
         case message = "Messages"
         case knowledge = "Knowledge"

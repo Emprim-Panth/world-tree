@@ -93,6 +93,8 @@ struct DocumentEditorView: View {
                                 )
                                 .onHover { hovered in hoveredSectionId = hovered ? section.id : nil }
                                 .id(section.id)
+                                .opacity(searchMatchOpacity(for: section))
+                                .animation(.easeInOut(duration: 0.15), value: searchQuery)
                             }
 
                         // Live streaming section — tokens appear as they arrive (only once content exists)
@@ -119,7 +121,7 @@ struct DocumentEditorView: View {
                 .defaultScrollAnchor(.bottom)
                 .safeAreaInset(edge: .top, spacing: 0) {
                     if showSearch {
-                        ConversationSearchBar(query: $searchQuery, onDismiss: {
+                        ConversationSearchBar(query: $searchQuery, matchCount: searchMatchCount, onDismiss: {
                             showSearch = false
                             searchQuery = ""
                             isFocused = true
@@ -293,6 +295,32 @@ struct DocumentEditorView: View {
         }
     }
     }
+    // MARK: - Search Helpers
+
+    /// Opacity for a section when search is active.
+    /// Full opacity (1.0) for matches, dimmed (0.3) for non-matches.
+    private func searchMatchOpacity(for section: DocumentSection) -> Double {
+        guard showSearch, !searchQuery.isEmpty else { return 1.0 }
+        let q = searchQuery.lowercased()
+        // Check plain text content
+        if String(section.content.characters).lowercased().contains(q) { return 1.0 }
+        // Check code blocks
+        if let blocks = section.metadata.codeBlocks,
+           blocks.contains(where: { $0.code.lowercased().contains(q) }) { return 1.0 }
+        // Check tool call names and inputs
+        if let calls = section.metadata.toolCalls,
+           calls.contains(where: {
+               $0.name.lowercased().contains(q) || $0.input.lowercased().contains(q)
+           }) { return 1.0 }
+        return 0.3
+    }
+
+    /// Number of sections matching the current search query.
+    private var searchMatchCount: Int {
+        guard showSearch, !searchQuery.isEmpty else { return 0 }
+        return viewModel.document.sections.filter { searchMatchOpacity(for: $0) == 1.0 }.count
+    }
+
 } // end struct DocumentEditorView
 
 // MARK: - ViewModel
@@ -1345,6 +1373,7 @@ struct EmptyConversationView: View {
 /// Dims non-matching messages; Escape dismisses.
 struct ConversationSearchBar: View {
     @Binding var query: String
+    let matchCount: Int
     let onDismiss: () -> Void
     @FocusState private var isFocused: Bool
 
@@ -1361,6 +1390,11 @@ struct ConversationSearchBar: View {
                 .onSubmit { onDismiss() }
 
             if !query.isEmpty {
+                Text("\(matchCount) \(matchCount == 1 ? "match" : "matches")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .animation(.easeInOut(duration: 0.15), value: matchCount)
+
                 Button {
                     query = ""
                 } label: {
