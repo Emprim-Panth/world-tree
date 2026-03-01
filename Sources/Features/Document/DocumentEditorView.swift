@@ -135,6 +135,13 @@ struct DocumentEditorView: View {
                     isFocused = true
                     viewModel.loadDocument()
                     viewModel.parentBranchLayout = parentBranchLayout
+                    // Force scroll to bottom after initial layout — ScrollBottomTracker
+                    // fires before content is positioned and incorrectly sets
+                    // isScrolledToBottom=false, blocking auto-scroll.
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(200))
+                        proxy.scrollTo("scroll-bottom", anchor: .bottom)
+                    }
                     // Auto-send pending synthesis prompt (set by SynthesisService)
                     let synthKey = "pending_synthesis_\(sessionId)"
                     if let prompt = UserDefaults.standard.string(forKey: synthKey) {

@@ -177,6 +177,8 @@ struct SimpleModeView: View {
                         .cornerRadius(6)
                 }
                 .menuIndicator(.hidden)
+                .menuStyle(.button)
+                .buttonStyle(.plain)
                 .fixedSize()
                 .help("Sort: \(vm.sortOrder.label)")
             }

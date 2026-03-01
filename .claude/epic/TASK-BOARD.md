@@ -27,7 +27,7 @@
 
 | ID | Title | Assignee | Started | Notes |
 |----|-------|----------|---------|-------|
-| TASK-047 | Fix: scroll to bottom on conversation open + sort button invisible on macOS 15 | — | 2026-02-25 | |
+| | | | | |
 
 ---
 
@@ -43,7 +43,7 @@
 
 | ID | Title | Approved By | Ready Since |
 |----|-------|-------------|-------------|
-| TASK-049 | Fix conversation scroll content going behind input box | — | 2026-02-25 |
+| | | | |
 
 ---
 
@@ -97,7 +97,9 @@
 | TASK-044 | Add sidebar sort picker (A-Z, Z-A, Newest, Oldest) | 2026-02-25 | — |
 | TASK-045 | Fix sidebar sort button visibility and sort order | 2026-02-25 | — |
 | TASK-046 | Fix auto-scroll: conversation view doesn't scroll to show new messages | 2026-02-25 | — |
+| TASK-047 | Fix: scroll to bottom on conversation open + sort button invisible on macOS 15 | 2026-03-01 | Cortana |
 | TASK-048 | Add search bar and sort picker to SimpleModeView sidebar | 2026-02-25 | — |
+| TASK-049 | Fix conversation scroll content going behind input box | 2026-03-01 | Cortana (already fixed) |
 
 ---
 
@@ -106,10 +108,10 @@
 | Status | Count |
 |--------|-------|
 | Blocked | 0 |
-| In Progress | 1 |
+| In Progress | 0 |
 | Ready for Review | 0 |
-| Ready | 1 |
-| Done | 47 |
+| Ready | 0 |
+| Done | 49 |
 | **Total** | **49** |
 
 ---

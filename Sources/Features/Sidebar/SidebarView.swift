@@ -144,6 +144,8 @@ struct SidebarView: View {
                         .cornerRadius(6)
                 }
                 .menuIndicator(.hidden)
+                .menuStyle(.button)
+                .buttonStyle(.plain)
                 .fixedSize()
                 .help("Sort order: \(viewModel.sortOrder.label)")
                 .accessibilityLabel("Sort order")

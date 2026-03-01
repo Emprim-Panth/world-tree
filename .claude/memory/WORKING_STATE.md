@@ -6,9 +6,7 @@
 Core bugs fixed this session. Sidebar collapsible structure in place.
 
 ## Pending
-- Remove path row from `ProjectGroupHeader` in `SidebarView.swift` (lines 848–870)
-  - User approved the plan. Not yet implemented.
-  - Move path editing to context menu (keep `commitPath()` + `onPathChanged`).
+- ~~Remove path row from `ProjectGroupHeader`~~ — **Done.** Path row no longer exists in header; path editing is context-menu-only via popover. Verified 2026-03-01.
 
 ## Notes
 - CortanaCanvas deleted — WorldTree/ is sole source of truth
