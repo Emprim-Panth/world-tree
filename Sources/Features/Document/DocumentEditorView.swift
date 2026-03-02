@@ -239,6 +239,7 @@ struct DocumentEditorView: View {
                         attachments: $viewModel.pendingAttachments,
                         isProcessing: viewModel.isProcessing,
                         onSubmit: { viewModel.submitInput() },
+                        onCancel: { viewModel.cancelStream() },
                         onTabKey: {
                             if viewModel.branchOpportunity != nil {
                                 selectedSuggestionIndex = (selectedSuggestionIndex + 1) % (viewModel.branchOpportunity?.suggestions.count ?? 1)
@@ -473,6 +474,11 @@ class DocumentEditorViewModel: ObservableObject {
     /// Parent branch's session ID — loaded once at document open for --fork-session support.
     private var cachedParentSessionId: String?
     private var seenMessageIds: Set<String> = []
+    /// Content of the most recently persisted assistant message.
+    /// Guards against double-display when the daemon (canvas-runner.py) writes the same
+    /// response to the DB independently — both writes produce different row IDs, so
+    /// seenMessageIds alone can't deduplicate them. We match by content instead.
+    private var pendingAssistantContent: String? = nil
     private(set) var treeId: String?
     private(set) var parentBranchId: String?
     private(set) var currentBranch: Branch?
@@ -702,7 +708,18 @@ class DocumentEditorViewModel: ObservableObject {
         for section in document.sections {
             if let msgId = section.messageId { seenMessageIds.insert(msgId) }
         }
-        let newMessages = messages.filter { !seenMessageIds.contains($0.id) }
+        var newMessages: [Message] = []
+        for msg in messages where !seenMessageIds.contains(msg.id) {
+            // Content-based dedup: if this assistant message has the same content as what
+            // we just wrote (pendingAssistantContent), it's the canvas-runner.py duplicate.
+            // Mark it seen and skip — we already appended the section directly.
+            if msg.role == .assistant, let pending = pendingAssistantContent, msg.content == pending {
+                seenMessageIds.insert(msg.id)
+                pendingAssistantContent = nil
+                continue
+            }
+            newMessages.append(msg)
+        }
 
         for msg in newMessages {
             let isFinding = msg.content.hasPrefix("[Finding from branch")
@@ -1195,6 +1212,7 @@ class DocumentEditorViewModel: ObservableObject {
                     let msg = try MessageStore.shared.sendMessage(
                         sessionId: sessionId, role: .assistant, content: fullResponse)
                     seenMessageIds.insert(msg.id)
+                    pendingAssistantContent = fullResponse
                     let assistantSection = DocumentSection(
                         id: stableId(for: msg.id),
                         content: AttributedString(fullResponse),
@@ -1612,6 +1630,7 @@ struct UserInputArea: View {
     @Binding var attachments: [Attachment]
     let isProcessing: Bool
     let onSubmit: () -> Void
+    var onCancel: (() -> Void)?
     var onTabKey: (() -> Bool)?
     var onShiftTabKey: (() -> Bool)?
     var onCmdReturnKey: (() -> Bool)?
@@ -1752,18 +1771,23 @@ struct UserInputArea: View {
 
                         Spacer()
 
-                        Button(action: onSubmit) {
-                            Label(
-                                isProcessing ? "Thinking…" : "Send",
-                                systemImage: isProcessing ? "arrow.trianglehead.clockwise" : "paperplane.fill"
+                        if isProcessing {
+                            Button(action: { onCancel?() }) {
+                                Label("Stop", systemImage: "stop.fill")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                        } else {
+                            Button(action: onSubmit) {
+                                Label("Send", systemImage: "paperplane.fill")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(
+                                text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
                             )
-                            .font(.caption)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(
-                            (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty)
-                            || isProcessing
-                        )
                     }
                 }
             }

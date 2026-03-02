@@ -85,7 +85,7 @@ targets:
           APP_DST="/Applications/${PRODUCT_NAME}.app"
           if [ -d "$APP_SRC" ]; then
             killall "${PRODUCT_NAME}" 2>/dev/null; sleep 0.5; true
-            cp -R "$APP_SRC" "$APP_DST"
+            ditto "$APP_SRC" "$APP_DST"
           fi
         name: "Install to /Applications"
         basedOnDependencyAnalysis: false
