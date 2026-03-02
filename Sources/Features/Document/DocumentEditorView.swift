@@ -656,7 +656,7 @@ class DocumentEditorViewModel: ObservableObject {
             // Without this, `checkpointContext` stays nil and we fall back to the
             // much shallower "stale session" context injection (12 turns × 500 chars).
             if let (summary, createdAt) = SessionRotator.latestCheckpoint(sessionId: self.sessionId),
-               Date().timeIntervalSince(createdAt) < 86400 {  // within 24 hours
+               Date().timeIntervalSince(createdAt) < 259200 {  // within 72 hours
                 self.checkpointContext = summary
                 wtLog("[DocumentEditor] Restored rotation checkpoint from DB (\(summary.count) chars, age \(Int(Date().timeIntervalSince(createdAt)))s)")
             }
@@ -926,7 +926,7 @@ class DocumentEditorViewModel: ObservableObject {
     /// Ensures cross-restart context even when context pressure never triggered a rotation.
     func writeSnapshotCheckpoint() {
         let sections = document.sections
-        guard sections.count >= 4 else { return }
+        guard sections.count >= 2 else { return }
         let recent = Array(sections.suffix(40))
         let lines = recent.map { section -> String in
             let role: String
@@ -1239,6 +1239,11 @@ class DocumentEditorViewModel: ObservableObject {
             // Clean completion — delete the temp file (nothing to recover)
             // Actor serialises this after any pending appendToStream calls finish
             await StreamCacheManager.shared.closeStream(sessionId: sessionId)
+
+            // Write a continuity snapshot after every completed exchange.
+            // This guarantees a recent checkpoint even if the app crashes before
+            // the next onDisappear fires — no API call, just persists recent turns.
+            writeSnapshotCheckpoint()
 
             // Check if context rotation is needed after this exchange.
             // rotateSession() is a protocol method with a no-op default — works for any provider.

@@ -423,8 +423,21 @@ final class ClaudeCodeProvider: LLMProvider {
         writeSessionMapFile(snapshot)
     }
 
+    /// Versioned file entry — includes timestamp so resume survives app restarts.
+    private struct SessionFileEntry: Codable {
+        let cliSessionId: String
+        let lastUsed: TimeInterval  // Unix timestamp
+    }
+
     private func writeSessionMapFile(_ map: [String: String]) {
-        guard let data = try? JSONEncoder().encode(map) else { return }
+        // Write with timestamps for round-trip fidelity.
+        mapLock.lock()
+        let entries: [String: SessionFileEntry] = map.reduce(into: [:]) { result, pair in
+            let ts = cliSessionLastUsed[pair.key]?.timeIntervalSince1970 ?? Date().timeIntervalSince1970
+            result[pair.key] = SessionFileEntry(cliSessionId: pair.value, lastUsed: ts)
+        }
+        mapLock.unlock()
+        guard let data = try? JSONEncoder().encode(entries) else { return }
         try? data.write(to: sessionMapFileURL, options: .atomic)
     }
 
@@ -457,14 +470,27 @@ final class ClaudeCodeProvider: LLMProvider {
             let rows = try DatabaseManager.shared.read { db in
                 try Row.fetchAll(
                     db,
-                    sql: "SELECT canvas_session_id, cli_session_id FROM canvas_cli_sessions WHERE provider = 'claude-code'"
+                    sql: "SELECT canvas_session_id, cli_session_id, updated_at FROM canvas_cli_sessions WHERE provider = 'claude-code'"
                 )
             }
             mapLock.lock()
+            let sqliteFormatter = DateFormatter()
+            sqliteFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            sqliteFormatter.timeZone = TimeZone(identifier: "UTC")
             for row in rows {
                 if let canvasId: String = row["canvas_session_id"],
                    let cliId: String = row["cli_session_id"] {
                     cliSessionMap[canvasId] = cliId
+                    // Restore the timestamp so getCliSession() doesn't treat it as stale.
+                    // updated_at is set by SQLite's datetime('now') on every persist and
+                    // reflects the true last-used time. Sessions within TTL will resume;
+                    // sessions beyond TTL will be pruned on first getCliSession() call.
+                    if let updatedAtStr: String = row["updated_at"],
+                       let updatedAt = sqliteFormatter.date(from: updatedAtStr) {
+                        cliSessionLastUsed[canvasId] = updatedAt
+                    }
+                    // Sessions with no parseable timestamp get no entry in lastUsed —
+                    // they'll be treated as stale and rotated on first use (safe default).
                 }
             }
             mapLock.unlock()
@@ -475,14 +501,26 @@ final class ClaudeCodeProvider: LLMProvider {
 
         // Overlay with file — file is written synchronously on every update so
         // it's always more current than the DB (which goes via async MainActor task).
-        if let data = try? Data(contentsOf: sessionMapFileURL),
-           let fileMap = try? JSONDecoder().decode([String: String].self, from: data) {
-            mapLock.lock()
-            for (canvasId, cliId) in fileMap {
-                cliSessionMap[canvasId] = cliId  // file wins over DB
+        if let data = try? Data(contentsOf: sessionMapFileURL) {
+            // Try new versioned format first (includes timestamps), fall back to legacy.
+            if let fileMap = try? JSONDecoder().decode([String: SessionFileEntry].self, from: data) {
+                mapLock.lock()
+                for (canvasId, entry) in fileMap {
+                    cliSessionMap[canvasId] = entry.cliSessionId  // file wins over DB
+                    cliSessionLastUsed[canvasId] = Date(timeIntervalSince1970: entry.lastUsed)
+                }
+                mapLock.unlock()
+                wtLog("[ClaudeCodeProvider] Overlaid \(fileMap.count) session mappings from file (with timestamps)")
+            } else if let fileMap = try? JSONDecoder().decode([String: String].self, from: data) {
+                // Legacy format — no timestamps, DB values (if any) are kept.
+                mapLock.lock()
+                for (canvasId, cliId) in fileMap {
+                    cliSessionMap[canvasId] = cliId
+                    // No timestamp from legacy file — DB timestamp (if loaded above) is kept.
+                }
+                mapLock.unlock()
+                wtLog("[ClaudeCodeProvider] Overlaid \(fileMap.count) session mappings from file (legacy format)")
             }
-            mapLock.unlock()
-            wtLog("[ClaudeCodeProvider] Overlaid \(fileMap.count) session mappings from file")
         }
     }
 

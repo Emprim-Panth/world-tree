@@ -1,7 +1,7 @@
 # Task Board — Epic on main
 
 **Epic:** Epic on main
-**Last Updated:** 2026-02-25
+**Last Updated:** 2026-03-02
 
 ---
 
@@ -43,7 +43,11 @@
 
 | ID | Title | Approved By | Ready Since |
 |----|-------|-------------|-------------|
-| | | | |
+| TASK-050 | fix: session resume broken on app restart — missing timestamp from DB load | — | 2026-03-02 |
+| TASK-051 | fix: canvas-sessions.json loses timestamps — add SessionEntry format with lastUsed | — | 2026-03-02 |
+| TASK-052 | fix: snapshot checkpoint only written on onDisappear — write after each response | — | 2026-03-02 |
+| TASK-053 | fix: snapshot checkpoint guard requires >=4 sections — misses short conversations | — | 2026-03-02 |
+| TASK-054 | fix: checkpoint TTL 24h too short for multi-day sessions | — | 2026-03-02 |
 
 ---
 
@@ -110,9 +114,9 @@
 | Blocked | 0 |
 | In Progress | 0 |
 | Ready for Review | 0 |
-| Ready | 0 |
+| Ready | 5 |
 | Done | 49 |
-| **Total** | **49** |
+| **Total** | **54** |
 
 ---
 
