@@ -165,9 +165,12 @@ struct DocumentEditorView: View {
                 }
                 // Unified scroll handler — only auto-scrolls when user is at the bottom.
                 // If the user scrolled up to read, we show a "new messages" indicator instead.
-                .onChange(of: viewModel.document.sections.count) { _, _ in
+                // Exception: first load (old == 0) always scrolls regardless of scroll position —
+                // VStack measures full content height immediately, which can set isScrolledToBottom=false
+                // before the scroll-to-bottom fires, leaving the chat blank until the user scrolls.
+                .onChange(of: viewModel.document.sections.count) { old, _ in
                     guard viewModel.streaming.content == nil, !viewModel.isProcessing else { return }
-                    if viewModel.isScrolledToBottom { proxy.scrollTo("scroll-bottom") }
+                    if old == 0 || viewModel.isScrolledToBottom { proxy.scrollTo("scroll-bottom") }
                 }
                 .onReceive(viewModel.streaming.$content) { content in
                     if content != nil {
@@ -692,6 +695,13 @@ class DocumentEditorViewModel: ObservableObject {
     /// Applies the latest full message list from ValueObservation.
     /// Appends new messages and keeps hasBranches live on existing sections.
     private func applyMessages(_ messages: [Message]) {
+        // Sync seenMessageIds from the current sections — closes any timing gap where
+        // a section was appended directly (line 1198) but the observation fired before
+        // seenMessageIds was updated (e.g. if the DB write notification arrived sooner
+        // than expected). Without this, the same message could be added twice.
+        for section in document.sections {
+            if let msgId = section.messageId { seenMessageIds.insert(msgId) }
+        }
         let newMessages = messages.filter { !seenMessageIds.contains($0.id) }
 
         for msg in newMessages {
