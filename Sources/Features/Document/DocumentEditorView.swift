@@ -48,7 +48,7 @@ struct DocumentEditorView: View {
                 // --- Scrollable message area ---
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
+                        VStack(alignment: .leading, spacing: 0) {
                             // Pagination trigger — loads older messages when visible
                             if viewModel.hasMoreMessages {
                                 Button {
@@ -97,19 +97,9 @@ struct DocumentEditorView: View {
                                 .animation(.easeInOut(duration: 0.15), value: searchQuery)
                             }
 
-                        // Live streaming section — tokens appear as they arrive (only once content exists)
-                        if let streaming = viewModel.streamingContent, !streaming.isEmpty {
-                            StreamingSectionView(content: streaming)
-                                .id("streaming")
-                        }
-
-                        // Thinking indicator — shows until first token arrives
-                        if viewModel.isProcessing && (viewModel.streamingContent == nil || viewModel.streamingContent == "") {
-                            ThinkingIndicatorView(toolDescription: viewModel.currentTool)
-                                .id("thinking")
-                                .padding(.horizontal, 0)
-                                .padding(.vertical, 8)
-                        }
+                        // Streaming + thinking indicator — isolated to StreamingLayerView
+                        // so 10fps token updates don't re-render the document section list.
+                        StreamingLayerView(streaming: viewModel.streaming)
 
                         // Scroll anchor — used by proxy.scrollTo("scroll-bottom")
                         Color.clear.frame(height: 1).id("scroll-bottom")
@@ -176,10 +166,10 @@ struct DocumentEditorView: View {
                 // Unified scroll handler — only auto-scrolls when user is at the bottom.
                 // If the user scrolled up to read, we show a "new messages" indicator instead.
                 .onChange(of: viewModel.document.sections.count) { _, _ in
-                    guard viewModel.streamingContent == nil, !viewModel.isProcessing else { return }
+                    guard viewModel.streaming.content == nil, !viewModel.isProcessing else { return }
                     if viewModel.isScrolledToBottom { proxy.scrollTo("scroll-bottom") }
                 }
-                .onChange(of: viewModel.streamingContent) { _, content in
+                .onReceive(viewModel.streaming.$content) { content in
                     if content != nil {
                         // Only auto-scroll while streaming if user hasn't scrolled up
                         if viewModel.isScrolledToBottom {
@@ -188,7 +178,7 @@ struct DocumentEditorView: View {
                     } else {
                         // Streaming ended — snap to bottom so input is in view
                         proxy.scrollTo("scroll-bottom")
-                        viewModel.hasNewStreamContent = false
+                        if viewModel.hasNewStreamContent { viewModel.hasNewStreamContent = false }
                     }
                 }
                 // Track scroll position — inhibit auto-scroll when user scrolled up
@@ -211,7 +201,7 @@ struct DocumentEditorView: View {
                 .animation(.easeInOut(duration: 0.2),
                            value: viewModel.hasNewStreamContent && !viewModel.isScrolledToBottom)
                 .onChange(of: viewModel.isProcessing) { _, processing in
-                    if processing && viewModel.streamingContent == nil {
+                    if processing && viewModel.streaming.content == nil {
                         proxy.scrollTo("scroll-bottom")
                     }
                     // Snap to bottom when the response finishes committing
@@ -330,6 +320,39 @@ struct DocumentEditorView: View {
 
 } // end struct DocumentEditorView
 
+// MARK: - StreamingLayerView
+
+/// Renders only the live streaming indicator and thinking spinner.
+/// Observes StreamingState directly so that token delivery at 10fps only
+/// re-renders this small view — not the full document section list.
+private struct StreamingLayerView: View {
+    @ObservedObject var streaming: StreamingState
+
+    var body: some View {
+        if let content = streaming.content, !content.isEmpty {
+            StreamingSectionView(content: content)
+                .id("streaming")
+        }
+        if streaming.isProcessing && (streaming.content == nil || streaming.content == "") {
+            ThinkingIndicatorView(toolDescription: streaming.currentTool)
+                .id("thinking")
+                .padding(.horizontal, 0)
+                .padding(.vertical, 8)
+        }
+    }
+}
+
+// MARK: - StreamingState
+
+/// Ephemeral streaming state isolated into its own ObservableObject.
+/// Only StreamingLayerView observes this — DocumentEditorView does not —
+/// so 10fps token flushes don't trigger full document re-renders.
+final class StreamingState: ObservableObject {
+    @Published var content: String?
+    @Published var isProcessing = false
+    @Published var currentTool: String?
+}
+
 // MARK: - ViewModel
 
 @MainActor
@@ -343,8 +366,16 @@ class DocumentEditorViewModel: ObservableObject {
         }
     }
     @Published var pendingAttachments: [Attachment] = []
+    /// Streaming state in its own ObservableObject so hot-path token updates
+    /// don't trigger full document re-renders. Exposed for view binding.
+    let streaming = StreamingState()
+
+    /// True while Cortana is generating a response. Backed by StreamingState
+    /// so the input area and empty-state check stay reactive, but direct
+    /// `@Published` also keeps ProcessingRegistry side-effects intact.
     @Published var isProcessing = false {
         didSet {
+            streaming.isProcessing = isProcessing
             if isProcessing {
                 // Prevent sleep while Cortana is working — dropped connection mid-stream is a bad time
                 sleepAssertion = ProcessInfo.processInfo.beginActivity(
@@ -361,11 +392,17 @@ class DocumentEditorViewModel: ObservableObject {
     }
     private var sleepAssertion: NSObjectProtocol?
     @Published var branchOpportunity: BranchOpportunity?
-    /// Live token stream content — shown in the chat as Cortana types.
-    /// Nil when not streaming; cleared once the full response is persisted.
-    @Published var streamingContent: String?
-    /// Currently running tool name — shown in the thinking indicator so Evan knows I'm working, not frozen.
-    @Published var currentTool: String?
+    /// Live token stream content — backed by StreamingState so updates at 10fps
+    /// don't trigger full document re-renders via viewModel.objectWillChange.
+    var streamingContent: String? {
+        get { streaming.content }
+        set { streaming.content = newValue }
+    }
+    /// Currently running tool name — backed by StreamingState for same reason.
+    var currentTool: String? {
+        get { streaming.currentTool }
+        set { streaming.currentTool = newValue }
+    }
 
     @Published var pendingForkMessage: Message?
 
