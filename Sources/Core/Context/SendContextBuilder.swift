@@ -68,14 +68,28 @@ enum SendContextBuilder {
 
         // 6. Layer on project context for CLI providers
         let projectContext = loadProjectContext(project: resolvedProject, workingDirectory: resolvedWorkingDir)
-        let finalContext: String?
+        let baseContext: String?
         if let enriched = enrichedContext, !projectContext.isEmpty {
-            finalContext = "\(projectContext)\n\n\(enriched)"
+            baseContext = "\(projectContext)\n\n\(enriched)"
         } else if !projectContext.isEmpty {
-            finalContext = projectContext
+            baseContext = projectContext
         } else {
-            finalContext = enrichedContext
+            baseContext = enrichedContext
         }
+
+        // 7. Guaranteed recent messages — last 20 turns from DB, bypasses scoring.
+        //    Ensures cold starts and post-compaction sessions always know the thread.
+        let recentMessages = buildRecentMessagesContext(sessionId: sessionId)
+
+        // 8. Gameplan — project north star, always injected when present.
+        let gameplan = loadGameplan(project: resolvedProject, workingDirectory: resolvedWorkingDir)
+
+        // 9. Assemble: gameplan first, then recent turns, then scored/memory context.
+        var contextParts: [String] = []
+        if let gp = gameplan { contextParts.append(gp) }
+        if let recent = recentMessages { contextParts.append(recent) }
+        if let base = baseContext { contextParts.append(base) }
+        let finalContext: String? = contextParts.isEmpty ? nil : contextParts.joined(separator: "\n\n")
 
         let extendedThinking = UserDefaults.standard.bool(forKey: AppConstants.extendedThinkingEnabledKey)
 
@@ -189,6 +203,61 @@ enum SendContextBuilder {
             output += "\n## README\n\(readme)\n"
         }
         return output
+    }
+
+    // MARK: - Recent Messages (guaranteed injection)
+
+    /// Always include the last N messages from the current session, regardless of
+    /// ConversationScorer output. This guarantees that cold starts and post-compaction
+    /// sessions never lose track of what was just discussed.
+    private static func buildRecentMessagesContext(sessionId: String, limit: Int = 20) -> String? {
+        guard let messages = try? MessageStore.shared.getMessages(sessionId: sessionId, limit: limit),
+              !messages.isEmpty else { return nil }
+
+        let lines = messages.compactMap { msg -> String? in
+            let prefix: String
+            switch msg.role {
+            case .user:      prefix = "[You]"
+            case .assistant: prefix = "[\(LocalAgentIdentity.name)]"
+            case .system:    return nil
+            }
+            return "\(prefix): \(String(msg.content.prefix(800)))"
+        }
+
+        guard !lines.isEmpty else { return nil }
+
+        return "RECENT CONVERSATION (last \(lines.count) turns — always present):\n"
+            + lines.joined(separator: "\n\n")
+            + "\nEND RECENT"
+    }
+
+    // MARK: - Gameplan
+
+    /// Load the active project gameplan from ~/.cortana/gameplans/{project}/GAMEPLAN.md.
+    /// The gameplan is the agreed north star — injected on every send, including after
+    /// compaction, so the direction is never lost regardless of session state.
+    private static func loadGameplan(project: String?, workingDirectory: String?) -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+
+        var candidates: [String] = []
+        if let p = project, !p.isEmpty {
+            candidates.append("\(home)/.cortana/gameplans/\(p.lowercased())/GAMEPLAN.md")
+            candidates.append("\(home)/.cortana/gameplans/\(p)/GAMEPLAN.md")
+        }
+        if let wd = workingDirectory {
+            let name = URL(fileURLWithPath: wd).lastPathComponent
+            candidates.append("\(home)/.cortana/gameplans/\(name.lowercased())/GAMEPLAN.md")
+        }
+
+        for path in candidates {
+            if let content = try? String(contentsOfFile: path, encoding: .utf8), !content.isEmpty {
+                wtLog("[SendContextBuilder] Injecting gameplan from \(path)")
+                return "PROJECT GAMEPLAN (north star — all work stays aligned with this):\n"
+                    + content
+                    + "\nEND GAMEPLAN"
+            }
+        }
+        return nil
     }
 
     // MARK: - Helpers

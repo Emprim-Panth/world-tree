@@ -125,13 +125,6 @@ struct DocumentEditorView: View {
                     isFocused = true
                     viewModel.loadDocument()
                     viewModel.parentBranchLayout = parentBranchLayout
-                    // Force scroll to bottom after initial layout — ScrollBottomTracker
-                    // fires before content is positioned and incorrectly sets
-                    // isScrolledToBottom=false, blocking auto-scroll.
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(200))
-                        proxy.scrollTo("scroll-bottom", anchor: .bottom)
-                    }
                     // Auto-send pending synthesis prompt (set by SynthesisService)
                     let synthKey = "pending_synthesis_\(sessionId)"
                     if let prompt = UserDefaults.standard.string(forKey: synthKey) {
@@ -163,14 +156,25 @@ struct DocumentEditorView: View {
                         }
                     )
                 }
-                // Unified scroll handler — only auto-scrolls when user is at the bottom.
-                // If the user scrolled up to read, we show a "new messages" indicator instead.
-                // Exception: first load (old == 0) always scrolls regardless of scroll position —
-                // VStack measures full content height immediately, which can set isScrolledToBottom=false
-                // before the scroll-to-bottom fires, leaving the chat blank until the user scrolls.
-                .onChange(of: viewModel.document.sections.count) { old, _ in
+                // Scroll to bottom when first batch of messages finishes loading.
+                // No anchor: scrolls the minimum needed to make "scroll-bottom" visible.
+                // If defaultScrollAnchor(.bottom) already placed us at the bottom,
+                // "scroll-bottom" is already visible → this is a no-op (no animation).
+                // If defaultScrollAnchor failed (e.g. slow DB load), this corrects it.
+                .onChange(of: viewModel.initialLoadDone) { _, done in
+                    guard done else { return }
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(100))
+                        proxy.scrollTo("scroll-bottom")
+                    }
+                }
+                // Auto-scroll for subsequent new messages — only if user is at the bottom.
+                // If they've scrolled up to read, show the "new messages" FAB instead.
+                .onChange(of: viewModel.document.sections.count) { _, _ in
                     guard viewModel.streaming.content == nil, !viewModel.isProcessing else { return }
-                    if old == 0 || viewModel.isScrolledToBottom { proxy.scrollTo("scroll-bottom") }
+                    if viewModel.isScrolledToBottom {
+                        proxy.scrollTo("scroll-bottom")
+                    }
                 }
                 .onReceive(viewModel.streaming.$content) { content in
                     if content != nil {
@@ -424,6 +428,10 @@ class DocumentEditorViewModel: ObservableObject {
 
     /// True when there are older messages in the DB that haven't been loaded yet.
     @Published var hasMoreMessages = false
+
+    /// Flips to true once on the first successful applyMessages call — used to trigger
+    /// the initial scroll-to-bottom after layout is complete.
+    @Published var initialLoadDone = false
 
     private let pageSize = 100
     private var initialLoadComplete = false
@@ -766,6 +774,7 @@ class DocumentEditorViewModel: ObservableObject {
         if !initialLoadComplete {
             initialLoadComplete = true
             hasMoreMessages = messages.count >= pageSize
+            initialLoadDone = true  // triggers scroll-to-bottom in the view
         }
     }
 
