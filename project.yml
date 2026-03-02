@@ -81,11 +81,24 @@ targets:
           # Auto-install to /Applications so TCC grants (Screen Recording, etc.) persist.
           # Without this, Xcode Run launches from DerivedData — a volatile path that
           # loses TCC permissions on every rebuild.
+          #
+          # NOTE: DerivedData may live on an external volume (U34 Bolt). Cross-volume
+          # ditto can strip the embedded code signature. We re-sign after copy to ensure
+          # the /Applications copy is always valid.
           APP_SRC="${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app"
           APP_DST="/Applications/${PRODUCT_NAME}.app"
           if [ -d "$APP_SRC" ]; then
             killall "${PRODUCT_NAME}" 2>/dev/null; sleep 0.5; true
             ditto "$APP_SRC" "$APP_DST"
+            # Re-sign after cross-volume copy — preserves TeamIdentifier and entitlements.
+            # Use EXPANDED_CODE_SIGN_IDENTITY (the cert SHA-1 hash, unambiguous) rather
+            # than the display name which can match multiple certs and fail with "ambiguous".
+            codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY}" \
+              --entitlements "${CODE_SIGN_ENTITLEMENTS}" \
+              --options runtime \
+              --timestamp=none \
+              --deep \
+              "$APP_DST"
           fi
         name: "Install to /Applications"
         basedOnDependencyAnalysis: false

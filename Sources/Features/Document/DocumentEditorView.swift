@@ -166,17 +166,29 @@ struct DocumentEditorView: View {
                     Task { @MainActor in
                         try? await Task.sleep(for: .milliseconds(100))
                         proxy.scrollTo("scroll-bottom")
+                        // Mark initial scroll complete AFTER the deferred scroll fires.
+                        // onChange(sections.count) is gated on this to prevent firing
+                        // in the same frame as initialLoadDone before layout is measured.
+                        viewModel.initialScrollComplete = true
                     }
                 }
                 // Auto-scroll for subsequent new messages — only if user is at the bottom.
                 // If they've scrolled up to read, show the "new messages" FAB instead.
                 .onChange(of: viewModel.document.sections.count) { _, _ in
+                    // Gate on initialScrollComplete (not initialLoadDone) — the initial load
+                    // sets both sections.count and initialLoadDone in the same SwiftUI frame,
+                    // so guarding on initialLoadDone still fires before layout is measured.
+                    // initialScrollComplete is only set AFTER the 100ms deferred scroll Task.
+                    guard viewModel.initialScrollComplete else { return }
                     guard viewModel.streaming.content == nil, !viewModel.isProcessing else { return }
                     if viewModel.isScrolledToBottom {
                         proxy.scrollTo("scroll-bottom")
                     }
                 }
                 .onReceive(viewModel.streaming.$content) { content in
+                    // Combine emits the current value immediately on subscription (before layout).
+                    // Gate on initialLoadDone so the nil emission on view-appear doesn't misfire.
+                    guard viewModel.initialLoadDone else { return }
                     if content != nil {
                         // Only auto-scroll while streaming if user hasn't scrolled up
                         if viewModel.isScrolledToBottom {
@@ -208,6 +220,7 @@ struct DocumentEditorView: View {
                 .animation(.easeInOut(duration: 0.2),
                            value: viewModel.hasNewStreamContent && !viewModel.isScrolledToBottom)
                 .onChange(of: viewModel.isProcessing) { _, processing in
+                    guard viewModel.initialLoadDone else { return }
                     if processing && viewModel.streaming.content == nil {
                         proxy.scrollTo("scroll-bottom")
                     }
@@ -432,6 +445,11 @@ class DocumentEditorViewModel: ObservableObject {
     /// Flips to true once on the first successful applyMessages call — used to trigger
     /// the initial scroll-to-bottom after layout is complete.
     @Published var initialLoadDone = false
+
+    /// Flips to true after the deferred initial scroll Task actually fires.
+    /// Guards onChange(sections.count) so it doesn't fire in the same frame as initialLoadDone,
+    /// which would cause a premature scroll before layout is measured.
+    @Published var initialScrollComplete = false
 
     private let pageSize = 100
     private var initialLoadComplete = false
