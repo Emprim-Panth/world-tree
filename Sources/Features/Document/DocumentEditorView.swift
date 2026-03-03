@@ -381,6 +381,8 @@ class DocumentEditorViewModel: ObservableObject {
         didSet {
             branchAnalysisTask?.cancel()
             branchAnalysisTask = Task { await analyzeForBranchOpportunities() }
+            // Persist draft so it survives branch switches and window changes
+            UserDefaults.standard.set(currentInput, forKey: "draft.\(branchId)")
         }
     }
     @Published var pendingAttachments: [Attachment] = []
@@ -564,6 +566,10 @@ class DocumentEditorViewModel: ObservableObject {
         // then re-fires any time the messages table changes for this session.
         // No timer, no polling, no accumulation.
         guard messageObservation == nil else { return }
+        // Restore any in-progress draft from before this branch was last left
+        if let saved = UserDefaults.standard.string(forKey: "draft.\(branchId)"), !saved.isEmpty {
+            currentInput = saved
+        }
         guard let dbPool = DatabaseManager.shared.dbPool else {
             // Database not ready yet (app cold start — child .onAppear fires before
             // WorldTreeApp.onAppear calls setupDatabase). Retry shortly.
@@ -1022,6 +1028,7 @@ class DocumentEditorViewModel: ObservableObject {
         guard !inputText.isEmpty || !attachmentSnapshot.isEmpty else { return }
 
         currentInput = ""
+        UserDefaults.standard.removeObject(forKey: "draft.\(branchId)")
         pendingAttachments = []
 
         // Build display text for the section — show filename if text-only attachment
