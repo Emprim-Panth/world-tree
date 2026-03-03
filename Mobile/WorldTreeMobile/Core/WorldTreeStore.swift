@@ -22,6 +22,16 @@ final class WorldTreeStore {
     var messages: [Message] = []
     var streamingText: String = ""
     var isStreaming: Bool = false
+    /// Branches that are currently streaming (used for typing indicators in list views).
+    var streamingBranchIds: Set<String> = []
+    /// Per-branch streaming text — persists across branch switches so the indicator
+    /// and partial response are visible when the user navigates away and returns.
+    private(set) var branchStreamingText: [String: String] = [:]
+    /// Branch → tree mapping, populated when branches load, used to show
+    /// streaming/unread indicators on tree rows in TreeListView.
+    private(set) var branchToTree: [String: String] = [:]
+    /// When each tree was last opened by the user (used to compute unread badge state).
+    private(set) var treeLastViewedAt: [String: Date] = [:]
     /// When true, the next branches_list response will auto-select the best branch
     /// instead of restoring the last-viewed one. Set when the user taps a project row.
     var pendingAutoSelectBranch = false
@@ -54,6 +64,7 @@ final class WorldTreeStore {
 
     init() {
         loadDrafts()
+        loadLastViewedDates()
         // TASK-062: route lock-screen replies back to the active branch.
         NotificationManager.shared.onLockScreenReply = { [weak self] text in
             Task { @MainActor [weak self] in
@@ -96,6 +107,10 @@ final class WorldTreeStore {
                 branches = payload
                 if let treeId = currentTree?.id {
                     LocalDatabase.shared.replaceBranches(payload, treeId: treeId)
+                    // Build branch→tree mapping for typing/unread indicators
+                    for branch in payload {
+                        branchToTree[branch.id] = treeId
+                    }
                 }
                 if pendingNavigateToNewBranch {
                     pendingNavigateToNewBranch = false
@@ -137,6 +152,12 @@ final class WorldTreeStore {
                 serverSeen = false  // server is actively responding — hide the seen indicator
                 isStreaming = true
                 streamingText += token
+                // Track per-branch streaming state for indicators + persistence
+                let bid = event.branchId ?? currentBranch?.id
+                if let bid {
+                    streamingBranchIds.insert(bid)
+                    branchStreamingText[bid, default: ""] += token
+                }
                 // TASK-058: feed token batches to Live Activity (coalesced internally)
                 LiveActivityManager.shared.appendToken(token)
                 // TASK-065: buffer token for Watch (coalesced to 1/sec internally)
@@ -160,31 +181,47 @@ final class WorldTreeStore {
                 }
             }
         case "message_complete":
-            if !streamingText.isEmpty {
+            let bid = event.branchId ?? currentBranch?.id
+            // Prefer per-branch buffer (covers case where user switched away mid-stream)
+            let finalContent = bid.flatMap { branchStreamingText[$0] } ?? streamingText
+            if !finalContent.isEmpty {
                 let role = event.messageRole ?? "assistant"
                 let msg = Message(
                     id: event.messageId ?? UUID().uuidString,
                     role: role,
-                    content: streamingText,
+                    content: finalContent,
                     createdAt: ISO8601DateFormatter().string(from: Date())
                 )
-                messages.append(msg)
-                if let branchId = currentBranch?.id {
+                // Only append to visible messages if we're still on this branch
+                if bid == nil || bid == currentBranch?.id {
+                    messages.append(msg)
+                }
+                if let bid {
+                    LocalDatabase.shared.upsertMessage(msg, branchId: bid)
+                } else if let branchId = currentBranch?.id {
                     LocalDatabase.shared.upsertMessage(msg, branchId: branchId)
                 }
                 if role == "assistant" {
                     NotificationManager.shared.notifyAssistantMessage(
                         treeName: currentTree?.name ?? "World Tree",
                         branchName: currentBranch?.title,
-                        text: streamingText
+                        text: finalContent
                     )
                     // TASK-063: update widget data so the home screen widget stays current
-                    updateWidgetData(snippet: streamingText)
+                    updateWidgetData(snippet: finalContent)
                 }
                 // TASK-058: end Live Activity now that the response is complete
                 LiveActivityManager.shared.endActivity()
                 // TASK-065: notify Watch streaming is done
-                PhoneSessionManager.shared.sendStreamingEnd(finalText: streamingText)
+                PhoneSessionManager.shared.sendStreamingEnd(finalText: finalContent)
+            }
+            // Clear per-branch streaming state
+            if let bid {
+                streamingBranchIds.remove(bid)
+                branchStreamingText.removeValue(forKey: bid)
+            }
+            // Clear global state (only if this was the current branch's stream)
+            if bid == nil || bid == currentBranch?.id {
                 streamingText = ""
             }
             isStreaming = false
@@ -231,6 +268,25 @@ extension WorldTreeStore {
         persistedTreeId = tree.id
         isLoadingBranches = true
         branches = []
+        // Mark tree as viewed now so the unread badge clears immediately on tap
+        treeLastViewedAt[tree.id] = Date()
+        persistLastViewedDates()
+    }
+
+    /// True when the tree has new content since the user last opened it.
+    func hasUnread(_ tree: TreeSummary) -> Bool {
+        guard let lastViewed = treeLastViewedAt[tree.id] else { return false }
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fmt.date(from: tree.updatedAt) { return date > lastViewed }
+        fmt.formatOptions = [.withInternetDateTime]
+        if let date = fmt.date(from: tree.updatedAt) { return date > lastViewed }
+        return false
+    }
+
+    /// True when any branch of the given tree is currently streaming a response.
+    func isTreeStreaming(_ tree: TreeSummary) -> Bool {
+        streamingBranchIds.contains { branchToTree[$0] == tree.id }
     }
 
     /// Immediately append a user message so the UI shows it before the server echoes it back.
@@ -253,19 +309,37 @@ extension WorldTreeStore {
     }
 
     func selectBranch(_ branch: BranchSummary) {
+        // Save current streaming text before switching so it can be restored on return
+        if isStreaming, let currentId = currentBranch?.id {
+            branchStreamingText[currentId] = streamingText
+        }
+        // Keep branch→tree mapping up-to-date
+        if let treeId = currentTree?.id {
+            branchToTree[branch.id] = treeId
+        }
         currentBranch = branch
         persistedBranchId = branch.id
         // Clear stale messages so BranchView shows a clean state while new ones load.
         messages = []
-        streamingText = ""
-        isStreaming = false
         activeToolChips = []
         serverSeen = false
         showingCachedMessages = false
+        // Restore streaming state if this branch was already streaming
+        if streamingBranchIds.contains(branch.id) {
+            streamingText = branchStreamingText[branch.id] ?? ""
+            isStreaming = true
+        } else {
+            streamingText = ""
+            isStreaming = false
+        }
     }
 
     /// Navigate back from BranchView to BranchesListView.
     func clearBranch() {
+        // Preserve streaming text in the per-branch buffer so the list indicator stays visible
+        if isStreaming, let currentId = currentBranch?.id {
+            branchStreamingText[currentId] = streamingText
+        }
         currentBranch = nil
         persistedBranchId = nil
         messages = []
@@ -434,5 +508,27 @@ extension WorldTreeStore {
               let decoded = try? JSONDecoder().decode([String: String].self, from: data)
         else { return }
         drafts = decoded
+    }
+}
+
+// MARK: - Last-Viewed Date Persistence (unread badge tracking)
+
+extension WorldTreeStore {
+    private static let lastViewedKey = "treeLastViewedAt"
+
+    /// Load last-viewed timestamps from UserDefaults (called on init).
+    func loadLastViewedDates() {
+        guard let data = UserDefaults.standard.data(forKey: Self.lastViewedKey),
+              let dict = try? JSONDecoder().decode([String: Double].self, from: data)
+        else { return }
+        treeLastViewedAt = dict.mapValues { Date(timeIntervalSince1970: $0) }
+    }
+
+    /// Persist last-viewed timestamps to UserDefaults.
+    func persistLastViewedDates() {
+        let dict = treeLastViewedAt.mapValues { $0.timeIntervalSince1970 }
+        if let data = try? JSONEncoder().encode(dict) {
+            UserDefaults.standard.set(data, forKey: Self.lastViewedKey)
+        }
     }
 }

@@ -136,6 +136,20 @@ struct BranchView: View {
                     }
                     .help("Spatial View")
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        guard let tree = store.currentTree,
+                              let branch = store.currentBranch else { return }
+                        Task {
+                            await connectionManager.send(.subscribe(treeId: tree.id, branchId: branch.id))
+                            await connectionManager.send(.loadHistory(branchId: branch.id))
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption)
+                    }
+                    .help("Refresh Messages")
+                }
             }
             .fullScreenCover(isPresented: $showSpatialView) {
                 ZStack(alignment: .bottom) {

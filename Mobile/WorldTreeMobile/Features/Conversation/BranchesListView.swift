@@ -4,6 +4,8 @@ struct BranchesListView: View {
     @Environment(WorldTreeStore.self) private var store
     @Environment(ConnectionManager.self) private var connectionManager
 
+
+
     @State private var branchToRename: BranchSummary?
     @State private var branchToDelete: BranchSummary?
     @State private var renameText = ""
@@ -12,6 +14,7 @@ struct BranchesListView: View {
         List(store.branches as [BranchSummary]) { (branch: BranchSummary) in
             BranchRow(
                 branch: branch,
+                isTyping: store.streamingBranchIds.contains(branch.id),
                 onSelect: {
                     store.selectBranch(branch)
                     guard let tree = store.currentTree else { return }
@@ -82,27 +85,41 @@ struct BranchesListView: View {
 
 private struct BranchRow: View {
     let branch: BranchSummary
+    let isTyping: Bool
     let onSelect: () -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
         Button(action: onSelect) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(branch.displayName)
-                    .font(.body)
-                HStack(spacing: 8) {
-                    Text(branch.status.capitalized)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if branch.branchType != "main" {
-                        Text(branch.branchType)
-                            .font(.caption2)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.accentColor.opacity(0.12), in: Capsule())
-                            .foregroundStyle(Color.accentColor)
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(branch.displayName)
+                        .font(.body)
+                    HStack(spacing: 8) {
+                        if isTyping {
+                            MiniTypingDots()
+                        } else {
+                            Text(branch.status.capitalized)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if branch.branchType != "main" {
+                            Text(branch.branchType)
+                                .font(.caption2)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.accentColor.opacity(0.12), in: Capsule())
+                                .foregroundStyle(Color.accentColor)
+                        }
                     }
+                }
+                Spacer()
+                if isTyping {
+                    Circle()
+                        .fill(Color.blue)
+                        .frame(width: 8, height: 8)
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
         }

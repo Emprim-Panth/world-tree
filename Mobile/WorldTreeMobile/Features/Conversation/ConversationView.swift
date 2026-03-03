@@ -35,6 +35,7 @@ struct ConversationView: View {
             .toolbar {
                 connectionStatusToolbarItem
                 backToolbarItem
+                refreshToolbarItem
                 createToolbarItem
             }
             .sheet(isPresented: $showNewTreeSheet) {
@@ -115,6 +116,33 @@ struct ConversationView: View {
                 Button(action: { store.clearTree() }) {
                     Label("Projects", systemImage: "chevron.left")
                         .labelStyle(.titleAndIcon)
+                }
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var refreshToolbarItem: some ToolbarContent {
+        if case .connected = connectionManager.state {
+            if store.currentBranch == nil, store.currentTree == nil {
+                // Tree list: refresh button
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await connectionManager.send(.listTrees()) }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+            } else if store.currentTree != nil, store.currentBranch == nil {
+                // Branch list: refresh button
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        if let treeId = store.currentTree?.id {
+                            Task { await connectionManager.send(.listBranches(treeId: treeId)) }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
                 }
             }
         }

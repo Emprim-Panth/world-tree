@@ -56,6 +56,9 @@ struct ServerEvent: Decodable {
     // error payload
     var errorMessage: String?
 
+    // branch context (present in token, tool_status, message_complete)
+    var branchId: String?
+
     private enum EnvelopeKeys: String, CodingKey {
         case type
         case payload
@@ -68,6 +71,8 @@ struct ServerEvent: Decodable {
         case branches
         // messages_list
         case messages
+        // shared context
+        case branchId
         // token
         case token
         case index
@@ -101,14 +106,17 @@ struct ServerEvent: Decodable {
             messages = try? payload.decode([Message].self, forKey: .messages)
 
         case "token":
+            branchId = try? payload.decode(String.self, forKey: .branchId)
             token = try? payload.decode(String.self, forKey: .token)
             tokenIndex = try? payload.decode(Int.self, forKey: .index)
 
         case "tool_status":
+            branchId = try? payload.decode(String.self, forKey: .branchId)
             toolName = try? payload.decode(String.self, forKey: .tool)
             toolStatus = try? payload.decode(String.self, forKey: .status)
 
         case "message_complete":
+            branchId = try? payload.decode(String.self, forKey: .branchId)
             messageId = try? payload.decode(String.self, forKey: .messageId)
             messageRole = try? payload.decode(String.self, forKey: .role)
             messageContent = try? payload.decode(String.self, forKey: .content)

@@ -108,21 +108,38 @@ private struct TreeRow: View {
     let onRename: () -> Void
     let onDelete: () -> Void
 
+    private var isStreaming: Bool { store.isTreeStreaming(tree) }
+    private var hasUnread: Bool { store.hasUnread(tree) }
+
     var body: some View {
         Button(action: {
             store.selectTree(tree)
             store.pendingAutoSelectBranch = true
         }) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(tree.name)
-                    .font(.body)
-                HStack(spacing: 6) {
-                    Text(relativeTime(from: tree.updatedAt))
-                    Text("·")
-                    Text("\(tree.messageCount) messages")
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(tree.name)
+                        .font(.body)
+                    HStack(spacing: 6) {
+                        if isStreaming {
+                            MiniTypingDots()
+                        } else {
+                            Text(relativeTime(from: tree.updatedAt))
+                            Text("·")
+                            Text("\(tree.messageCount) messages")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Spacer()
+                if hasUnread {
+                    Circle()
+                        .fill(Color.blue)
+                        .frame(width: 10, height: 10)
+                        .padding(.top, 5)
+                        .transition(.scale.combined(with: .opacity))
+                }
             }
         }
         .foregroundStyle(.primary)
@@ -149,5 +166,30 @@ private struct TreeRow: View {
         let rel = RelativeDateTimeFormatter()
         rel.unitsStyle = .short
         return rel.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// MARK: - Mini Typing Dots
+
+/// Small three-dot animation used in list rows to indicate active streaming.
+struct MiniTypingDots: View {
+    @State private var animating = false
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(Color.secondary.opacity(0.6))
+                    .frame(width: 5, height: 5)
+                    .scaleEffect(animating ? 1.0 : 0.5)
+                    .animation(
+                        .easeInOut(duration: 0.45)
+                            .repeatForever()
+                            .delay(Double(i) * 0.15),
+                        value: animating
+                    )
+            }
+        }
+        .onAppear { animating = true }
     }
 }
