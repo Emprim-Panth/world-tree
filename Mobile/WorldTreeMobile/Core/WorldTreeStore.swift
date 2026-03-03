@@ -26,6 +26,9 @@ final class WorldTreeStore {
     var isLoadingHistory: Bool = false
     /// True while a list_branches request is in-flight (set when a tree is selected).
     var isLoadingBranches: Bool = false
+    /// True after the server acknowledges our message but before the first response token arrives.
+    /// Drives the "Seen ✓✓" + thinking indicator in the mobile UI.
+    var serverSeen: Bool = false
     /// Per-branch draft text. Key = branchId. Binding-compatible via draftText(for:).
     private var drafts: [String: String] = [:]
 
@@ -90,9 +93,14 @@ final class WorldTreeStore {
                 isStreaming = false
                 activeToolChips = []
                 isLoadingHistory = false
+                serverSeen = false
             }
+        case "message_received":
+            serverSeen = true
+
         case "token":
             if let token = event.token {
+                serverSeen = false  // server is actively responding — hide the seen indicator
                 isStreaming = true
                 streamingText += token
             }
@@ -197,6 +205,7 @@ extension WorldTreeStore {
         streamingText = ""
         isStreaming = false
         activeToolChips = []
+        serverSeen = false
     }
 
     /// Navigate back from BranchView to BranchesListView.

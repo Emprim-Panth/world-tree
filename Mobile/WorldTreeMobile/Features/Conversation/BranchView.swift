@@ -91,7 +91,13 @@ struct BranchView: View {
                         )
                         .id(message.id)
                     }
-                    if store.isStreaming {
+                    if store.serverSeen {
+                        SeenIndicator()
+                            .id("seen-indicator")
+                        ThinkingBubble()
+                            .padding(.horizontal)
+                            .id("thinking")
+                    } else if store.isStreaming {
                         // Tool chips appear above the streaming bubble
                         if !store.activeToolChips.isEmpty {
                             ToolChipsRow(chips: store.activeToolChips)
@@ -109,6 +115,11 @@ struct BranchView: View {
             .onChange(of: store.messages.count) {
                 if let last = store.messages.last {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                }
+            }
+            .onChange(of: store.serverSeen) {
+                if store.serverSeen {
+                    withAnimation { proxy.scrollTo("thinking", anchor: .bottom) }
                 }
             }
             .onChange(of: store.streamingText) {
@@ -269,6 +280,61 @@ private struct ToolChipBadge: View {
         case .done:    return .green
         case .failed:  return .red
         }
+    }
+}
+
+// MARK: - Seen Indicator
+
+/// "Seen ✓✓" label shown right-aligned below the last user message while the server
+/// has acknowledged receipt but hasn't started streaming yet.
+private struct SeenIndicator: View {
+    var body: some View {
+        HStack(spacing: 2) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 10, weight: .semibold))
+            Image(systemName: "checkmark")
+                .font(.system(size: 10, weight: .semibold))
+                .padding(.leading, -4)
+            Text("Seen")
+                .font(.caption2)
+                .fontWeight(.medium)
+        }
+        .foregroundStyle(Color.blue.opacity(0.75))
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.horizontal, 20)
+        .padding(.top, -4)
+        .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .trailing)))
+    }
+}
+
+// MARK: - Thinking Bubble
+
+/// Animated "thinking…" indicator shown while the server is processing but hasn't
+/// sent any tokens yet. Disappears when the first token arrives.
+private struct ThinkingBubble: View {
+    @State private var animating = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(Color.secondary.opacity(0.5))
+                    .frame(width: 8, height: 8)
+                    .scaleEffect(animating ? 1.0 : 0.6)
+                    .animation(
+                        .easeInOut(duration: 0.5)
+                            .repeatForever()
+                            .delay(Double(i) * 0.18),
+                        value: animating
+                    )
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.secondarySystemBackground, in: RoundedRectangle(cornerRadius: 16))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { animating = true }
+        .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .leading)))
     }
 }
 

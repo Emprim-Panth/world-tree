@@ -101,7 +101,7 @@ struct DocumentEditorView: View {
                         // so 10fps token updates don't re-render the document section list.
                         StreamingLayerView(streaming: viewModel.streaming)
 
-                        // Scroll anchor — used by proxy.scrollTo("scroll-bottom")
+                        // Scroll anchor — used by proxy.scrollTo("scroll-bottom", anchor: .bottom) throughout
                         Color.clear.frame(height: 1).id("scroll-bottom")
                     }
                     .padding(.horizontal, max(24, (geometry.size.width - 800) / 2))
@@ -179,7 +179,7 @@ struct DocumentEditorView: View {
                     guard viewModel.initialScrollComplete else { return }
                     guard viewModel.streaming.content == nil, !viewModel.isProcessing else { return }
                     if viewModel.isScrolledToBottom {
-                        proxy.scrollTo("scroll-bottom")
+                        proxy.scrollTo("scroll-bottom", anchor: .bottom)
                     }
                 }
                 .onReceive(viewModel.streaming.$content) { content in
@@ -189,11 +189,11 @@ struct DocumentEditorView: View {
                     if content != nil {
                         // Only auto-scroll while streaming if user hasn't scrolled up
                         if viewModel.isScrolledToBottom {
-                            proxy.scrollTo("scroll-bottom")
+                            proxy.scrollTo("scroll-bottom", anchor: .bottom)
                         }
                     } else {
                         // Streaming ended — snap to bottom so input is in view
-                        proxy.scrollTo("scroll-bottom")
+                        proxy.scrollTo("scroll-bottom", anchor: .bottom)
                         if viewModel.hasNewStreamContent { viewModel.hasNewStreamContent = false }
                     }
                 }
@@ -206,7 +206,7 @@ struct DocumentEditorView: View {
                     if viewModel.hasNewStreamContent && !viewModel.isScrolledToBottom {
                         ScrollToBottomFAB {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                proxy.scrollTo("scroll-bottom")
+                                proxy.scrollTo("scroll-bottom", anchor: .bottom)
                             }
                             viewModel.hasNewStreamContent = false
                         }
@@ -219,11 +219,11 @@ struct DocumentEditorView: View {
                 .onChange(of: viewModel.isProcessing) { _, processing in
                     guard viewModel.initialLoadDone else { return }
                     if processing && viewModel.streaming.content == nil {
-                        proxy.scrollTo("scroll-bottom")
+                        proxy.scrollTo("scroll-bottom", anchor: .bottom)
                     }
                     // Snap to bottom when the response finishes committing
                     if !processing && viewModel.isScrolledToBottom {
-                        proxy.scrollTo("scroll-bottom")
+                        proxy.scrollTo("scroll-bottom", anchor: .bottom)
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .showConversationSearch)) { _ in
