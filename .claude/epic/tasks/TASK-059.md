@@ -1,6 +1,6 @@
 # TASK-059: feat: Siri & Shortcuts integration
 
-**Status:** Pending
+**Status:** Done
 **Priority:** Medium
 **Assignee:** Unassigned
 **Created:** 2026-03-03

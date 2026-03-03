@@ -98,7 +98,6 @@ final class ConnectionManager {
     private var reconnectTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var backgroundTimer: Task<Void, Never>?
-    private var currentToken: String = ""
     private let taskFactory: @Sendable (URL) -> any WebSocketTaskProtocol
 
     // `let` constant — accessible from nonisolated deinit.
@@ -116,16 +115,15 @@ final class ConnectionManager {
 
     // MARK: - Public API
 
-    /// Connect to `server` authenticated with `token`.
+    /// Connect to `server`. No auth required — token parameter kept for call-site compat.
     /// Resets the reconnect counter and cancels any pending reconnect first.
-    func connect(to server: SavedServer, token: String) async {
+    func connect(to server: SavedServer, token: String = "") async {
         suppressAutoConnect = false
         currentServer = server
-        currentToken = token
         reconnectAttempts = 0
         cancelReconnect()
         state = .connecting
-        await openWebSocket(server: server, token: token)
+        await openWebSocket(server: server)
     }
 
     /// Immediately close the socket and cancel all background work.
@@ -155,7 +153,7 @@ final class ConnectionManager {
 
     // MARK: - WebSocket Lifecycle
 
-    private func openWebSocket(server: SavedServer, token: String) async {
+    private func openWebSocket(server: SavedServer) async {
         // Port 5866 = NWProtocolWebSocket listener (always httpPort + 1).
         // Network.framework handles the RFC 6455 handshake on both sides —
         // no manual SHA-1 computation, no accept-key mismatch possible.
@@ -169,18 +167,16 @@ final class ConnectionManager {
         webSocketTask = task
         task.resume()
         state = .connected
-        startReceiveLoop(task: task, generation: generation, server: server, token: token)
+        startReceiveLoop(task: task, generation: generation, server: server)
         startPingLoop()
-        // Auth handshake: first message must be {"type":"auth","token":"..."}.
-        // listTrees is sent after auth_ok is received (see handleMessage).
-        await send(.auth(token: token))
+        // No auth handshake — server accepts all connections.
+        await send(.listTrees())
     }
 
     private func startReceiveLoop(
         task: any WebSocketTaskProtocol,
         generation: Int,
-        server: SavedServer,
-        token: String
+        server: SavedServer
     ) {
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -193,7 +189,7 @@ final class ConnectionManager {
             } catch {
                 guard self.connectionGeneration == generation else { return }
                 print("[ConnectionManager] WebSocket error: \(error)")
-                await self.handleDisconnect(server: server, token: token)
+                await self.handleDisconnect(server: server)
             }
         }
     }
@@ -201,18 +197,13 @@ final class ConnectionManager {
     private func handleMessage(_ message: URLSessionWebSocketTask.Message) {
         switch message {
         case .string(let text):
-            // Consume auth_ok internally — request initial data and skip forwarding.
-            if text.contains("\"auth_ok\"") {
-                Task { @MainActor [weak self] in await self?.send(.listTrees()) }
-                return
-            }
             NotificationCenter.default.post(name: .webSocketMessageReceived, object: text)
         default:
             break
         }
     }
 
-    private func handleDisconnect(server: SavedServer, token: String) async {
+    private func handleDisconnect(server: SavedServer) async {
         webSocketTask = nil
         cancelPing()
 
@@ -229,7 +220,7 @@ final class ConnectionManager {
             guard let self else { return }
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
-            await self.openWebSocket(server: server, token: token)
+            await self.openWebSocket(server: server)
         }
     }
 
@@ -293,12 +284,12 @@ final class ConnectionManager {
     /// Cancel the timer; reconnect if the socket was dropped while backgrounded.
     private func handleForeground() async {
         cancelBackgroundTimer()
-        guard let server = currentServer, !currentToken.isEmpty else { return }
+        guard let server = currentServer else { return }
         switch state {
         case .disconnected, .reconnecting:
             reconnectAttempts = 0
             cancelReconnect()
-            await openWebSocket(server: server, token: currentToken)
+            await openWebSocket(server: server)
         default:
             break
         }

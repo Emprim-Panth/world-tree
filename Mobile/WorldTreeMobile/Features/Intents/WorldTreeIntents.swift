@@ -27,9 +27,7 @@ struct AskCortanaIntent: AppIntent {
     }
 
     @MainActor
-    func perform() async throws -> some IntentResult & OpensIntent {
-        // We can't directly drive the app from an intent without a visible foreground scene,
-        // so we use the worldtree:// URL scheme to open the app with the message pre-filled.
+    func perform() async throws -> some IntentResult {
         guard var components = URLComponents(string: "worldtree://newbranch") else {
             throw IntentError.generic
         }
@@ -37,7 +35,10 @@ struct AskCortanaIntent: AppIntent {
         guard let url = components.url else {
             throw IntentError.generic
         }
-        return .result(opensIntent: OpenURLIntent(url))
+        if #available(iOS 18.0, *) {
+            return .result(opensIntent: OpenURLIntent(url))
+        }
+        return .result()
     }
 }
 
@@ -53,11 +54,14 @@ struct OpenWorldTreeIntent: AppIntent {
     }
 
     @MainActor
-    func perform() async throws -> some IntentResult & OpensIntent {
+    func perform() async throws -> some IntentResult {
         guard let url = URL(string: "worldtree://") else {
             throw IntentError.generic
         }
-        return .result(opensIntent: OpenURLIntent(url))
+        if #available(iOS 18.0, *) {
+            return .result(opensIntent: OpenURLIntent(url))
+        }
+        return .result()
     }
 }
 
@@ -68,8 +72,8 @@ struct WorldTreeShortcutsProvider: AppShortcutsProvider {
         AppShortcut(
             intent: AskCortanaIntent(),
             phrases: [
-                "Ask Cortana \(\.$message) in \(.applicationName)",
-                "Tell \(.applicationName) about \(\.$message)",
+                "Ask Cortana in \(.applicationName)",
+                "Send a message in \(.applicationName)",
             ],
             shortTitle: "Ask Cortana",
             systemImageName: "bubble.left.and.text.bubble.right"

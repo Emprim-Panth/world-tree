@@ -1,6 +1,6 @@
 # TASK-058: feat: iOS Live Activities & Dynamic Island
 
-**Status:** Pending
+**Status:** Done
 **Priority:** Medium
 **Assignee:** Unassigned
 **Created:** 2026-03-03

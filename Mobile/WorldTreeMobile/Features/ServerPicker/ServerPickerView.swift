@@ -116,8 +116,7 @@ struct ServerPickerView: View {
     // MARK: - Actions
 
     private func connectTo(_ server: SavedServer) {
-        let token = KeychainHelper.load(forServerId: server.id) ?? ""
-        Task { await connectionManager.connect(to: server, token: token) }
+        Task { await connectionManager.connect(to: server) }
         persistLastServer(server)
         updateLastConnected(server)
     }
@@ -143,7 +142,7 @@ struct ServerPickerView: View {
         // Off Wi-Fi and remote server configured → connect to remote directly.
         if !isOnWifi && !remoteHost.isEmpty {
             let remote = SavedServer.manual(name: "Remote", host: remoteHost)
-            Task { await connectionManager.connect(to: remote, token: "") }
+            Task { await connectionManager.connect(to: remote) }
             return
         }
 
@@ -155,9 +154,6 @@ struct ServerPickerView: View {
     }
 
     private func deleteServers(at offsets: IndexSet) {
-        for index in offsets {
-            KeychainHelper.delete(forServerId: savedServers[index].id)
-        }
         savedServers.remove(atOffsets: offsets)
         persistServers()
     }
@@ -276,7 +272,6 @@ struct AddServerView: View {
     @State private var name: String
     @State private var host: String
     @State private var port: String
-    @State private var token = ""
 
     init(
         prefillName: String = "",
@@ -314,10 +309,6 @@ struct AddServerView: View {
                         .foregroundStyle(.blue)
                     }
                 }
-
-                Section("Authentication") {
-                    SecureField("Token", text: $token)
-                }
             }
             .navigationTitle("Add Server")
             .navigationBarTitleDisplayMode(.inline)
@@ -336,7 +327,6 @@ struct AddServerView: View {
     private func add() {
         let portInt = Int(port) ?? Constants.Network.defaultPort
         let server = SavedServer.manual(name: name, host: host, port: portInt)
-        KeychainHelper.save(token: token, forServerId: server.id)
         onAdd(server)
         dismiss()
     }

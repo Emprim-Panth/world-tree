@@ -1,6 +1,6 @@
 # TASK-066: feat: Spatial computing / Vision (visionOS + Mac spatial view)
 
-**Status:** Pending
+**Status:** Done
 **Priority:** Low
 **Assignee:** Unassigned
 **Created:** 2026-03-03

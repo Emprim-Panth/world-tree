@@ -18,6 +18,17 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.evanprimeau.world-tree-mobile</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>worldtree</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>NSBonjourServices</key>
@@ -30,6 +41,10 @@
 	<string>World Tree uses the microphone for voice dictation so you can speak your messages hands-free.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>World Tree uses speech recognition to transcribe your voice into text messages.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<true/>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

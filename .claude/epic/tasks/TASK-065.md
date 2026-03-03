@@ -1,6 +1,6 @@
 # TASK-065: feat: Apple Watch companion app
 
-**Status:** Pending
+**Status:** Done
 **Priority:** Medium
 **Assignee:** Unassigned
 **Created:** 2026-03-03

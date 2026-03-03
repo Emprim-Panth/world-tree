@@ -18,7 +18,7 @@ final class WorldTreeServer: ObservableObject {
     /// Native WebSocket port (NWProtocolWebSocket) — iOS connects here.
     /// One above the HTTP port so clients derive it as `port + 1`.
     static let wsPort: UInt16 = 5866
-    static let tokenKey = AppConstants.serverTokenKey
+    static let tokenKey = AppConstants.serverTokenKey   // kept for Settings UI compat — no longer enforced
     static let enabledKey = AppConstants.serverEnabledKey
     static let bonjourEnabledKey = AppConstants.bonjourEnabledKey
 
@@ -37,9 +37,6 @@ final class WorldTreeServer: ObservableObject {
     private var wsListener: NWListener?
     private let networkQueue = DispatchQueue(label: "cortana.canvas-server", qos: .userInitiated)
     private var pingTask: Task<Void, Never>?
-    private let rateLimiter = AuthRateLimiter()
-    /// Clients that have connected but haven't sent an auth message yet.
-    private var pendingAuthClients: Set<String> = []
     /// Tracks last WebSocket connection time per remote IP for reconnect throttling.
     private var lastWSConnectionTime: [String: Date] = [:]
     private static let wsReconnectThrottleSeconds: TimeInterval = 2.0
@@ -50,21 +47,12 @@ final class WorldTreeServer: ObservableObject {
 
     private static let iso8601 = ISO8601DateFormatter()
 
-    var configuredToken: String {
-        UserDefaults.standard.string(forKey: Self.tokenKey) ?? ""
-    }
-
     private init() {}
 
     // MARK: - Lifecycle
 
     func start() {
         guard !isRunning else { return }
-        guard !configuredToken.isEmpty else {
-            lastError = "No server token — set it in Settings → Server"
-            wtLog("[WorldTreeServer] Cannot start: no token configured")
-            return
-        }
 
         do {
             guard let nwPort = NWEndpoint.Port(rawValue: Self.port) else {
@@ -137,7 +125,6 @@ final class WorldTreeServer: ObservableObject {
             client.wsConnection?.sendCloseAndDisconnect(code: 1001, reason: "Server shutting down")
         }
         webSocketClients.removeAll()
-        pendingAuthClients.removeAll()
 
         wsListener?.cancel()
         wsListener = nil
@@ -201,7 +188,6 @@ final class WorldTreeServer: ObservableObject {
         var state: [String: Any] = [
             "url": "http://localhost:\(Self.port)",
             "port": Self.port,
-            "token": configuredToken,
             "started_at": Self.iso8601.string(from: Date())
         ]
         if let ngrok = ngrokURL {
@@ -277,7 +263,7 @@ final class WorldTreeServer: ObservableObject {
         // Extract remote IP for rate limiting (best-effort — may be nil for Unix sockets)
         let remoteIP = Self.remoteIP(from: connection)
         // Hand off to nonisolated receive loop
-        Self.receiveData(from: connection, token: configuredToken, remoteIP: remoteIP, accumulated: Data(), server: self)
+        Self.receiveData(from: connection, remoteIP: remoteIP, accumulated: Data(), server: self)
     }
 
     /// Extract the dotted-decimal (or colon-delimited) IP from an NWConnection endpoint.
@@ -300,7 +286,6 @@ final class WorldTreeServer: ObservableObject {
     /// Runs on NWConnection's callback queue — no MainActor access here.
     private nonisolated static func receiveData(
         from connection: NWConnection,
-        token: String,
         remoteIP: String,
         accumulated: Data,
         server: WorldTreeServer
@@ -326,7 +311,7 @@ final class WorldTreeServer: ObservableObject {
             let terminator = Data("\r\n\r\n".utf8)
             guard let headerEnd = buffer.range(of: terminator) else {
                 if isComplete { connection.cancel() }
-                else { receiveData(from: connection, token: token, remoteIP: remoteIP, accumulated: buffer, server: server) }
+                else { receiveData(from: connection, remoteIP: remoteIP, accumulated: buffer, server: server) }
                 return
             }
 
@@ -337,11 +322,10 @@ final class WorldTreeServer: ObservableObject {
 
             if bodyReceived >= contentLength {
                 Task { @MainActor [weak server] in
-                    await server?.handleRawRequest(
-                        buffer, connection: connection, expectedToken: token, remoteIP: remoteIP)
+                    await server?.handleRawRequest(buffer, connection: connection, remoteIP: remoteIP)
                 }
             } else {
-                receiveData(from: connection, token: token, remoteIP: remoteIP, accumulated: buffer, server: server)
+                receiveData(from: connection, remoteIP: remoteIP, accumulated: buffer, server: server)
             }
         }
     }
@@ -355,7 +339,6 @@ final class WorldTreeServer: ObservableObject {
     func handleRawRequest(
         _ data: Data,
         connection: NWConnection,
-        expectedToken: String,
         remoteIP: String = "unknown"
     ) async {
         guard let raw = String(data: data, encoding: .utf8) else {
@@ -365,33 +348,11 @@ final class WorldTreeServer: ObservableObject {
 
         let req = parseHTTP(raw)
 
-        // Purge stale windows opportunistically (no separate timer needed at low traffic).
-        rateLimiter.purgeAllExpired()
-
-        // Check if this IP is already rate-limited before attempting auth.
-        if req.path != "/health" && rateLimiter.isBlocked(ip: remoteIP) {
-            wtLog("[WorldTreeServer] Rate-limited request from \(remoteIP)")
-            sendResponse(connection, status: 429, body: #"{"error":"too many failed auth attempts — try again later"}"#)
-            return
-        }
-
         // WebSocket upgrade on the HTTP port is no longer supported.
         // All WebSocket clients connect to port 5866 (NWProtocolWebSocket).
         if req.headers["upgrade"]?.lowercased() == "websocket" {
             sendResponse(connection, status: 426, body: #"{"error":"WebSocket upgrade not supported on HTTP port — connect to port \#(Self.wsPort) instead"}"#)
             return
-        }
-
-        if req.path != "/health" {
-            guard (req.headers["x-worldtree-token"] ?? "") == expectedToken else {
-                let nowBlocked = rateLimiter.recordFailure(ip: remoteIP)
-                let status = nowBlocked ? 429 : 401
-                let body = nowBlocked
-                    ? #"{"error":"too many failed auth attempts — try again later"}"#
-                    : #"{"error":"unauthorized"}"#
-                sendResponse(connection, status: status, body: body)
-                return
-            }
         }
 
         requestCount += 1
@@ -1458,24 +1419,17 @@ extension WorldTreeServer {
         )
 
         webSocketClients[clientId] = client
-        pendingAuthClients.insert(clientId)
-        wtLog("[WorldTreeServer] WS client connected (pending auth): \(clientId.prefix(8)) (total: \(webSocketClients.count))")
+        wtLog("[WorldTreeServer] WS client connected: \(clientId.prefix(8)) (total: \(webSocketClients.count))")
 
         wsConn.onMessage = { [weak self] text in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                // First message must be auth if client hasn't authenticated yet
-                if self.pendingAuthClients.contains(clientId) {
-                    self.handleWSAuth(clientId: clientId, text: text)
-                } else {
-                    self.handleWebSocketMessage(clientId: clientId, text: text)
-                }
+                self.handleWebSocketMessage(clientId: clientId, text: text)
             }
         }
 
         wsConn.onClose = { [weak self] code, reason in
             Task { @MainActor [weak self] in
-                self?.pendingAuthClients.remove(clientId)
                 self?.removeWebSocketClient(clientId, code: code, reason: reason)
             }
         }
@@ -1488,51 +1442,8 @@ extension WorldTreeServer {
 
         wsConn.startReading()
         startPingTimerIfNeeded()
-
-        // Auto-disconnect if client doesn't auth within 10 seconds
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(10))
-            guard let self, self.pendingAuthClients.contains(clientId) else { return }
-            wtLog("[WorldTreeServer] WS client \(clientId.prefix(8)) failed to auth within 10s — disconnecting")
-            self.pendingAuthClients.remove(clientId)
-            self.webSocketClients[clientId]?.wsConnection?.sendCloseAndDisconnect(code: 4001, reason: "Auth timeout")
-            self.removeWebSocketClient(clientId, code: 4001, reason: "Auth timeout")
-        }
     }
 
-    /// Handle the first WebSocket message as an auth message.
-    /// Accepts both formats:
-    ///   Flat:     {"type":"auth","token":"<token>"}          (legacy)
-    ///   Envelope: {"type":"auth","payload":{"token":"..."}}  (WSMessage standard — iOS client)
-    private func handleWSAuth(clientId: String, text: String) {
-        guard let data = text.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = json["type"] as? String, type == "auth" else {
-            wtLog("[WorldTreeServer] WS auth failed for \(clientId.prefix(8))")
-            pendingAuthClients.remove(clientId)
-            webSocketClients[clientId]?.wsConnection?.send(text: #"{"type":"error","message":"unauthorized"}"#)
-            webSocketClients[clientId]?.wsConnection?.sendCloseAndDisconnect(code: 4003, reason: "Unauthorized")
-            removeWebSocketClient(clientId, code: 4003, reason: "Unauthorized")
-            return
-        }
-
-        // Extract token from flat format or WSMessage envelope.
-        let receivedToken = (json["token"] as? String)
-            ?? ((json["payload"] as? [String: Any])?["token"] as? String)
-
-        guard let receivedToken, receivedToken == configuredToken else {
-            wtLog("[WorldTreeServer] WS auth failed for \(clientId.prefix(8))")
-            pendingAuthClients.remove(clientId)
-            webSocketClients[clientId]?.wsConnection?.send(text: #"{"type":"error","message":"unauthorized"}"#)
-            webSocketClients[clientId]?.wsConnection?.sendCloseAndDisconnect(code: 4003, reason: "Unauthorized")
-            removeWebSocketClient(clientId, code: 4003, reason: "Unauthorized")
-            return
-        }
-
-        pendingAuthClients.remove(clientId)
-        wtLog("[WorldTreeServer] WS client authenticated: \(clientId.prefix(8))")
-        webSocketClients[clientId]?.wsConnection?.send(text: #"{"type":"auth_ok"}"#)
-    }
 }
 
 // MARK: - Notification Names

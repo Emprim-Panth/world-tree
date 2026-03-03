@@ -8,22 +8,8 @@ import SwiftUI
 // Static info: tree + branch names (don't change during the response).
 // ContentState: streaming text + elapsed time (update on every token batch).
 
-struct WorldTreeActivityAttributes: ActivityAttributes {
-
-    // MARK: - Static Context (set once on request)
-
-    let treeName: String
-    let branchName: String?
-
-    // MARK: - Dynamic State (updated while streaming)
-
-    struct ContentState: Codable, Hashable {
-        /// Truncated preview of the streaming response (max 200 chars for readability).
-        var streamingText: String
-        /// Whether Cortana is still typing (false = response complete).
-        var isStreaming: Bool
-    }
-}
+// WorldTreeActivityAttributes is defined in WorldTreeMobile/Shared/ActivityAttributes.swift
+// and shared between the main app and this widget extension.
 
 // MARK: - Live Activity Widget Configuration
 

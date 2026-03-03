@@ -1,6 +1,6 @@
 # TASK-063: feat: Widgets (WidgetKit)
 
-**Status:** Pending
+**Status:** Done
 **Priority:** Low
 **Assignee:** Unassigned
 **Created:** 2026-03-03

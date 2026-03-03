@@ -1,6 +1,6 @@
 # TASK-062: feat: Notification Reply (reply from lock screen)
 
-**Status:** Pending
+**Status:** Done
 **Priority:** Medium
 **Assignee:** Unassigned
 **Created:** 2026-03-03

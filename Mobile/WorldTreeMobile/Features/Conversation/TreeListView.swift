@@ -47,6 +47,9 @@ struct TreeListView: View {
                 }
             }
         }
+        .refreshable {
+            await connectionManager.send(.listTrees())
+        }
         .searchable(
             text: $searchText,
             placement: .navigationBarDrawer(displayMode: .always),

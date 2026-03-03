@@ -1,6 +1,6 @@
 # TASK-060: feat: Share Extension
 
-**Status:** Pending
+**Status:** Done
 **Priority:** Medium
 **Assignee:** Unassigned
 **Created:** 2026-03-03

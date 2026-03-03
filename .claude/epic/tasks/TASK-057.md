@@ -1,6 +1,6 @@
 # TASK-057: feat: iOS offline support (GRDB local cache)
 
-**Status:** Pending
+**Status:** Done
 **Priority:** Critical
 **Assignee:** Unassigned
 **Created:** 2026-03-03

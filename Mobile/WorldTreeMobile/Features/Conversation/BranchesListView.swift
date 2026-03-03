@@ -27,6 +27,11 @@ struct BranchesListView: View {
                 onDelete: { branchToDelete = branch }
             )
         }
+        .refreshable {
+            if let treeId = store.currentTree?.id {
+                await connectionManager.send(.listBranches(treeId: treeId))
+            }
+        }
         .overlay {
             if store.isLoadingBranches {
                 ProgressView()
