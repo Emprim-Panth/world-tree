@@ -1,8 +1,8 @@
 # TASK-064: feat: Voice mode (speech-to-text + TTS response)
 
-**Status:** Pending
+**Status:** Done
 **Priority:** High
-**Assignee:** Unassigned
+**Assignee:** Cortana
 **Created:** 2026-03-03
 **Updated:** 2026-03-03
 
