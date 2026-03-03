@@ -116,6 +116,14 @@ struct BranchView: View {
                 activity.isEligibleForSearch = false
                 activity.becomeCurrent()
             }
+            // TASK-062: send lock-screen reply to the active branch
+            .onChange(of: store.pendingReply) { _, reply in
+                guard let text = reply, !text.isEmpty else { return }
+                store.pendingReply = nil
+                guard let branch = store.currentBranch else { return }
+                store.addOptimisticMessage(content: text)
+                Task { await connectionManager.send(.sendMessage(branchId: branch.id, content: text)) }
+            }
     }
 
     private var messageList: some View {

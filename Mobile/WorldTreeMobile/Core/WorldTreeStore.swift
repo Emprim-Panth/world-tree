@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import WidgetKit
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -47,9 +48,18 @@ final class WorldTreeStore {
     /// Pending Share Extension payload — set by the worldtree:// URL handler,
     /// consumed by BranchView.onAppear to pre-fill the message input.
     var pendingShare: PendingShare?
+    /// Pending lock-screen reply (TASK-062). Set by NotificationManager.onLockScreenReply,
+    /// observed by BranchView which sends it via ConnectionManager.
+    var pendingReply: String?
 
     init() {
         loadDrafts()
+        // TASK-062: route lock-screen replies back to the active branch.
+        NotificationManager.shared.onLockScreenReply = { [weak self] text in
+            Task { @MainActor [weak self] in
+                self?.pendingReply = text
+            }
+        }
         NotificationCenter.default.addObserver(
             forName: .webSocketMessageReceived,
             object: nil,
@@ -127,6 +137,8 @@ final class WorldTreeStore {
                 serverSeen = false  // server is actively responding — hide the seen indicator
                 isStreaming = true
                 streamingText += token
+                // TASK-058: feed token batches to Live Activity (coalesced internally)
+                LiveActivityManager.shared.appendToken(token)
             }
         case "tool_status":
             if let name = event.toolName, let status = event.toolStatus {
@@ -164,7 +176,11 @@ final class WorldTreeStore {
                         branchName: currentBranch?.title,
                         text: streamingText
                     )
+                    // TASK-063: update widget data so the home screen widget stays current
+                    updateWidgetData(snippet: streamingText)
                 }
+                // TASK-058: end Live Activity now that the response is complete
+                LiveActivityManager.shared.endActivity()
                 streamingText = ""
             }
             isStreaming = false
@@ -214,6 +230,7 @@ extension WorldTreeStore {
     }
 
     /// Immediately append a user message so the UI shows it before the server echoes it back.
+    /// Also starts a Live Activity so the response is visible on the lock screen (TASK-058).
     func addOptimisticMessage(content: String) {
         let msg = Message(
             id: "optimistic-\(UUID().uuidString)",
@@ -222,6 +239,12 @@ extension WorldTreeStore {
             createdAt: ISO8601DateFormatter().string(from: Date())
         )
         messages.append(msg)
+
+        // TASK-058: start Live Activity when user sends a message
+        LiveActivityManager.shared.startActivity(
+            treeName: currentTree?.name ?? "World Tree",
+            branchName: currentBranch?.title
+        )
     }
 
     func selectBranch(_ branch: BranchSummary) {
@@ -339,6 +362,39 @@ extension WorldTreeStore {
         }
         // Consume the handoff request regardless of whether we found the branch
         pendingHandoff = nil
+    }
+}
+
+// MARK: - Widget + Notification Reply Integration
+
+extension WorldTreeStore {
+    private enum WidgetKeys {
+        static let suiteName = "group.com.evanprimeau.worldtree"
+        static let lastMessage = "widget_lastMessage"
+        static let lastTreeName = "widget_lastTreeName"
+        static let lastBranchName = "widget_lastBranchName"
+        static let lastUpdated = "widget_lastUpdated"
+    }
+
+    /// Write the latest assistant message to the shared App Group so the Widget can display it.
+    /// Reload the widget timeline so the home screen snippet is fresh within ~30 seconds.
+    func updateWidgetData(snippet: String) {
+        guard let suite = UserDefaults(suiteName: WidgetKeys.suiteName) else { return }
+        suite.set(String(snippet.prefix(200)), forKey: WidgetKeys.lastMessage)
+        suite.set(currentTree?.name ?? "World Tree", forKey: WidgetKeys.lastTreeName)
+        suite.set(currentBranch?.title, forKey: WidgetKeys.lastBranchName)
+        suite.set(Date(), forKey: WidgetKeys.lastUpdated)
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    /// Register the lock-screen reply callback so NotificationManager can route replies
+    /// back to the active branch. Call once, early in the app lifecycle.
+    func registerLockScreenReplyHandler() {
+        NotificationManager.shared.onLockScreenReply = { [weak self] replyText in
+            guard let self else { return }
+            // Set pendingReply — observed by BranchView which sends it via ConnectionManager.
+            self.pendingReply = replyText
+        }
     }
 }
 

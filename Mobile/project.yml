@@ -33,6 +33,8 @@ targets:
         product: GRDB
       - target: WorldTreeShare
         embed: true
+      - target: WorldTreeWidget
+        embed: true
     info:
       path: WorldTreeMobile/Info.plist
       properties:
@@ -46,6 +48,8 @@ targets:
         NSLocalNetworkUsageDescription: "World Tree uses the local network to discover and connect to the World Tree Mac app on your network."
         NSMicrophoneUsageDescription: "World Tree uses the microphone for voice dictation so you can speak your messages hands-free."
         NSSpeechRecognitionUsageDescription: "World Tree uses speech recognition to transcribe your voice into text messages."
+        NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
         UILaunchScreen:
           UIColorName: ""
         UIRequiresFullScreen: false
@@ -103,6 +107,35 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.evanprimeau.world-tree-mobile.share
         PRODUCT_NAME: WorldTreeShare
+        GENERATE_INFOPLIST_FILE: false
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 6JB5KB6D47
+        SWIFT_VERSION: "5.9"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+
+  WorldTreeWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: WorldTreeWidget
+    info:
+      path: WorldTreeWidget/Info.plist
+      properties:
+        CFBundleDisplayName: World Tree Widget
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: WorldTreeWidget/WorldTreeWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.evanprimeau.worldtree
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.evanprimeau.world-tree-mobile.widget
+        PRODUCT_NAME: WorldTreeWidget
         GENERATE_INFOPLIST_FILE: false
         CODE_SIGN_IDENTITY: "Apple Development"
         CODE_SIGN_STYLE: Automatic
