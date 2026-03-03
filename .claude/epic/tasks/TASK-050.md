@@ -1,6 +1,6 @@
 # TASK-050: fix: session resume broken on app restart — missing timestamp from DB load
 
-**Status:** Pending
+**Status:** Done
 **Priority:** Critical
 **Assignee:** Unassigned
 **Created:** 2026-03-02

@@ -11,6 +11,9 @@ final class ProjectRefreshService {
     private var timerSource: DispatchSourceTimer?
     private var isRefreshing = false
     private var pendingRefresh = false
+    private var lastRefreshCompleted: Date?
+    /// Minimum interval between refreshes to prevent cascade during reconnect storms.
+    private static let minRefreshInterval: TimeInterval = 30
 
     private init() {}
 
@@ -45,6 +48,12 @@ final class ProjectRefreshService {
     /// Manually trigger a refresh
     @discardableResult
     func refresh() async -> Result<Int, Error> {
+        // Throttle: skip if last refresh completed within minRefreshInterval
+        if let last = lastRefreshCompleted,
+           Date().timeIntervalSince(last) < Self.minRefreshInterval {
+            return .failure(ProjectRefreshError.throttled)
+        }
+
         guard !isRefreshing else {
             wtLog("[ProjectRefreshService] Refresh already in progress, queuing pending refresh")
             pendingRefresh = true
@@ -54,6 +63,7 @@ final class ProjectRefreshService {
         isRefreshing = true
         defer {
             isRefreshing = false
+            lastRefreshCompleted = Date()
             if pendingRefresh {
                 pendingRefresh = false
                 Task { [weak self] in
@@ -65,8 +75,11 @@ final class ProjectRefreshService {
         wtLog("[ProjectRefreshService] Starting manual refresh")
 
         do {
-            // Scan filesystem
-            let discovered = try await scanner.scanDevelopmentDirectory()
+            // Scan filesystem OFF MainActor — git subprocesses block with semaphores
+            let scanner = self.scanner
+            let discovered = try await Task.detached(priority: .utility) {
+                try await scanner.scanDevelopmentDirectory()
+            }.value
             wtLog("[ProjectRefreshService] Discovered \(discovered.count) projects")
 
             // Update cache
@@ -108,11 +121,14 @@ final class ProjectRefreshService {
 
 enum ProjectRefreshError: Error, LocalizedError {
     case alreadyRefreshing
-    
+    case throttled
+
     var errorDescription: String? {
         switch self {
         case .alreadyRefreshing:
             return "Project refresh already in progress"
+        case .throttled:
+            return "Project refresh throttled — too soon since last refresh"
         }
     }
 }

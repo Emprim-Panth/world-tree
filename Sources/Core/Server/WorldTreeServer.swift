@@ -40,6 +40,9 @@ final class WorldTreeServer: ObservableObject {
     private let rateLimiter = AuthRateLimiter()
     /// Clients that have connected but haven't sent an auth message yet.
     private var pendingAuthClients: Set<String> = []
+    /// Tracks last WebSocket connection time per remote IP for reconnect throttling.
+    private var lastWSConnectionTime: [String: Date] = [:]
+    private static let wsReconnectThrottleSeconds: TimeInterval = 2.0
 
     /// Exponential backoff for listener restart — prevents restart storm on port conflict.
     private var restartAttempts = 0
@@ -1266,6 +1269,24 @@ extension WorldTreeServer {
             return
         }
 
+        // Reconnect throttle: prevent churn from rapid connect/disconnect cycles
+        let endpointIP = Self.remoteIP(from: connection)
+        let now = Date()
+        if let lastTime = lastWSConnectionTime[endpointIP],
+           now.timeIntervalSince(lastTime) < Self.wsReconnectThrottleSeconds {
+            wtLog("[WorldTreeServer] WS throttled for \(endpointIP) — reconnecting too fast")
+            connection.cancel()
+            return
+        }
+        lastWSConnectionTime[endpointIP] = now
+
+        // Periodic cleanup to prevent unbounded growth
+        if lastWSConnectionTime.count > 50 {
+            lastWSConnectionTime = lastWSConnectionTime.filter {
+                now.timeIntervalSince($0.value) < 60
+            }
+        }
+
         // Wait for the NWProtocolWebSocket handshake to complete before registering.
         // The handshake happens asynchronously after connection.start(); we must not
         // call readNext() until the connection is .ready or receives deliver an error.
@@ -1277,7 +1298,10 @@ extension WorldTreeServer {
                     self?.registerNativeWSClient(connection)
                 }
             case .failed(let error):
-                wtLog("[WorldTreeServer] Native WS handshake failed: \(error)")
+                // ECONNRESET during cleanup is expected — don't log as a failure
+                if !Self.isConnectionResetError(error) {
+                    wtLog("[WorldTreeServer] Native WS handshake failed: \(error)")
+                }
                 connection.cancel()
             case .cancelled:
                 break
@@ -1287,6 +1311,14 @@ extension WorldTreeServer {
         }
 
         connection.start(queue: networkQueue)
+    }
+
+    /// Check if an NWError is ECONNRESET (errno 54) — expected during disconnect cleanup.
+    private nonisolated static func isConnectionResetError(_ error: NWError) -> Bool {
+        if case .posix(let code) = error, code == .ECONNRESET {
+            return true
+        }
+        return false
     }
 
     private func registerNativeWSClient(_ connection: NWConnection) {

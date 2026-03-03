@@ -1,6 +1,6 @@
 # TASK-053: fix: snapshot checkpoint guard requires >=4 sections — misses short conversations
 
-**Status:** Pending
+**Status:** Done
 **Priority:** Medium
 **Assignee:** Unassigned
 **Created:** 2026-03-02

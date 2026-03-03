@@ -1,6 +1,6 @@
 # TASK-052: fix: snapshot checkpoint only written on onDisappear — write after each response
 
-**Status:** Pending
+**Status:** Done
 **Priority:** High
 **Assignee:** Unassigned
 **Created:** 2026-03-02

@@ -1,6 +1,6 @@
 # TASK-054: fix: checkpoint TTL 24h too short for multi-day sessions
 
-**Status:** Pending
+**Status:** Done
 **Priority:** Low
 **Assignee:** Unassigned
 **Created:** 2026-03-02

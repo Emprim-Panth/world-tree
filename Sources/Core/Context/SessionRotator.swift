@@ -96,8 +96,16 @@ enum SessionRotator {
         messageCount: Int,
         provider: any LLMProvider
     ) async -> String? {
-        // 1. Generate checkpoint summary
-        guard let checkpoint = await BranchSummarizer.shared.checkpoint(sessionId: sessionId) else {
+        // 1. Generate checkpoint summary (with fallback for pathologically short results)
+        let minCheckpointLength = 200
+        var checkpoint = await BranchSummarizer.shared.checkpoint(sessionId: sessionId)
+
+        if let cp = checkpoint, cp.count < minCheckpointLength {
+            wtLog("[SessionRotator] Checkpoint too short (\(cp.count) chars) — falling back to raw message dump")
+            checkpoint = BranchSummarizer.shared.rawCheckpoint(sessionId: sessionId)
+        }
+
+        guard let checkpoint else {
             wtLog("[SessionRotator] Failed to generate checkpoint — skipping rotation")
             return nil
         }

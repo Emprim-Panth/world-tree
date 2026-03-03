@@ -60,6 +60,17 @@ final class BranchSummarizer {
         return await runSummarization(prompt: prompt)
     }
 
+    /// Fallback checkpoint: format recent messages as raw text, no LLM call.
+    /// Used when LLM summarization returns suspiciously short output.
+    func rawCheckpoint(sessionId: String, recentMessageCount: Int = 20) -> String? {
+        let allMessages = (try? MessageStore.shared.getMessages(sessionId: sessionId)) ?? []
+        guard !allMessages.isEmpty else { return nil }
+        let recentMessages = Array(allMessages.suffix(recentMessageCount))
+        let text = formatMessages(recentMessages, maxChars: 8_000)
+        guard !text.isEmpty else { return nil }
+        return "RAW CHECKPOINT — last \(recentMessages.count) turns (LLM summary failed):\n\n" + text
+    }
+
     // MARK: - Formatting
 
     /// Format messages into a readable transcript for the summarizer.

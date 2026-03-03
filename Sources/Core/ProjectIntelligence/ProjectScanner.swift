@@ -1,7 +1,8 @@
 import Foundation
 
-/// Scans ~/Development for projects and detects their type
-final class ProjectScanner {
+/// Scans ~/Development for projects and detects their type.
+/// Sendable: all properties are immutable (let constants), no mutable state.
+final class ProjectScanner: @unchecked Sendable {
     private let fileManager = FileManager.default
     private let excludedDirs: Set<String> = [
         // Build artifacts & package dirs

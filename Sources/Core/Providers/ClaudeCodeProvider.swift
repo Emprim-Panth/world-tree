@@ -374,7 +374,25 @@ final class ClaudeCodeProvider: LLMProvider {
         cliSessionMap.removeValue(forKey: canvasSessionId)
         cliSessionLastUsed.removeValue(forKey: canvasSessionId)
         pruneExpiredSessionsLocked()
+        let snapshot = cliSessionMap
         mapLock.unlock()
+
+        // Persist immediately so a crash doesn't restore the stale mapping
+        writeSessionMapFile(snapshot)
+
+        Task { @MainActor in
+            do {
+                try DatabaseManager.shared.write { db in
+                    try db.execute(
+                        sql: "DELETE FROM canvas_cli_sessions WHERE canvas_session_id = ?",
+                        arguments: [canvasSessionId]
+                    )
+                }
+            } catch {
+                wtLog("[ClaudeCodeProvider] Failed to delete rotated session from DB: \(error)")
+            }
+        }
+
         wtLog("[ClaudeCodeProvider] Rotated session mapping for \(canvasSessionId)")
     }
 

@@ -39,7 +39,7 @@ enum ProjectType: String, Codable, DatabaseValueConvertible {
 
 // MARK: - Git Status
 
-struct GitStatus: Codable, Equatable {
+struct GitStatus: Codable, Equatable, Sendable {
     let branch: String?
     let isDirty: Bool
     let lastCommitMessage: String?
@@ -55,7 +55,7 @@ struct GitStatus: Codable, Equatable {
 
 // MARK: - Discovered Project (from filesystem scan)
 
-struct DiscoveredProject: Equatable {
+struct DiscoveredProject: Equatable, Sendable {
     let path: String
     let name: String
     let type: ProjectType

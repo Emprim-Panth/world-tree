@@ -1,6 +1,6 @@
 # TASK-049: Fix conversation scroll content going behind input box
 
-**Status:** Pending
+**Status:** Done
 **Priority:** High
 **Assignee:** Unassigned
 **Created:** 2026-02-25

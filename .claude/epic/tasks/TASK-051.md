@@ -1,6 +1,6 @@
 # TASK-051: fix: canvas-sessions.json loses timestamps — add SessionEntry format with lastUsed
 
-**Status:** Pending
+**Status:** Done
 **Priority:** High
 **Assignee:** Unassigned
 **Created:** 2026-03-02

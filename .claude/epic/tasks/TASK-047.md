@@ -1,6 +1,6 @@
 # TASK-047: Fix: scroll to bottom on conversation open + sort button invisible on macOS 15
 
-**Status:** In Progress
+**Status:** Done
 **Priority:** High
 **Assignee:** Unassigned
 **Created:** 2026-02-25
