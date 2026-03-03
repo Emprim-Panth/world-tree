@@ -146,6 +146,15 @@ final class TreeStore {
         }
     }
 
+    func renameBranch(_ id: String, title: String) throws {
+        try db.write { db in
+            try db.execute(
+                sql: "UPDATE canvas_branches SET title = ?, updated_at = datetime('now') WHERE id = ?",
+                arguments: [title, id]
+            )
+        }
+    }
+
     func moveTree(_ id: String, toProject: String?) throws {
         try db.write { db in
             if let project = toProject, !project.isEmpty {

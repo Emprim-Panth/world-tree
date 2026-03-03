@@ -207,4 +207,20 @@ struct ClientCommand {
         if let parentBranchId { payload["parentBranchId"] = parentBranchId }
         return ClientCommand(type: "create_branch", payload: payload)
     }
+
+    static func renameTree(treeId: String, name: String) -> ClientCommand {
+        ClientCommand(type: "rename_tree", payload: ["treeId": treeId, "name": name])
+    }
+
+    static func deleteTree(treeId: String) -> ClientCommand {
+        ClientCommand(type: "delete_tree", payload: ["treeId": treeId])
+    }
+
+    static func renameBranch(branchId: String, title: String) -> ClientCommand {
+        ClientCommand(type: "rename_branch", payload: ["branchId": branchId, "title": title])
+    }
+
+    static func deleteBranch(branchId: String) -> ClientCommand {
+        ClientCommand(type: "delete_branch", payload: ["branchId": branchId])
+    }
 }

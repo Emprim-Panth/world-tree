@@ -868,6 +868,14 @@ extension WorldTreeServer {
             handleWSCreateTree(clientId: clientId, message: msg)
         case .createBranch:
             handleWSCreateBranch(clientId: clientId, message: msg)
+        case .renameTree:
+            handleWSRenameTree(clientId: clientId, message: msg)
+        case .deleteTree:
+            handleWSDeleteTree(clientId: clientId, message: msg)
+        case .renameBranch:
+            handleWSRenameBranch(clientId: clientId, message: msg)
+        case .deleteBranch:
+            handleWSDeleteBranch(clientId: clientId, message: msg)
         }
     }
 
@@ -1133,6 +1141,122 @@ extension WorldTreeServer {
             )
             guard let tree = try TreeStore.shared.getTree(req.treeId) else {
                 sendWSError(to: clientId, code: "not_found", message: "Tree not found", id: message.id)
+                return
+            }
+            let iso = Self.iso8601
+            let branchInfos = tree.branches.map { b in
+                WSBranchInfo(id: b.id, treeId: b.treeId, title: b.title, status: b.status.rawValue, branchType: b.branchType.rawValue, createdAt: iso.string(from: b.createdAt), updatedAt: iso.string(from: b.updatedAt))
+            }
+            let response = WSMessage.branchesList(branches: branchInfos, id: message.id)
+            if let json = response.toJSON() { client.wsConnection?.send(text: json) }
+        } catch {
+            sendWSError(to: clientId, code: "internal_error", message: error.localizedDescription, id: message.id)
+        }
+    }
+
+    private func handleWSRenameTree(clientId: String, message: WSMessage) {
+        guard let client = webSocketClients[clientId] else { return }
+
+        guard let payload = message.payload,
+              let req = try? payload.decode(as: WSRenameTreePayload.self),
+              !req.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            sendWSError(to: clientId, code: "invalid_payload", message: "rename_tree requires treeId and name", id: message.id)
+            return
+        }
+
+        do {
+            try TreeStore.shared.renameTree(req.treeId, name: req.name.trimmingCharacters(in: .whitespacesAndNewlines))
+            let trees = try TreeStore.shared.getTrees()
+            let iso = Self.iso8601
+            let treeInfos = trees.map { t in
+                WSTreeInfo(id: t.id, name: t.name, project: t.project, updatedAt: iso.string(from: t.updatedAt), messageCount: t.messageCount)
+            }
+            let response = WSMessage.treesList(trees: treeInfos, id: message.id)
+            if let json = response.toJSON() { client.wsConnection?.send(text: json) }
+        } catch {
+            sendWSError(to: clientId, code: "internal_error", message: error.localizedDescription, id: message.id)
+        }
+    }
+
+    private func handleWSDeleteTree(clientId: String, message: WSMessage) {
+        guard let client = webSocketClients[clientId] else { return }
+
+        guard let payload = message.payload,
+              let req = try? payload.decode(as: WSDeleteTreePayload.self) else {
+            sendWSError(to: clientId, code: "invalid_payload", message: "delete_tree requires treeId", id: message.id)
+            return
+        }
+
+        do {
+            try TreeStore.shared.deleteTree(req.treeId)
+            let trees = try TreeStore.shared.getTrees()
+            let iso = Self.iso8601
+            let treeInfos = trees.map { t in
+                WSTreeInfo(id: t.id, name: t.name, project: t.project, updatedAt: iso.string(from: t.updatedAt), messageCount: t.messageCount)
+            }
+            let response = WSMessage.treesList(trees: treeInfos, id: message.id)
+            if let json = response.toJSON() { client.wsConnection?.send(text: json) }
+        } catch {
+            sendWSError(to: clientId, code: "internal_error", message: error.localizedDescription, id: message.id)
+        }
+    }
+
+    private func handleWSRenameBranch(clientId: String, message: WSMessage) {
+        guard let client = webSocketClients[clientId] else { return }
+
+        guard let payload = message.payload,
+              let req = try? payload.decode(as: WSRenameBranchPayload.self),
+              !req.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            sendWSError(to: clientId, code: "invalid_payload", message: "rename_branch requires branchId and title", id: message.id)
+            return
+        }
+
+        do {
+            guard let branch = try TreeStore.shared.getBranch(req.branchId) else {
+                sendWSError(to: clientId, code: "not_found", message: "Branch not found", id: message.id)
+                return
+            }
+            try TreeStore.shared.renameBranch(req.branchId, title: req.title.trimmingCharacters(in: .whitespacesAndNewlines))
+            guard let tree = try TreeStore.shared.getTree(branch.treeId) else {
+                sendWSError(to: clientId, code: "not_found", message: "Tree not found", id: message.id)
+                return
+            }
+            let iso = Self.iso8601
+            let branchInfos = tree.branches.map { b in
+                WSBranchInfo(id: b.id, treeId: b.treeId, title: b.title, status: b.status.rawValue, branchType: b.branchType.rawValue, createdAt: iso.string(from: b.createdAt), updatedAt: iso.string(from: b.updatedAt))
+            }
+            let response = WSMessage.branchesList(branches: branchInfos, id: message.id)
+            if let json = response.toJSON() { client.wsConnection?.send(text: json) }
+        } catch {
+            sendWSError(to: clientId, code: "internal_error", message: error.localizedDescription, id: message.id)
+        }
+    }
+
+    private func handleWSDeleteBranch(clientId: String, message: WSMessage) {
+        guard let client = webSocketClients[clientId] else { return }
+
+        guard let payload = message.payload,
+              let req = try? payload.decode(as: WSDeleteBranchPayload.self) else {
+            sendWSError(to: clientId, code: "invalid_payload", message: "delete_branch requires branchId", id: message.id)
+            return
+        }
+
+        do {
+            guard let branch = try TreeStore.shared.getBranch(req.branchId) else {
+                sendWSError(to: clientId, code: "not_found", message: "Branch not found", id: message.id)
+                return
+            }
+            let treeId = branch.treeId
+            try TreeStore.shared.deleteBranch(req.branchId)
+            guard let tree = try TreeStore.shared.getTree(treeId) else {
+                // Tree may have been deleted if last branch was removed; send updated tree list
+                let trees = try TreeStore.shared.getTrees()
+                let iso = Self.iso8601
+                let treeInfos = trees.map { t in
+                    WSTreeInfo(id: t.id, name: t.name, project: t.project, updatedAt: iso.string(from: t.updatedAt), messageCount: t.messageCount)
+                }
+                let response = WSMessage.treesList(trees: treeInfos, id: message.id)
+                if let json = response.toJSON() { client.wsConnection?.send(text: json) }
                 return
             }
             let iso = Self.iso8601

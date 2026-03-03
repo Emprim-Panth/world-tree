@@ -52,6 +52,10 @@ enum WSClientMessageType: String, Codable {
     case cancelStream = "cancel_stream"
     case createTree = "create_tree"
     case createBranch = "create_branch"
+    case renameTree = "rename_tree"
+    case deleteTree = "delete_tree"
+    case renameBranch = "rename_branch"
+    case deleteBranch = "delete_branch"
 }
 
 struct WSSubscribePayload: Codable {
@@ -90,6 +94,24 @@ struct WSCreateBranchPayload: Codable {
     let fromMessageId: String?
     /// Parent branch ID — used to preserve the lineage for UI rendering.
     let parentBranchId: String?
+}
+
+struct WSRenameTreePayload: Codable {
+    let treeId: String
+    let name: String
+}
+
+struct WSDeleteTreePayload: Codable {
+    let treeId: String
+}
+
+struct WSRenameBranchPayload: Codable {
+    let branchId: String
+    let title: String
+}
+
+struct WSDeleteBranchPayload: Codable {
+    let branchId: String
 }
 
 // MARK: - Server → Client Message Types

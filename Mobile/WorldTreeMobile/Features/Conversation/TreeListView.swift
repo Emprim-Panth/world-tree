@@ -2,11 +2,22 @@ import SwiftUI
 
 struct TreeListView: View {
     @Environment(WorldTreeStore.self) private var store
+    @Environment(ConnectionManager.self) private var connectionManager
 
-    /// Trees grouped by project, sorted by most-recent update within each group.
-    private var treesByProject: [(project: String, trees: [TreeSummary])] {
+    @State private var searchText = ""
+    @State private var treeToRename: TreeSummary?
+    @State private var treeToDelete: TreeSummary?
+    @State private var renameText = ""
+
+    /// Trees grouped by project, filtered by search, sorted by most-recent update.
+    private var filteredTreesByProject: [(project: String, trees: [TreeSummary])] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var groups: [String: [TreeSummary]] = [:]
         for tree in store.trees {
+            guard query.isEmpty
+                    || tree.name.lowercased().contains(query)
+                    || (tree.project ?? "").lowercased().contains(query)
+            else { continue }
             let key = tree.project ?? "General"
             groups[key, default: []].append(tree)
         }
@@ -21,14 +32,26 @@ struct TreeListView: View {
 
     var body: some View {
         List {
-            ForEach(treesByProject, id: \.project) { group in
+            ForEach(filteredTreesByProject, id: \.project) { group in
                 Section(group.project) {
                     ForEach(group.trees) { tree in
-                        TreeRow(tree: tree)
+                        TreeRow(
+                            tree: tree,
+                            onRename: {
+                                treeToRename = tree
+                                renameText = tree.name
+                            },
+                            onDelete: { treeToDelete = tree }
+                        )
                     }
                 }
             }
         }
+        .searchable(
+            text: $searchText,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: "Search conversations"
+        )
         .overlay {
             if store.trees.isEmpty {
                 ContentUnavailableView(
@@ -36,7 +59,40 @@ struct TreeListView: View {
                     systemImage: "bubble.left.and.bubble.right",
                     description: Text("No conversation trees found on this server.")
                 )
+            } else if !searchText.isEmpty && filteredTreesByProject.isEmpty {
+                ContentUnavailableView.search(text: searchText)
             }
+        }
+        // Rename alert
+        .alert("Rename Conversation", isPresented: Binding(
+            get: { treeToRename != nil },
+            set: { if !$0 { treeToRename = nil } }
+        )) {
+            TextField("Name", text: $renameText)
+                .autocorrectionDisabled()
+            Button("Rename") {
+                if let tree = treeToRename {
+                    let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty else { return }
+                    Task { await connectionManager.send(.renameTree(treeId: tree.id, name: name)) }
+                }
+                treeToRename = nil
+            }
+            Button("Cancel", role: .cancel) { treeToRename = nil }
+        }
+        // Delete confirmation
+        .alert("Delete Conversation", isPresented: Binding(
+            get: { treeToDelete != nil },
+            set: { if !$0 { treeToDelete = nil } }
+        ), presenting: treeToDelete) { tree in
+            Button("Delete", role: .destructive) {
+                Task { await connectionManager.send(.deleteTree(treeId: tree.id)) }
+                if store.currentTree?.id == tree.id { store.clearTree() }
+                treeToDelete = nil
+            }
+            Button("Cancel", role: .cancel) { treeToDelete = nil }
+        } message: { tree in
+            Text("\"\(tree.name)\" and all its branches will be permanently deleted.")
         }
     }
 }
@@ -46,12 +102,13 @@ struct TreeListView: View {
 private struct TreeRow: View {
     @Environment(WorldTreeStore.self) private var store
     let tree: TreeSummary
+    let onRename: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
         Button(action: {
             store.selectTree(tree)
             store.pendingAutoSelectBranch = true
-            // listBranches is sent by ConversationView.onChange(of: currentTree?.id)
         }) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(tree.name)
@@ -66,6 +123,15 @@ private struct TreeRow: View {
             }
         }
         .foregroundStyle(.primary)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive, action: onDelete) {
+                Label("Delete", systemImage: "trash")
+            }
+            Button(action: onRename) {
+                Label("Rename", systemImage: "pencil")
+            }
+            .tint(.blue)
+        }
     }
 
     private func relativeTime(from isoString: String) -> String {
