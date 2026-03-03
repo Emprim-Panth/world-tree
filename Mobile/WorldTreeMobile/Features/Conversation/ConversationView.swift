@@ -95,8 +95,11 @@ struct ConversationView: View {
 
     @ToolbarContentBuilder
     private var connectionStatusToolbarItem: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            ConnectionStatusBadge()
+        // Only show when not fully connected — once connected, Settings handles server management
+        if connectionManager.state != .connected {
+            ToolbarItem(placement: .topBarLeading) {
+                ConnectionStatusBadge()
+            }
         }
     }
 
@@ -125,8 +128,8 @@ struct ConversationView: View {
     private var refreshToolbarItem: some ToolbarContent {
         if case .connected = connectionManager.state {
             if store.currentBranch == nil, store.currentTree == nil {
-                // Tree list: refresh button
-                ToolbarItem(placement: .topBarTrailing) {
+                // Tree list: refresh button (leading — frees trailing for + only)
+                ToolbarItem(placement: .topBarLeading) {
                     Button {
                         Task { await connectionManager.send(.listTrees()) }
                     } label: {
@@ -135,7 +138,7 @@ struct ConversationView: View {
                 }
             } else if store.currentTree != nil, store.currentBranch == nil {
                 // Branch list: refresh button
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
                     Button {
                         if let treeId = store.currentTree?.id {
                             Task { await connectionManager.send(.listBranches(treeId: treeId)) }
