@@ -14,6 +14,7 @@ struct WorldTreeMobileApp: App {
 
     init() {
         NotificationManager.shared.requestAuthorization()
+        PhoneSessionManager.shared.start()  // TASK-065: WCSession for Watch companion
     }
 
     var body: some Scene {

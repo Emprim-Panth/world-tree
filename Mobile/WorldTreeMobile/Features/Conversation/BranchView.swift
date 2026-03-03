@@ -11,6 +11,7 @@ struct BranchView: View {
 
     @State private var messageText = ""
     @State private var lastSpokenMessageId: String?
+    @State private var showSpatialView = false  // TASK-066
     private var currentBranchId: String? { store.currentBranch?.id }
 
     /// True when the WebSocket is not in a connected state.
@@ -123,6 +124,25 @@ struct BranchView: View {
                 guard let branch = store.currentBranch else { return }
                 store.addOptimisticMessage(content: text)
                 Task { await connectionManager.send(.sendMessage(branchId: branch.id, content: text)) }
+            }
+            // TASK-066: spatial glass overlay — activated via toolbar button
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showSpatialView = true
+                    } label: {
+                        Image(systemName: "rectangle.on.rectangle.angled")
+                            .font(.caption)
+                    }
+                    .help("Spatial View")
+                }
+            }
+            .fullScreenCover(isPresented: $showSpatialView) {
+                ZStack(alignment: .bottom) {
+                    SpatialConversationView(isPresented: $showSpatialView)
+                }
+                .background(Color.clear)
+                .presentationBackground(.clear)
             }
     }
 

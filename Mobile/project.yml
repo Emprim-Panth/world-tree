@@ -35,6 +35,8 @@ targets:
         embed: true
       - target: WorldTreeWidget
         embed: true
+      - target: WorldTreeWatch
+        embed: true
     info:
       path: WorldTreeMobile/Info.plist
       properties:
@@ -142,6 +144,34 @@ targets:
         DEVELOPMENT_TEAM: 6JB5KB6D47
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+
+  WorldTreeWatch:
+    type: watchos.application
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: WorldTreeWatch
+    info:
+      path: WorldTreeWatch/Info.plist
+      properties:
+        CFBundleDisplayName: World Tree
+        WKApplication: true
+    entitlements:
+      path: WorldTreeWatch/WorldTreeWatch.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.evanprimeau.worldtree
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.evanprimeau.world-tree-mobile.watchkitapp
+        PRODUCT_NAME: WorldTreeWatch
+        GENERATE_INFOPLIST_FILE: false
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 6JB5KB6D47
+        SWIFT_VERSION: "5.9"
+        WATCHOS_DEPLOYMENT_TARGET: "10.0"
         SWIFT_STRICT_CONCURRENCY: complete
 
   WorldTreeMobileTests:

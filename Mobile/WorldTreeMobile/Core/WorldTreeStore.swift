@@ -139,6 +139,8 @@ final class WorldTreeStore {
                 streamingText += token
                 // TASK-058: feed token batches to Live Activity (coalesced internally)
                 LiveActivityManager.shared.appendToken(token)
+                // TASK-065: buffer token for Watch (coalesced to 1/sec internally)
+                PhoneSessionManager.shared.bufferToken(token)
             }
         case "tool_status":
             if let name = event.toolName, let status = event.toolStatus {
@@ -181,6 +183,8 @@ final class WorldTreeStore {
                 }
                 // TASK-058: end Live Activity now that the response is complete
                 LiveActivityManager.shared.endActivity()
+                // TASK-065: notify Watch streaming is done
+                PhoneSessionManager.shared.sendStreamingEnd(finalText: streamingText)
                 streamingText = ""
             }
             isStreaming = false
@@ -241,10 +245,11 @@ extension WorldTreeStore {
         messages.append(msg)
 
         // TASK-058: start Live Activity when user sends a message
-        LiveActivityManager.shared.startActivity(
-            treeName: currentTree?.name ?? "World Tree",
-            branchName: currentBranch?.title
-        )
+        let treeName = currentTree?.name ?? "World Tree"
+        let branchName = currentBranch?.title
+        LiveActivityManager.shared.startActivity(treeName: treeName, branchName: branchName)
+        // TASK-065: notify Watch companion
+        PhoneSessionManager.shared.sendStreamingStart(treeName: treeName, branchName: branchName)
     }
 
     func selectBranch(_ branch: BranchSummary) {
