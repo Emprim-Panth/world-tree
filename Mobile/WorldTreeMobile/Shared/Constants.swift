@@ -19,6 +19,8 @@ enum Constants {
         static let messageFontSize = "messageFontSize"
         /// Hostname or IP for remote access (Tailscale). Used automatically when not on Wi-Fi.
         static let remoteServerHost = "remoteServerHost"
+        /// Whether to read assistant responses aloud via TTS.
+        static let readResponsesAloud = "readResponsesAloud"
     }
 
     enum Defaults {

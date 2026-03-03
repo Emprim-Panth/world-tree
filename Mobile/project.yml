@@ -30,6 +30,8 @@ targets:
         NSBonjourServices:
           - _worldtree._tcp
         NSLocalNetworkUsageDescription: "World Tree uses the local network to discover and connect to the World Tree Mac app on your network."
+        NSMicrophoneUsageDescription: "World Tree uses the microphone for voice dictation so you can speak your messages hands-free."
+        NSSpeechRecognitionUsageDescription: "World Tree uses speech recognition to transcribe your voice into text messages."
         UILaunchScreen:
           UIColorName: ""
         UIRequiresFullScreen: false

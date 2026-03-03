@@ -4,6 +4,7 @@ struct SettingsView: View {
     @AppStorage(Constants.UserDefaultsKeys.autoConnect) private var autoConnect = Constants.Defaults.autoConnect
     @AppStorage(Constants.UserDefaultsKeys.messageFontSize) private var messageFontSize = Constants.Defaults.messageFontSize
     @AppStorage(Constants.UserDefaultsKeys.remoteServerHost) private var remoteServerHost = ""
+    @AppStorage(Constants.UserDefaultsKeys.readResponsesAloud) private var readResponsesAloud = false
 
     var body: some View {
         NavigationStack {
@@ -34,6 +35,14 @@ struct SettingsView: View {
                         Spacer()
                         Stepper("\(Int(messageFontSize))pt", value: $messageFontSize, in: 12...24, step: 1)
                     }
+                }
+
+                Section {
+                    Toggle("Read responses aloud", isOn: $readResponsesAloud)
+                } header: {
+                    Text("Voice")
+                } footer: {
+                    Text("Uses on-device speech synthesis to read Cortana's responses. Tap the mic in the input bar to dictate messages.")
                 }
 
                 Section("About") {

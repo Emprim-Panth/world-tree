@@ -26,6 +26,10 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>World Tree uses the local network to discover and connect to the World Tree Mac app on your network.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>World Tree uses the microphone for voice dictation so you can speak your messages hands-free.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>World Tree uses speech recognition to transcribe your voice into text messages.</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

@@ -7,8 +7,10 @@ struct BranchView: View {
     @Environment(WorldTreeStore.self) private var store
     @Environment(ConnectionManager.self) private var connectionManager
     @AppStorage(Constants.UserDefaultsKeys.messageFontSize) private var messageFontSize = Constants.Defaults.messageFontSize
+    @AppStorage(Constants.UserDefaultsKeys.readResponsesAloud) private var readResponsesAloud = false
 
     @State private var messageText = ""
+    @State private var lastSpokenMessageId: String?
     private var currentBranchId: String? { store.currentBranch?.id }
 
     var body: some View {
@@ -64,6 +66,15 @@ struct BranchView: View {
                 if let id = currentBranchId {
                     store.saveDraft(newText, for: id)
                 }
+            }
+            .onChange(of: store.messages.count) {
+                // Read new assistant messages aloud when TTS is enabled
+                guard readResponsesAloud,
+                      let last = store.messages.last,
+                      last.role == "assistant",
+                      last.id != lastSpokenMessageId else { return }
+                lastSpokenMessageId = last.id
+                Task { await VoiceService.shared.speak(last.content) }
             }
     }
 
