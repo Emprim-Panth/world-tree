@@ -72,6 +72,26 @@ final class TokenBroadcaster {
                     WorldTreeServer.shared.broadcastToSubscribers(branchId: branchId, message: frame)
                 }
 
+                // Mirror stream events to NotificationCenter so the Mac's
+                // DocumentEditorViewModel can show the same live streaming UI
+                // as locally-typed messages when this stream was triggered by mobile.
+                switch event {
+                case .text(let token):
+                    NotificationCenter.default.post(
+                        name: .mobileStreamToken,
+                        object: nil,
+                        userInfo: ["branchId": branchId, "token": token]
+                    )
+                case .done, .error:
+                    NotificationCenter.default.post(
+                        name: .mobileStreamComplete,
+                        object: nil,
+                        userInfo: ["branchId": branchId]
+                    )
+                default:
+                    break
+                }
+
                 // Terminal events — stop consuming the stream
                 switch event {
                 case .done, .error: break

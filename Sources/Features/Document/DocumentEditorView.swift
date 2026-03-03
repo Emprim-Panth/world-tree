@@ -429,6 +429,8 @@ class DocumentEditorViewModel: ObservableObject {
     /// Message IDs from external sources (e.g. Telegram) — shown with 📱 indicator
     private var externalSourceMessages: Set<String> = []
     private var externalSourceObserver: NSObjectProtocol?
+    private var mobileStreamTokenObserver: NSObjectProtocol?
+    private var mobileStreamCompleteObserver: NSObjectProtocol?
 
     /// Whether the conversation scroll view is at (or near) the bottom.
     /// False when the user has manually scrolled up — suppresses auto-scroll.
@@ -544,6 +546,8 @@ class DocumentEditorViewModel: ObservableObject {
         if let observer = externalSourceObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        if let obs = mobileStreamTokenObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = mobileStreamCompleteObserver { NotificationCenter.default.removeObserver(obs) }
     }
 
     init(sessionId: String, branchId: String, workingDirectory: String) {
@@ -653,6 +657,47 @@ class DocumentEditorViewModel: ObservableObject {
                     }) {
                         self.document.sections[idx].source = "telegram"
                     }
+                }
+            }
+        }
+
+        // Live token stream from mobile send_message — mirrors the same streaming UI
+        // as locally-typed messages when a response is triggered from the iOS app.
+        if mobileStreamTokenObserver == nil {
+            let bid = branchId
+            mobileStreamTokenObserver = NotificationCenter.default.addObserver(
+                forName: .mobileStreamToken,
+                object: nil,
+                queue: .main
+            ) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self,
+                          let noteBranchId = note.userInfo?["branchId"] as? String,
+                          noteBranchId == bid,
+                          let token = note.userInfo?["token"] as? String else { return }
+                    self.pendingTokenBuffer += token
+                    if !self.isProcessing {
+                        self.isProcessing = true
+                        self.streamingContent = ""
+                        self.startStreamBatching()
+                    }
+                }
+            }
+        }
+        if mobileStreamCompleteObserver == nil {
+            let bid = branchId
+            mobileStreamCompleteObserver = NotificationCenter.default.addObserver(
+                forName: .mobileStreamComplete,
+                object: nil,
+                queue: .main
+            ) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self,
+                          let noteBranchId = note.userInfo?["branchId"] as? String,
+                          noteBranchId == bid else { return }
+                    self.flushPendingTokens()
+                    self.isProcessing = false
+                    self.streamingContent = nil
                 }
             }
         }

@@ -37,14 +37,17 @@ final class LocalDatabase {
             try db.execute(sql: "PRAGMA foreign_keys = ON")
         }
 
+        // Open file-based DB; fall back to in-memory if the file is corrupted or
+        // inaccessible. Callers always handle empty results, so this is non-fatal.
+        let queue: DatabaseQueue
         do {
-            dbQueue = try DatabaseQueue(path: url.path, configuration: config)
-            try createTablesIfNeeded()
+            queue = try DatabaseQueue(path: url.path, configuration: config)
         } catch {
-            // If DB setup fails we degrade gracefully — callers check for cached data
-            // and fall back to empty arrays, so this is non-fatal.
-            fatalError("[LocalDatabase] Failed to open SQLite: \(error)")
+            print("[LocalDatabase] Failed to open SQLite (\(error)) — using in-memory fallback")
+            queue = try! DatabaseQueue()  // in-memory always succeeds
         }
+        dbQueue = queue
+        try? createTablesIfNeeded()
     }
 
     // MARK: - Schema

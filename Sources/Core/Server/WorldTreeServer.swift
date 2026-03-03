@@ -1456,4 +1456,13 @@ extension Notification.Name {
     /// Posted when a message arrives from an external source (e.g. Telegram).
     /// userInfo: ["source": "telegram", "sessionId": String]
     static let canvasServerExternalMessage = Notification.Name("canvasServerExternalMessage")
+
+    /// Posted for each token in a mobile-initiated stream so DocumentEditorViewModel
+    /// can mirror the same live streaming UI as locally-typed messages.
+    /// userInfo: ["branchId": String, "token": String]
+    static let mobileStreamToken = Notification.Name("mobileStreamToken")
+
+    /// Posted when a mobile-initiated stream finishes (done or error).
+    /// userInfo: ["branchId": String]
+    static let mobileStreamComplete = Notification.Name("mobileStreamComplete")
 }
