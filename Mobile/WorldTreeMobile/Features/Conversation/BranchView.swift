@@ -76,6 +76,15 @@ struct BranchView: View {
                 lastSpokenMessageId = last.id
                 Task { await VoiceService.shared.speak(last.content) }
             }
+            // Handoff: advertise current branch so macOS (and other iOS devices) can continue here
+            .userActivity("com.evanprimeau.worldtree.viewBranch", isActive: store.currentBranch != nil) { activity in
+                guard let branch = store.currentBranch, let tree = store.currentTree else { return }
+                activity.title = "\(tree.name) — \(branch.displayName)"
+                activity.userInfo = ["treeId": tree.id, "branchId": branch.id]
+                activity.isEligibleForHandoff = true
+                activity.isEligibleForSearch = false
+                activity.becomeCurrent()
+            }
     }
 
     private var messageList: some View {

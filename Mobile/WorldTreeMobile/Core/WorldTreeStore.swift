@@ -4,6 +4,13 @@ import Observation
 import UIKit
 #endif
 
+// MARK: - Handoff
+
+struct HandoffRequest {
+    let treeId: String
+    let branchId: String
+}
+
 @Observable
 @MainActor
 final class WorldTreeStore {
@@ -31,6 +38,8 @@ final class WorldTreeStore {
     var serverSeen: Bool = false
     /// Per-branch draft text. Key = branchId. Binding-compatible via draftText(for:).
     private var drafts: [String: String] = [:]
+    /// Pending Handoff navigation — set by onContinueUserActivity, consumed once trees/branches load.
+    var pendingHandoff: HandoffRequest?
 
     init() {
         loadDrafts()
@@ -235,32 +244,45 @@ extension WorldTreeStore {
     }
 
     /// Called once after the tree list arrives. Navigates to the last-viewed tree if it still exists.
+    /// Handoff takes priority over persisted session restore.
     /// Falls back silently (shows tree list) when the tree no longer exists on the server.
     func restoreLastTree() {
-        // Only restore when no tree is already selected (i.e. fresh connection).
-        guard currentTree == nil, let id = persistedTreeId else { return }
+        guard currentTree == nil else { return }
+
+        // Handoff navigation takes priority
+        let targetId = pendingHandoff?.treeId ?? persistedTreeId
+        guard let id = targetId else { return }
+
         if let match = trees.first(where: { $0.id == id }) {
             currentTree = match
             // Branch restore happens in restoreLastBranch() after branches load.
         } else {
             // Tree gone — clear persisted IDs so we don't retry every connection.
-            persistedTreeId = nil
-            persistedBranchId = nil
+            if pendingHandoff == nil {
+                persistedTreeId = nil
+                persistedBranchId = nil
+            }
         }
     }
 
     /// Called once after the branch list arrives. Navigates to the last-viewed branch if it exists.
     /// Falls back to the branch list view when the branch no longer exists.
     func restoreLastBranch() {
-        guard currentBranch == nil,
-              currentTree != nil,
-              let id = persistedBranchId else { return }
+        guard currentBranch == nil, currentTree != nil else { return }
+
+        // Handoff navigation takes priority
+        let targetId = pendingHandoff?.branchId ?? persistedBranchId
+        guard let id = targetId else { return }
+
         if let match = branches.first(where: { $0.id == id }) {
             currentBranch = match
         } else {
-            // Branch gone — clear only the branch ID; keep the tree selection.
-            persistedBranchId = nil
+            if pendingHandoff == nil {
+                persistedBranchId = nil
+            }
         }
+        // Consume the handoff request regardless of whether we found the branch
+        pendingHandoff = nil
     }
 }
 

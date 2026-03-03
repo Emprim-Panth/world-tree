@@ -11,6 +11,12 @@ struct WorldTreeApp: App {
             ContentView()
                 .environment(appState)
                 .frame(minWidth: 900, minHeight: 600)
+                .onContinueUserActivity("com.evanprimeau.worldtree.viewBranch") { activity in
+                    guard let treeId = activity.userInfo?["treeId"] as? String,
+                          let branchId = activity.userInfo?["branchId"] as? String else { return }
+                    NSApp.activate(ignoringOtherApps: true)
+                    appState.selectBranch(branchId, in: treeId)
+                }
                 .onAppear {
                     checkForUpdateBadge()
                     // DB is set up in AppState.init() — just surface any error here
