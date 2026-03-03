@@ -36,10 +36,17 @@ final class WorldTreeStore {
     /// True after the server acknowledges our message but before the first response token arrives.
     /// Drives the "Seen ✓✓" + thinking indicator in the mobile UI.
     var serverSeen: Bool = false
+    /// True when the currently displayed messages were loaded from the local cache
+    /// (either because we are offline or while waiting for the server to respond).
+    /// Drives the "Offline — showing cached messages" banner in BranchView.
+    var showingCachedMessages: Bool = false
     /// Per-branch draft text. Key = branchId. Binding-compatible via draftText(for:).
     private var drafts: [String: String] = [:]
     /// Pending Handoff navigation — set by onContinueUserActivity, consumed once trees/branches load.
     var pendingHandoff: HandoffRequest?
+    /// Pending Share Extension payload — set by the worldtree:// URL handler,
+    /// consumed by BranchView.onAppear to pre-fill the message input.
+    var pendingShare: PendingShare?
 
     init() {
         loadDrafts()
@@ -69,6 +76,7 @@ final class WorldTreeStore {
         case "trees_list":
             if let payload = event.trees {
                 trees = payload
+                LocalDatabase.shared.replaceTrees(payload)
                 // TASK-028: auto-navigate to last-viewed tree on first load.
                 restoreLastTree()
             }
@@ -76,6 +84,9 @@ final class WorldTreeStore {
             if let payload = event.branches {
                 isLoadingBranches = false
                 branches = payload
+                if let treeId = currentTree?.id {
+                    LocalDatabase.shared.replaceBranches(payload, treeId: treeId)
+                }
                 if pendingNavigateToNewBranch {
                     pendingNavigateToNewBranch = false
                     // Navigate to the newest branch that isn't the current one.
@@ -103,6 +114,10 @@ final class WorldTreeStore {
                 activeToolChips = []
                 isLoadingHistory = false
                 serverSeen = false
+                showingCachedMessages = false
+                if let branchId = currentBranch?.id {
+                    LocalDatabase.shared.replaceMessages(payload, branchId: branchId)
+                }
             }
         case "message_received":
             serverSeen = true
@@ -140,6 +155,9 @@ final class WorldTreeStore {
                     createdAt: ISO8601DateFormatter().string(from: Date())
                 )
                 messages.append(msg)
+                if let branchId = currentBranch?.id {
+                    LocalDatabase.shared.upsertMessage(msg, branchId: branchId)
+                }
                 if role == "assistant" {
                     NotificationManager.shared.notifyAssistantMessage(
                         treeName: currentTree?.name ?? "World Tree",
@@ -215,6 +233,7 @@ extension WorldTreeStore {
         isStreaming = false
         activeToolChips = []
         serverSeen = false
+        showingCachedMessages = false
     }
 
     /// Navigate back from BranchView to BranchesListView.
@@ -226,6 +245,7 @@ extension WorldTreeStore {
         isStreaming = false
         activeToolChips = []
         isLoadingHistory = false
+        showingCachedMessages = false
     }
 
     /// Navigate back from BranchesListView to TreeListView.
@@ -241,6 +261,7 @@ extension WorldTreeStore {
         activeToolChips = []
         isLoadingHistory = false
         isLoadingBranches = false
+        showingCachedMessages = false
     }
 
     /// Called once after the tree list arrives. Navigates to the last-viewed tree if it still exists.
@@ -263,6 +284,41 @@ extension WorldTreeStore {
                 persistedBranchId = nil
             }
         }
+    }
+
+    // MARK: - Offline cache loading (TASK-057)
+
+    /// Load cached trees when offline. Shows whatever was last synced from the server.
+    func loadCachedTrees() {
+        let cached = LocalDatabase.shared.loadTrees()
+        guard !cached.isEmpty else { return }
+        trees = cached
+        restoreLastTree()
+    }
+
+    /// Load cached branches for the current tree when offline.
+    func loadCachedBranches(treeId: String) {
+        let cached = LocalDatabase.shared.loadBranches(treeId: treeId)
+        guard !cached.isEmpty else {
+            isLoadingBranches = false
+            return
+        }
+        branches = cached
+        isLoadingBranches = false
+        restoreLastBranch()
+    }
+
+    /// Load cached messages for a branch when offline (or while waiting for the server).
+    /// Sets showingCachedMessages = true so BranchView can display an offline banner.
+    func loadCachedMessages(branchId: String) {
+        let cached = LocalDatabase.shared.loadMessages(branchId: branchId)
+        guard !cached.isEmpty else {
+            // Nothing cached — leave the spinner up until the server responds (or forever if offline).
+            return
+        }
+        messages = cached
+        isLoadingHistory = false
+        showingCachedMessages = true
     }
 
     /// Called once after the branch list arrives. Navigates to the last-viewed branch if it exists.

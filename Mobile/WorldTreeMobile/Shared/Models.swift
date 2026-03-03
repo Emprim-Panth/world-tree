@@ -121,3 +121,15 @@ struct Message: Identifiable, Codable, Equatable {
     let content: String
     let createdAt: String
 }
+
+// MARK: - Share Extension payload
+
+/// Temporary container for content shared from the Share Extension.
+/// Set by the URL scheme handler in WorldTreeMobileApp and consumed once
+/// the user lands in BranchView and the text is pre-filled into the input.
+struct PendingShare: Equatable {
+    /// The selected text (or URL string) shared from the host app.
+    let text: String
+    /// The source page URL, if the share originated from a web page.
+    let sourceURL: String?
+}

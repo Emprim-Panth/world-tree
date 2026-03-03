@@ -13,27 +13,50 @@ struct BranchView: View {
     @State private var lastSpokenMessageId: String?
     private var currentBranchId: String? { store.currentBranch?.id }
 
+    /// True when the WebSocket is not in a connected state.
+    private var isOffline: Bool {
+        if case .connected = connectionManager.state { return false }
+        return true
+    }
+
     var body: some View {
         let placeholder = store.currentBranch.map { "Message \($0.displayName)…" } ?? "Message…"
         messageList
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                MessageInputView(
-                    text: $messageText,
-                    placeholder: placeholder,
-                    isBusy: store.isStreaming,
-                    onSend: sendMessage,
-                    onStop: stopStreaming
-                )
+                VStack(spacing: 0) {
+                    if store.showingCachedMessages {
+                        OfflineBanner(isOffline: isOffline)
+                    }
+                    MessageInputView(
+                        text: $messageText,
+                        placeholder: placeholder,
+                        isBusy: store.isStreaming || (isOffline && store.showingCachedMessages),
+                        onSend: sendMessage,
+                        onStop: stopStreaming
+                    )
+                }
             }
             .onAppear {
                 if let id = currentBranchId {
-                    messageText = store.draft(for: id)
+                    // Pre-fill from Share Extension if a pending share arrived via URL scheme.
+                    if let share = store.pendingShare {
+                        messageText = share.text
+                        store.pendingShare = nil
+                        store.saveDraft(messageText, for: id)
+                    } else {
+                        messageText = store.draft(for: id)
+                    }
                     if store.messages.isEmpty, let tree = store.currentTree {
-                        store.isLoadingHistory = true
-                        Task {
-                            await connectionManager.send(.subscribe(treeId: tree.id, branchId: id))
-                            await connectionManager.send(.loadHistory(branchId: id))
+                        // Always try the cache first — eliminates the spinner for cached branches
+                        // and shows content immediately when offline.
+                        store.loadCachedMessages(branchId: id)
+                        if !isOffline {
+                            store.isLoadingHistory = store.messages.isEmpty
+                            Task {
+                                await connectionManager.send(.subscribe(treeId: tree.id, branchId: id))
+                                await connectionManager.send(.loadHistory(branchId: id))
+                            }
                         }
                     }
                 }
@@ -44,22 +67,30 @@ struct BranchView: View {
                 }
                 messageText = newId.map { store.draft(for: $0) } ?? ""
                 guard let newId, let tree = store.currentTree else { return }
-                // For genuine branch switches, set the loading flag here.
+                // For genuine branch switches, show cached messages immediately to avoid blank state.
                 // For initial load (oldId == nil), onAppear handles it.
                 if oldId != nil {
-                    store.isLoadingHistory = true
+                    store.loadCachedMessages(branchId: newId)
+                    store.isLoadingHistory = store.messages.isEmpty
                 }
-                Task {
-                    await connectionManager.send(.subscribe(treeId: tree.id, branchId: newId))
-                    await connectionManager.send(.loadHistory(branchId: newId))
+                if !isOffline {
+                    Task {
+                        await connectionManager.send(.subscribe(treeId: tree.id, branchId: newId))
+                        await connectionManager.send(.loadHistory(branchId: newId))
+                    }
                 }
             }
             .onChange(of: connectionManager.state) { _, newState in
                 // Re-subscribe after reconnect — the server loses subscriptions on disconnect.
+                // Also refresh history so the cached-messages banner clears when live data arrives.
                 if case .connected = newState,
                    let tree = store.currentTree,
                    let branch = store.currentBranch {
-                    Task { await connectionManager.send(.subscribe(treeId: tree.id, branchId: branch.id)) }
+                    store.isLoadingHistory = false
+                    Task {
+                        await connectionManager.send(.subscribe(treeId: tree.id, branchId: branch.id))
+                        await connectionManager.send(.loadHistory(branchId: branch.id))
+                    }
                 }
             }
             .onChange(of: messageText) { _, newText in
@@ -355,6 +386,37 @@ private struct ThinkingBubble: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear { animating = true }
         .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .leading)))
+    }
+}
+
+// MARK: - Offline Banner
+
+/// Thin banner shown above the message input when cached messages are displayed.
+/// Shows "Offline" label when disconnected, "Syncing…" label while reconnecting.
+private struct OfflineBanner: View {
+    let isOffline: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if isOffline {
+                Image(systemName: "wifi.slash")
+                    .font(.caption2)
+                Text("Offline — showing cached messages")
+                    .font(.caption2)
+            } else {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .frame(width: 12, height: 12)
+                Text("Syncing with server…")
+                    .font(.caption2)
+            }
+            Spacer()
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color(uiColor: .tertiarySystemBackground))
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
 
