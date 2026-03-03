@@ -156,19 +156,16 @@ struct DocumentEditorView: View {
                         }
                     )
                 }
-                // Scroll to bottom when first batch of messages finishes loading.
-                // No anchor: scrolls the minimum needed to make "scroll-bottom" visible.
-                // If defaultScrollAnchor(.bottom) already placed us at the bottom,
-                // "scroll-bottom" is already visible → this is a no-op (no animation).
-                // If defaultScrollAnchor failed (e.g. slow DB load), this corrects it.
+                // Unlock gated scroll handlers after initial load.
+                // defaultScrollAnchor(.bottom) handles the initial position — no explicit
+                // scrollTo needed here. proxy.scrollTo with nil anchor defaults to .center
+                // alignment which drifts "scroll-bottom" (24px from true content bottom)
+                // to mid-viewport, causing visible upward scroll. Trust the anchor.
                 .onChange(of: viewModel.initialLoadDone) { _, done in
                     guard done else { return }
                     Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(100))
-                        proxy.scrollTo("scroll-bottom")
-                        // Mark initial scroll complete AFTER the deferred scroll fires.
-                        // onChange(sections.count) is gated on this to prevent firing
-                        // in the same frame as initialLoadDone before layout is measured.
+                        // Brief yield so layout settles before onChange(sections.count) fires.
+                        try? await Task.sleep(for: .milliseconds(50))
                         viewModel.initialScrollComplete = true
                     }
                 }

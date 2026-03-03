@@ -429,18 +429,10 @@ final class MemoryService {
 
     /// Static implementation — callable from both the main actor and background queue.
     nonisolated static func buildFTSQuery(from message: String) -> String {
-        // Strip FTS5 special characters
+        // Strip everything except letters, numbers, and whitespace.
+        // Whitelist approach — safer than blacklisting individual FTS5 operators.
         let cleaned = message.lowercased()
-            .replacingOccurrences(of: "\"", with: " ")
-            .replacingOccurrences(of: "*", with: " ")
-            .replacingOccurrences(of: "(", with: " ")
-            .replacingOccurrences(of: ")", with: " ")
-            .replacingOccurrences(of: "-", with: " ")
-            .replacingOccurrences(of: ":", with: " ")
-            .replacingOccurrences(of: "^", with: " ")
-            .replacingOccurrences(of: "{", with: " ")
-            .replacingOccurrences(of: "}", with: " ")
-            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: "[^a-z0-9\\s]", with: " ", options: .regularExpression)
 
         let words = cleaned
             .components(separatedBy: .whitespacesAndNewlines)
