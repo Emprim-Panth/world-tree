@@ -43,11 +43,18 @@ struct WorldTreeApp: App {
                     DispatchSupervisor.shared.start()
                     DispatchSupervisor.shared.pruneOldDispatches()
                     BranchTerminalManager.shared.recoverOrphanedSessions()
+                    // Compass + Tickets + Heartbeat: initial scan on launch
+                    CompassStore.shared.refresh()
+                    TicketStore.shared.scanAll()
+                    HeartbeatStore.shared.refresh()
                     if UserDefaults.standard.bool(forKey: AppConstants.daemonChannelEnabledKey) {
                         DaemonService.shared.startMonitoring()
                     }
                     startWorldTreeServerIfEnabled()
                     startPluginServerIfEnabled()
+                    if UserDefaults.standard.bool(forKey: "pencil.feature.enabled") {
+                        Task { await PencilConnectionStore.shared.startPolling() }
+                    }
                     PeekabooBridgeServer.shared.start()
                     WTCommandBridge.shared.start()
                     GlobalHotKey.shared.register()
@@ -130,7 +137,7 @@ struct WorldTreeApp: App {
                 NSApp.terminate(nil)
             }
         } label: {
-            Image(systemName: "tree.fill")
+            Image(systemName: appState.activeTaskCount > 0 ? "tree.circle.fill" : "tree.fill")
         }
         .menuBarExtraStyle(.menu)
     }

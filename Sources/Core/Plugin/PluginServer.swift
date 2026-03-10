@@ -30,7 +30,8 @@ final class PluginServer: ObservableObject {
     static let port: UInt16 = 9400
     static let pluginID = "world-tree"
     static let pluginName = "World Tree"
-    static let pluginVersion = "1.0.0"
+    static let pluginVersion = "1.1.0"
+    static let toolCount = 7
     static let enabledKey = AppConstants.pluginServerEnabledKey
 
     @Published private(set) var isRunning = false
@@ -112,7 +113,8 @@ final class PluginServer: ObservableObject {
           "version": "\(Self.pluginVersion)",
           "url": "http://localhost:\(Self.port)",
           "mcp_path": "/mcp",
-          "events_path": "/events"
+          "events_path": "/events",
+          "tool_count": \(Self.toolCount)
         }
         """
         try? manifest.data(using: .utf8)?.write(to: manifestFile)
@@ -282,7 +284,10 @@ final class PluginServer: ObservableObject {
           {"name":"world_tree_list_trees","description":"List all conversation trees in World Tree. Returns id, name, project, updated_at, message_count.","inputSchema":{"type":"object","properties":{},"required":[]}},
           {"name":"world_tree_get_messages","description":"Get the message history for a conversation branch by session ID.","inputSchema":{"type":"object","properties":{"session_id":{"type":"string","description":"Branch session ID (from world_tree_list_trees)"},"limit":{"type":"number","description":"Max messages to return (default 50)"}},"required":["session_id"]}},
           {"name":"world_tree_list_projects","description":"List all discovered development projects with type, git branch, and dirty state.","inputSchema":{"type":"object","properties":{},"required":[]}},
-          {"name":"world_tree_list_active_jobs","description":"List queued and running background jobs in World Tree.","inputSchema":{"type":"object","properties":{},"required":[]}}
+          {"name":"world_tree_list_active_jobs","description":"List queued and running background jobs in World Tree.","inputSchema":{"type":"object","properties":{},"required":[]}},
+          {"name":"world_tree_list_pen_assets","description":"List .pen design files imported into World Tree for a project. Returns id, file_name, frame_count, node_count, last_parsed.","inputSchema":{"type":"object","properties":{"project":{"type":"string","description":"Project name to filter by (optional — omit for all projects)"}},"required":[]}},
+          {"name":"world_tree_get_frame_ticket","description":"Get the ticket linked to a specific Pencil design frame. Returns ticket_id, title, status, priority, acceptance_criteria, and file_path. Returns null if no link exists.","inputSchema":{"type":"object","properties":{"frame_id":{"type":"string","description":"Pencil node ID of the frame"},"pen_asset_id":{"type":"string","description":"ID of the pen_asset containing the frame"}},"required":["frame_id","pen_asset_id"]}},
+          {"name":"world_tree_list_ticket_frames","description":"List all Pencil design frames linked to a ticket. Use this mid-implementation to find the design frames you need to build.","inputSchema":{"type":"object","properties":{"ticket_id":{"type":"string","description":"Ticket ID (e.g. TASK-067)"},"project":{"type":"string","description":"Project name"}},"required":["ticket_id","project"]}}
         ]
         """#
         // swiftlint:enable line_length
@@ -309,6 +314,20 @@ final class PluginServer: ObservableObject {
 
         case "world_tree_list_active_jobs":
             return toolListActiveJobs(id: id)
+
+        case "world_tree_list_pen_assets":
+            let project = arguments["project"] as? String
+            return await toolListPenAssets(project: project, id: id)
+
+        case "world_tree_get_frame_ticket":
+            let frameId = arguments["frame_id"] as? String ?? ""
+            let assetId = arguments["pen_asset_id"] as? String ?? ""
+            return await toolGetFrameTicket(frameId: frameId, assetId: assetId, id: id)
+
+        case "world_tree_list_ticket_frames":
+            let ticketId = arguments["ticket_id"] as? String ?? ""
+            let project = arguments["project"] as? String ?? ""
+            return await toolListTicketFrames(ticketId: ticketId, project: project, id: id)
 
         default:
             return #"{"jsonrpc":"2.0","id":\#(id),"error":{"code":-32602,"message":"Unknown tool: \#(esc(name))"}}"#
@@ -385,6 +404,117 @@ final class PluginServer: ObservableObject {
         }
         let payload = "[\(items.joined(separator: ","))]"
         return textResult(id: id, text: payload)
+    }
+
+    // MARK: - Pencil Design Tools
+
+    private func toolListPenAssets(project: String?, id: String) async -> String {
+        do {
+            let assets = try await DatabaseManager.shared.asyncRead { db in
+                if let project {
+                    return try PenAsset.fetchAll(db, sql: """
+                        SELECT * FROM pen_assets WHERE project = ? ORDER BY file_name ASC
+                        """, arguments: [project])
+                } else {
+                    return try PenAsset.fetchAll(db, sql: "SELECT * FROM pen_assets ORDER BY project, file_name")
+                }
+            }
+            guard !assets.isEmpty else { return textResult(id: id, text: "[]") }
+            let items = assets.map { a in
+                """
+                {"id":"\(esc(a.id))","project":"\(esc(a.project))","file_name":"\(esc(a.fileName))","frame_count":\(a.frameCount),"node_count":\(a.nodeCount),"last_parsed":"\(esc(a.lastParsed ?? ""))"}
+                """
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return textResult(id: id, text: "[\(items.joined(separator: ","))]")
+        } catch {
+            wtLog("[PluginServer] toolListPenAssets error: \(error)")
+            return mcpError(id: id, message: "Failed to list pen assets: \(error.localizedDescription)")
+        }
+    }
+
+    private func toolGetFrameTicket(frameId: String, assetId: String, id: String) async -> String {
+        guard !frameId.isEmpty, !assetId.isEmpty else {
+            return mcpError(id: id, message: "frame_id and pen_asset_id are required")
+        }
+        // Fetch raw data on background thread, format on MainActor after
+        struct FrameTicketData: Sendable {
+            let ticketId: String
+            let title: String
+            let status: String
+            let priority: String
+            let acceptanceCriteria: String?
+            let filePath: String?
+        }
+        do {
+            let data: FrameTicketData? = try await DatabaseManager.shared.asyncRead { db in
+                guard let link = try PenFrameLink.fetchOne(db, sql: """
+                    SELECT * FROM pen_frame_links WHERE asset_id = ? AND frame_id = ?
+                    """, arguments: [assetId, frameId]),
+                      let ticketId = link.ticketId,
+                      let ticket = try Ticket.fetchOne(db, sql: "SELECT * FROM canvas_tickets WHERE id = ?", arguments: [ticketId])
+                else { return nil }
+                return FrameTicketData(
+                    ticketId: ticket.id,
+                    title: ticket.title,
+                    status: ticket.status,
+                    priority: ticket.priority,
+                    acceptanceCriteria: ticket.acceptanceCriteria,
+                    filePath: ticket.filePath
+                )
+            }
+            guard let d = data else { return textResult(id: id, text: "null") }
+            let criteria = esc(d.acceptanceCriteria ?? "[]")
+            let filePath = d.filePath.map { "\"\(esc($0))\"" } ?? "null"
+            let payload = """
+            {"ticket_id":"\(esc(d.ticketId))","title":"\(esc(d.title))","status":"\(esc(d.status))","priority":"\(esc(d.priority))","acceptance_criteria":\(criteria),"file_path":\(filePath)}
+            """.trimmingCharacters(in: .whitespacesAndNewlines)
+            return textResult(id: id, text: payload)
+        } catch {
+            wtLog("[PluginServer] toolGetFrameTicket error: \(error)")
+            return mcpError(id: id, message: "Failed to get frame ticket: \(error.localizedDescription)")
+        }
+    }
+
+    private func toolListTicketFrames(ticketId: String, project: String, id: String) async -> String {
+        guard !ticketId.isEmpty else {
+            return mcpError(id: id, message: "ticket_id is required")
+        }
+        struct FrameRow: Sendable {
+            let frameId: String
+            let frameName: String
+            let fileName: String
+            let penAssetId: String
+        }
+        do {
+            let frames: [FrameRow] = try await DatabaseManager.shared.asyncRead { db in
+                let links = try PenFrameLink.fetchAll(db,
+                    sql: "SELECT * FROM pen_frame_links WHERE ticket_id = ?",
+                    arguments: [ticketId])
+                return try links.compactMap { link -> FrameRow? in
+                    guard let asset = try PenAsset.fetchOne(db,
+                        sql: "SELECT * FROM pen_assets WHERE id = ?",
+                        arguments: [link.assetId]) else { return nil }
+                    if !project.isEmpty, asset.project != project { return nil }
+                    return FrameRow(
+                        frameId: link.frameId,
+                        frameName: link.frameName ?? "",
+                        fileName: asset.fileName,
+                        penAssetId: asset.id
+                    )
+                }
+            }
+            guard !frames.isEmpty else { return textResult(id: id, text: "[]") }
+            let items = frames.map { f in
+                """
+                {"frame_id":"\(esc(f.frameId))","frame_name":"\(esc(f.frameName))","file_name":"\(esc(f.fileName))","pen_asset_id":"\(esc(f.penAssetId))"}
+                """.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return textResult(id: id, text: "[\(items.joined(separator: ","))]")
+        } catch {
+            wtLog("[PluginServer] toolListTicketFrames error: \(error)")
+            return mcpError(id: id, message: "Failed to list ticket frames: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - HTTP Parser

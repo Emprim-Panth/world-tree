@@ -1,0 +1,66 @@
+{
+  "id": "fixture-doc-001",
+  "name": "Sample Design",
+  "version": "1.0",
+  "nodes": [
+    {
+      "id": "frame-001",
+      "name": "Dashboard Frame",
+      "type": "frame",
+      "x": 0,
+      "y": 0,
+      "width": 375,
+      "height": 812,
+      "annotation": "TASK-001",
+      "children": [
+        {
+          "id": "header-001",
+          "name": "Header",
+          "type": "group",
+          "x": 0,
+          "y": 0,
+          "width": 375,
+          "height": 64,
+          "children": []
+        },
+        {
+          "id": "body-001",
+          "name": "Body",
+          "type": "rectangle",
+          "x": 16,
+          "y": 80,
+          "width": 343,
+          "height": 600,
+          "fill": "#F2F2F7",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "frame-002",
+      "name": "Settings Frame",
+      "type": "frame",
+      "x": 400,
+      "y": 0,
+      "width": 375,
+      "height": 812,
+      "annotation": "TASK-999",
+      "children": []
+    },
+    {
+      "id": "frame-003",
+      "name": "Detail Frame",
+      "type": "frame",
+      "x": 800,
+      "y": 0,
+      "width": 375,
+      "height": 812,
+      "children": []
+    }
+  ],
+  "variables": [],
+  "editor_state": {
+    "current_file": "sample.pen",
+    "selected_nodes": []
+  }
+}
