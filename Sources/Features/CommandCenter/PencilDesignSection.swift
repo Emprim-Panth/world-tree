@@ -256,40 +256,110 @@ private struct PencilFrameRow: View {
     }
 }
 
-// MARK: - PencilFrameInspectorView (Phase 1 stub — full impl in TASK-076)
+// MARK: - PencilFrameInspectorView
 
 struct PencilFrameInspectorView: View {
     let frame: PencilNode
+    /// Active project — used to query frame→ticket link. Optional; inspector works without it.
+    var project: String? = nil
+
     @Environment(\.dismiss) private var dismiss
+    @State private var linkedTicket: Ticket? = nil
+    @State private var isLoadingLink = true
+    @State private var expandedNodeIds: Set<String> = []
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    frameProperties
+                    ticketLinkBanner
+                    propertiesCard
                     if !frame.children.isEmpty {
-                        childrenSection
+                        nodeTreeSection(nodes: frame.children, depth: 0)
                     }
                 }
                 .padding()
             }
             .navigationTitle(frame.displayName)
-            .navigationSubtitle("Read only")
+            .navigationSubtitle(frame.type.rawValue.capitalized)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
+                if let ticket = linkedTicket {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button {
+                            // Open the ticket — post notification so CommandCenter can navigate
+                            NotificationCenter.default.post(
+                                name: .pencilOpenTicket,
+                                object: ticket.id
+                            )
+                            dismiss()
+                        } label: {
+                            Label("Open \(ticket.id)", systemImage: "ticket")
+                        }
+                    }
+                }
             }
         }
-        .frame(minWidth: 400, minHeight: 300)
+        .frame(minWidth: 480, minHeight: 360)
+        .task { await resolveTicketLink() }
     }
 
-    private var frameProperties: some View {
+    // MARK: - Ticket Link Banner
+
+    @ViewBuilder
+    private var ticketLinkBanner: some View {
+        if isLoadingLink {
+            EmptyView()
+        } else if let ticket = linkedTicket {
+            HStack(spacing: 10) {
+                Image(systemName: "ticket.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.blue)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(ticket.id)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.blue)
+                    Text(ticket.title)
+                        .font(.system(size: 11))
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text(ticket.status.replacingOccurrences(of: "_", with: " ").capitalized)
+                    .font(.system(size: 9, weight: .medium))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.blue.opacity(0.15))
+                    .cornerRadius(4)
+            }
+            .padding(10)
+            .background(Color.blue.opacity(0.07))
+            .cornerRadius(8)
+        } else if let annotation = frame.annotation {
+            HStack(spacing: 8) {
+                Image(systemName: "link.badge.plus")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                Text("Annotated \"\(annotation)\" — ticket not found in this project")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .background(Color.orange.opacity(0.07))
+            .cornerRadius(8)
+        }
+    }
+
+    // MARK: - Properties Card
+
+    private var propertiesCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("PROPERTIES")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
 
+            propertyRow("ID", value: frame.id)
             propertyRow("Type", value: frame.type.rawValue)
             if let x = frame.x, let y = frame.y {
                 propertyRow("Position", value: "(\(Int(x)), \(Int(y)))")
@@ -298,10 +368,26 @@ struct PencilFrameInspectorView: View {
                 propertyRow("Size", value: "\(Int(w)) × \(Int(h))")
             }
             if let fill = frame.fill {
-                propertyRow("Fill", value: fill)
+                HStack {
+                    Text("Fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 70, alignment: .leading)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color(hex: fill) ?? .clear)
+                        .frame(width: 14, height: 14)
+                        .overlay(RoundedRectangle(cornerRadius: 2).stroke(Color.primary.opacity(0.15), lineWidth: 0.5))
+                    Text(fill)
+                        .font(.system(size: 11, design: .monospaced))
+                    Spacer()
+                }
             }
-            if let annotation = frame.annotation {
-                propertyRow("Ticket", value: annotation)
+            if let stroke = frame.stroke {
+                propertyRow("Stroke", value: stroke)
+            }
+            propertyRow("Children", value: "\(frame.children.count)")
+            if !frame.components.isEmpty {
+                propertyRow("Components", value: frame.components.joined(separator: ", "))
             }
         }
         .padding(12)
@@ -322,31 +408,122 @@ struct PencilFrameInspectorView: View {
         }
     }
 
-    private var childrenSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("CHILDREN (\(frame.children.count))")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
+    // MARK: - Node Tree
 
-            ForEach(frame.children) { child in
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.turn.down.right")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                    Text(child.displayName)
-                        .font(.system(size: 11))
-                    Spacer()
-                    Text(child.type.rawValue)
-                        .font(.system(size: 9))
+    private func nodeTreeSection(nodes: [PencilNode], depth: Int) -> AnyView {
+        AnyView(
+            VStack(alignment: .leading, spacing: 2) {
+                if depth == 0 {
+                    Text("NODE TREE (\(totalDescendants) nodes)")
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
+                        .padding(.bottom, 4)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Color.primary.opacity(0.03))
-                .cornerRadius(4)
+                ForEach(nodes) { node in
+                    nodeRow(node: node, depth: depth)
+                    if expandedNodeIds.contains(node.id), !node.children.isEmpty {
+                        nodeTreeSection(nodes: node.children, depth: depth + 1)
+                            .padding(.leading, 16)
+                    }
+                }
             }
+        )
+    }
+
+    private func nodeRow(node: PencilNode, depth: Int) -> some View {
+        Button {
+            if !node.children.isEmpty {
+                if expandedNodeIds.contains(node.id) {
+                    expandedNodeIds.remove(node.id)
+                } else {
+                    expandedNodeIds.insert(node.id)
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                // Expand chevron
+                if !node.children.isEmpty {
+                    Image(systemName: expandedNodeIds.contains(node.id) ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10)
+                } else {
+                    Spacer().frame(width: 10)
+                }
+
+                Image(systemName: nodeIcon(node.type))
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 12)
+
+                Text(node.displayName)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                if !node.children.isEmpty {
+                    Text("\(node.children.count)")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.tertiary)
+                }
+
+                Spacer()
+
+                if let w = node.width, let h = node.height {
+                    Text("\(Int(w))×\(Int(h))")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+
+                if let fill = node.fill {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color(hex: fill) ?? .clear)
+                        .frame(width: 10, height: 10)
+                        .overlay(RoundedRectangle(cornerRadius: 2).stroke(Color.primary.opacity(0.15), lineWidth: 0.5))
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.primary.opacity(node.children.isEmpty ? 0 : 0.03))
+            .cornerRadius(4)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var totalDescendants: Int { frame.totalCount - 1 }
+
+    private func nodeIcon(_ type: PencilNodeType) -> String {
+        switch type {
+        case .frame:     return "rectangle.dashed"
+        case .component: return "puzzlepiece"
+        case .group:     return "rectangle.3.group"
+        case .text:      return "textformat"
+        case .image:     return "photo"
+        case .rectangle: return "rectangle"
+        case .ellipse:   return "circle"
+        case .line:      return "line.diagonal"
+        case .path:      return "scribble"
+        default:         return "square"
         }
     }
+
+    // MARK: - Helpers
+
+    private func resolveTicketLink() async {
+        isLoadingLink = true
+        defer { isLoadingLink = false }
+        guard let annotation = frame.annotation, let project else { return }
+        linkedTicket = await Task.detached {
+            (try? await PenAssetStore.shared.frameLinksWithTickets(assetId: "").first(where: { $0.link.annotation == annotation })?.ticket)
+            ?? TicketStore.shared.tickets(for: project).first(where: { $0.id == annotation })
+        }.value
+    }
+}
+
+// MARK: - Notification
+
+extension Notification.Name {
+    static let pencilOpenTicket = Notification.Name("pencilOpenTicket")
 }
 
 // MARK: - Color Hex Extension

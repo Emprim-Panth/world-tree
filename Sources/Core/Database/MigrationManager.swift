@@ -641,6 +641,68 @@ enum MigrationManager {
             try db.execute(sql: "ALTER TABLE canvas_branches ADD COLUMN compaction_mode TEXT DEFAULT 'auto'")
         }
 
+        // Migration 21: Tickets table (TicketMaster absorption)
+        migrator.registerMigration("v21_tickets") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_tickets (
+                    id TEXT PRIMARY KEY,
+                    project TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    priority TEXT NOT NULL DEFAULT 'medium',
+                    assignee TEXT,
+                    sprint TEXT,
+                    file_path TEXT,
+                    acceptance_criteria TEXT,
+                    blockers TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    last_scanned TEXT DEFAULT (datetime('now'))
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_canvas_tickets_project ON canvas_tickets(project, status)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_canvas_tickets_priority ON canvas_tickets(priority)")
+        }
+
+        // Migration 22: Pencil assets — .pen file registry + frame→ticket links
+        migrator.registerMigration("v22_pencil_assets") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS pen_assets (
+                    id TEXT PRIMARY KEY,
+                    project TEXT NOT NULL,
+                    file_path TEXT NOT NULL UNIQUE,
+                    file_name TEXT NOT NULL,
+                    frame_count INTEGER NOT NULL DEFAULT 0,
+                    node_count INTEGER NOT NULL DEFAULT 0,
+                    raw_json TEXT,
+                    last_parsed TEXT,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now'))
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_pen_assets_project ON pen_assets(project)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_pen_assets_file ON pen_assets(file_path)")
+
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS pen_frame_links (
+                    id TEXT PRIMARY KEY,
+                    asset_id TEXT NOT NULL REFERENCES pen_assets(id) ON DELETE CASCADE,
+                    frame_id TEXT NOT NULL,
+                    frame_name TEXT,
+                    ticket_id TEXT REFERENCES canvas_tickets(id) ON DELETE SET NULL,
+                    annotation TEXT,
+                    width REAL,
+                    height REAL,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now')),
+                    UNIQUE(asset_id, frame_id)
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_pen_frame_links_asset ON pen_frame_links(asset_id)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_pen_frame_links_ticket ON pen_frame_links(ticket_id)")
+        }
+
         try migrator.migrate(dbPool)
     }
 }
