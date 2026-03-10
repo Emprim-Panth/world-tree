@@ -34,7 +34,7 @@ struct StarfleetActivitySection: View {
                 }
             }
         }
-        .onAppear { heartbeat.refresh() }
+        .task { await heartbeat.refreshAsync() }
     }
 
     // MARK: - Header

@@ -489,24 +489,37 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Remote Access") {
-                if let ngrok = server.ngrokPublicURL {
+            Section("Remote Access (Mobile)") {
+                if let hostname = server.ngrokHostname {
                     Label("Tunnel active", systemImage: "network")
                         .foregroundStyle(.green)
                         .font(.caption)
-                    Text(ngrok)
-                        .font(.caption)
-                        .monospaced()
-                        .foregroundStyle(.primary)
-                        .textSelection(.enabled)
-                    Text("Copy this URL into MacBook World Tree → Settings → Server.")
+
+                    HStack(spacing: 8) {
+                        Text(hostname)
+                            .font(.caption)
+                            .monospaced()
+                            .foregroundStyle(.primary)
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button("Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(hostname, forType: .string)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+
+                    Text("Paste this hostname into World Tree Mobile → Settings → Remote Access.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 } else {
                     Label("No ngrok tunnel detected", systemImage: "network.slash")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("Start com.cortana.worldtree-tunnel to enable remote access.")
+                    Text("com.cortana.worldtree-tunnel starts automatically at login.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

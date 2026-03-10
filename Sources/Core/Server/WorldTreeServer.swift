@@ -31,6 +31,12 @@ final class WorldTreeServer: ObservableObject {
     @Published private(set) var startedAt: Date?
     @Published private(set) var lastError: String?
     @Published private(set) var ngrokPublicURL: String?
+    /// Just the hostname component of ngrokPublicURL — paste directly into Mobile Settings → Remote Access.
+    var ngrokHostname: String? {
+        guard let urlString = ngrokPublicURL,
+              let parsed = URL(string: urlString) else { return nil }
+        return parsed.host
+    }
     @Published private(set) var webSocketClients: [String: WebSocketClient] = [:]
     /// Service name currently advertised via Bonjour, or `nil` when not advertising.
     @Published private(set) var bonjourServiceName: String?
@@ -237,23 +243,31 @@ final class WorldTreeServer: ObservableObject {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tunnels = json["tunnels"] as? [[String: Any]] else { return nil }
 
-        // Find the https tunnel forwarding to our port
+        var httpPortURL: String?
+
         for tunnel in tunnels {
             let proto = tunnel["proto"] as? String ?? ""
             let publicURL = tunnel["public_url"] as? String ?? ""
             let config = tunnel["config"] as? [String: Any] ?? [:]
             let addr = config["addr"] as? String ?? ""
 
-            if proto == "https" && addr.contains("\(Self.port)") {
+            guard !publicURL.isEmpty else { continue }
+
+            // Prefer the WebSocket tunnel (5866) — that's what mobile clients use.
+            // ngrok proxies WebSocket upgrades transparently over its HTTPS tunnel.
+            if proto == "https" && addr.contains("\(Self.wsPort)") {
                 return publicURL
             }
-            // Also accept http tunnel if no https
-            if proto == "http" && addr.contains("\(Self.port)") {
-                return publicURL
+            // HTTP port (5865) as fallback.
+            if proto == "https" && addr.contains("\(Self.port)") {
+                httpPortURL = publicURL
             }
         }
 
-        // Fallback: return first https tunnel
+        // Return HTTP port URL if WebSocket tunnel not found.
+        if let url = httpPortURL { return url }
+
+        // Last resort: first https tunnel.
         return tunnels.first { $0["proto"] as? String == "https" }?["public_url"] as? String
     }
 

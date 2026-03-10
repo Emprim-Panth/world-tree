@@ -14,7 +14,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    TextField("your-mac.ts.net", text: $remoteServerHost)
+                    TextField("abc-123.ngrok-free.app or mac.ts.net", text: $remoteServerHost)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
@@ -22,9 +22,9 @@ struct SettingsView: View {
                     Text("Remote Access")
                 } footer: {
                     if remoteServerHost.isEmpty {
-                        Text("Tailscale hostname or IP used automatically when not on Wi-Fi.")
+                        Text("ngrok hostname (from Mac World Tree → Settings → Server) or Tailscale hostname. Used automatically when not on Wi-Fi.")
                     } else {
-                        Label("Will connect via \(remoteServerHost) when off Wi-Fi.", systemImage: "lock.shield")
+                        Label("Will connect via \(remoteServerHost) when off Wi-Fi.", systemImage: "network")
                             .foregroundStyle(.blue)
                     }
                 }

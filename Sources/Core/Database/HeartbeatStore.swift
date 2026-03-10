@@ -3,7 +3,7 @@ import GRDB
 
 // MARK: - Heartbeat Signal Model
 
-struct HeartbeatSignal: Identifiable {
+struct HeartbeatSignal: Identifiable, Sendable {
     let id: String
     let category: String
     let content: String
@@ -14,7 +14,7 @@ struct HeartbeatSignal: Identifiable {
 
 // MARK: - Heartbeat Run Model
 
-struct HeartbeatRun: Identifiable {
+struct HeartbeatRun: Identifiable, Sendable {
     let id: String
     let intensity: String
     let startedAt: Date?
@@ -26,7 +26,7 @@ struct HeartbeatRun: Identifiable {
 
 // MARK: - Dispatch Job Model
 
-struct CrewDispatchJob: Identifiable {
+struct CrewDispatchJob: Identifiable, Sendable {
     let id: String
     let project: String
     let model: String
@@ -99,6 +99,23 @@ final class HeartbeatStore: ObservableObject {
     private init() {}
 
     // MARK: - Refresh
+
+    /// Async refresh — runs DB reads on GRDB's reader queue, not MainActor.
+    func refreshAsync() async {
+        do {
+            let result = try await Self.fetchAllAsync()
+            self.lastHeartbeat = result.lastHeartbeat
+            self.lastIntensity = result.lastIntensity
+            self.lastSignalCount = result.lastSignalCount
+            self.lastDispatchCount = result.lastDispatchCount
+            self.activeDispatches = result.activeDispatches
+            self.dispatchJobs = result.dispatchJobs
+            self.recentRuns = result.recentRuns
+            self.recentSignals = result.recentSignals
+        } catch {
+            wtLog("[HeartbeatStore] Error refreshing async: \(error)")
+        }
+    }
 
     /// Pull latest heartbeat data from conversations.db.
     func refresh() {
@@ -206,5 +223,136 @@ final class HeartbeatStore: ObservableObject {
         } catch {
             wtLog("[HeartbeatStore] Error refreshing: \(error)")
         }
+    }
+
+    // MARK: - Background Fetch
+
+    private struct FetchResult: Sendable {
+        let lastHeartbeat: Date?
+        let lastIntensity: String
+        let lastSignalCount: Int
+        let lastDispatchCount: Int
+        let activeDispatches: Int
+        let dispatchJobs: [CrewDispatchJob]
+        let recentRuns: [HeartbeatRun]
+        let recentSignals: [HeartbeatSignal]
+    }
+
+    /// All DB reads via asyncRead — runs on GRDB's reader queue, not MainActor.
+    private static func fetchAllAsync() async throws -> FetchResult {
+        let df = dateFormatter
+
+        let lastRunRow = try await DatabaseManager.shared.asyncRead { db in
+            try Row.fetchOne(db, sql: """
+                SELECT id, intensity, started_at, completed_at, signals_found, dispatches_made, summary
+                FROM heartbeat_runs
+                ORDER BY started_at DESC LIMIT 1
+                """)
+        }
+
+        var lastHeartbeat: Date?
+        var lastIntensity = "unknown"
+        var lastSignalCount = 0
+        var lastDispatchCount = 0
+
+        if let row = lastRunRow {
+            let startedStr: String? = row["started_at"]
+            lastHeartbeat = startedStr.flatMap { df.date(from: $0) }
+            lastIntensity = row["intensity"] ?? "unknown"
+            lastSignalCount = row["signals_found"] ?? 0
+            lastDispatchCount = row["dispatches_made"] ?? 0
+        }
+
+        let activeDispatches = try await DatabaseManager.shared.asyncRead { db in
+            try Int.fetchOne(db, sql: """
+                SELECT count(*) FROM canvas_dispatches
+                WHERE status IN ('queued', 'running')
+                """) ?? 0
+        }
+
+        let jobRows = try await DatabaseManager.shared.asyncRead { db in
+            try Row.fetchAll(db, sql: """
+                SELECT id, project, model, crew_agent, prompt, ticket_id,
+                       status, attempts, max_attempts, last_error, created_at
+                FROM dispatch_queue
+                ORDER BY
+                    CASE status
+                        WHEN 'running' THEN 0
+                        WHEN 'pending' THEN 1
+                        ELSE 2
+                    END,
+                    created_at DESC
+                LIMIT 40
+                """)
+        }
+        let dispatchJobs = jobRows.map { row in
+            let dateStr: String? = row["created_at"]
+            return CrewDispatchJob(
+                id: row["id"] ?? UUID().uuidString,
+                project: row["project"] ?? "",
+                model: row["model"] ?? "sonnet",
+                crewAgent: row["crew_agent"] ?? "unknown",
+                prompt: row["prompt"] ?? "",
+                ticketId: row["ticket_id"],
+                status: row["status"] ?? "unknown",
+                attempts: row["attempts"] ?? 0,
+                maxAttempts: row["max_attempts"] ?? 3,
+                lastError: row["last_error"],
+                createdAt: dateStr.flatMap { df.date(from: $0) }
+            )
+        }
+
+        let runRows = try await DatabaseManager.shared.asyncRead { db in
+            try Row.fetchAll(db, sql: """
+                SELECT id, intensity, started_at, completed_at,
+                       signals_found, dispatches_made, summary
+                FROM heartbeat_runs
+                ORDER BY started_at DESC LIMIT 10
+                """)
+        }
+        let recentRuns = runRows.map { row in
+            let startStr: String? = row["started_at"]
+            let endStr: String? = row["completed_at"]
+            return HeartbeatRun(
+                id: row["id"] ?? UUID().uuidString,
+                intensity: row["intensity"] ?? "unknown",
+                startedAt: startStr.flatMap { df.date(from: $0) },
+                completedAt: endStr.flatMap { df.date(from: $0) },
+                signalsFound: row["signals_found"] ?? 0,
+                dispatchesMade: row["dispatches_made"] ?? 0,
+                summary: row["summary"]
+            )
+        }
+
+        let signalRows = try await DatabaseManager.shared.asyncRead { db in
+            try Row.fetchAll(db, sql: """
+                SELECT id, category, content, project, action_taken, created_at
+                FROM governance_journal
+                ORDER BY created_at DESC
+                LIMIT 20
+                """)
+        }
+        let recentSignals = signalRows.map { row in
+            let dateStr: String? = row["created_at"]
+            return HeartbeatSignal(
+                id: row["id"] ?? UUID().uuidString,
+                category: row["category"] ?? "unknown",
+                content: row["content"] ?? "",
+                project: row["project"],
+                actionTaken: row["action_taken"],
+                timestamp: dateStr.flatMap { df.date(from: $0) }
+            )
+        }
+
+        return FetchResult(
+            lastHeartbeat: lastHeartbeat,
+            lastIntensity: lastIntensity,
+            lastSignalCount: lastSignalCount,
+            lastDispatchCount: lastDispatchCount,
+            activeDispatches: activeDispatches,
+            dispatchJobs: dispatchJobs,
+            recentRuns: recentRuns,
+            recentSignals: recentSignals
+        )
     }
 }

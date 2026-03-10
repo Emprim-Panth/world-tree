@@ -154,10 +154,14 @@ final class ConnectionManager {
     // MARK: - WebSocket Lifecycle
 
     private func openWebSocket(server: SavedServer) async {
-        // Port 5866 = NWProtocolWebSocket listener (always httpPort + 1).
-        // Network.framework handles the RFC 6455 handshake on both sides —
-        // no manual SHA-1 computation, no accept-key mismatch possible.
-        guard let url = URL(string: "ws://\(server.host):\(Constants.Network.wsPort)/ws") else {
+        // For ngrok-tunnelled hosts (.ngrok-free.app, .ngrok.io, etc.) the WebSocket
+        // travels over ngrok's HTTPS tunnel — use wss:// with no explicit port (443).
+        // For local LAN and Tailscale connections use ws:// on the native wsPort (5866).
+        let isNgrok = server.host.contains(".ngrok")
+        let urlString = isNgrok
+            ? "wss://\(server.host)/ws"
+            : "ws://\(server.host):\(Constants.Network.wsPort)/ws"
+        guard let url = URL(string: urlString) else {
             state = .disconnected
             return
         }
