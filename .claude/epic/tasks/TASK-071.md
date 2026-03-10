@@ -1,6 +1,6 @@
 # TASK-071: Settings — Pencil MCP URL configuration and feature toggle
 
-**Status:** Pending
+**Status:** Done
 **Priority:** medium
 **Assignee:** Data
 **Phase:** 1 — MCP Client

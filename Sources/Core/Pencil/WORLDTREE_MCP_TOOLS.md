@@ -1,6 +1,6 @@
 # World Tree — Pencil MCP Tools
 
-> Reference for Claude Code sessions. Three read-only tools for connecting Pencil design frames to World Tree tickets.
+> Reference for Claude Code sessions. Four read-only tools for connecting Pencil design frames to World Tree tickets.
 
 ---
 
@@ -96,6 +96,35 @@ Returns:
 
 ---
 
+### `world_tree_frame_screenshot`
+**"Show me the design for this frame"**
+
+```json
+{
+  "name": "world_tree_frame_screenshot",
+  "arguments": {
+    "frame_id": "frame-001",
+    "pen_asset_id": "a3f1b2c4d5e6f7a8"
+  }
+}
+```
+
+Returns an MCP **image content block** (base64 PNG):
+```json
+{
+  "type": "image",
+  "data": "<base64-encoded PNG>",
+  "mimeType": "image/png"
+}
+```
+
+- Requires Pencil to be running and connected.
+- Returns error JSON (not a crash) if Pencil is disconnected or `frame_id` is not found.
+- `pen_asset_id` is accepted for context/discoverability — screenshot comes from live Pencil, not the imported snapshot.
+- Cache is invalidated on each call via this tool so you always get a fresh render.
+
+---
+
 ## Typical Workflow
 
 **1. Starting implementation of a ticket:**
@@ -119,6 +148,13 @@ I see frame-003 in architecture.pen — what's it for?
 → For each asset of interest, use world_tree_list_pen_assets to browse frames
 ```
 
+**4. Visually inspecting a design frame mid-implementation:**
+```
+1. world_tree_list_ticket_frames { ticket_id: "TASK-085", project: "WorldTree" }  // find frames
+2. world_tree_frame_screenshot { frame_id: "...", pen_asset_id: "..." }            // see the design
+3. Implement accordingly
+```
+
 ---
 
 ## Annotation Convention
@@ -137,9 +173,10 @@ The annotation must match the `id` field in `canvas_tickets` exactly (e.g. `TASK
 
 ## Limitations
 
-- **Manual import required.** World Tree links frames at import time. There's no filesystem watcher — you need to re-import the `.pen` file after design changes for links to update.
-- **Read-only by design.** All three tools are read-only. World Tree never mutates the Pencil canvas. This is intentional — keep design authority in Pencil.
+- **Filesystem watcher active (Phase 4).** World Tree watches all imported `.pen` file paths for changes. Saves auto re-import within 2 seconds of a file change — no manual re-import needed.
+- **Read-only by design.** All four tools are read-only. World Tree never mutates the Pencil canvas. This is intentional — keep design authority in Pencil.
 - **Project-scoped.** Ticket resolution uses the project field to avoid cross-project collisions. Always pass the correct project name.
+- **Screenshot requires live Pencil.** `world_tree_frame_screenshot` requires Pencil to be running. If Pencil is offline it returns an error, not a crash.
 
 ---
 
@@ -147,6 +184,8 @@ The annotation must match the `id` field in `canvas_tickets` exactly (e.g. `TASK
 
 | Decision | Rationale |
 |----------|-----------|
-| All 3 tools read-only | World Tree is a memory layer, not a design editor. Canvas authority stays in Pencil. |
-| Manual import, no watcher | Filesystem watchers add complexity and battery cost. Import on demand keeps it simple. |
+| All 4 tools read-only | World Tree is a memory layer, not a design editor. Canvas authority stays in Pencil. |
+| Filesystem watcher via DispatchSource | Directory-level `DispatchSource.makeFileSystemObjectSource` handles rename-based saves (most editors). <2s latency with no polling. |
+| Screenshot via set_selection + get_screenshot | Pencil MCP has no `get_frame_screenshot(frameId:)` — selection + global screenshot is the workaround. Switch if Pencil adds direct frame capture. |
+| MCP image content block | `{"type":"image","data":b64,"mimeType":"image/png"}` — Claude Code renders this inline. Text content block would require the model to interpret base64 as text. |
 | Annotation = ticket ID string | No structured metadata needed. The ticket ID is the link. Claude Code knows the ticket IDs from context. |

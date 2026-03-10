@@ -1,6 +1,6 @@
 # TASK-070: Design Tab in Command Center — canvas connection status + frame list
 
-**Status:** Pending
+**Status:** Done
 **Priority:** high
 **Assignee:** Data
 **Phase:** 1 — MCP Client

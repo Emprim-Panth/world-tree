@@ -1,6 +1,6 @@
 # TASK-069: PencilConnectionStore — observable connection state for UI
 
-**Status:** Pending
+**Status:** Done
 **Priority:** high
 **Assignee:** Geordi
 **Phase:** 1 — MCP Client

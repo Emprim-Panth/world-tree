@@ -18,6 +18,9 @@ struct WorldTreeApp: App {
                     appState.selectBranch(branchId, in: treeId)
                 }
                 .onAppear {
+                    // Crash sentinel — detect abnormal exits from previous session
+                    _ = CrashSentinel.shared.checkAndStart()
+
                     checkForUpdateBadge()
                     // DB is set up in AppState.init() — just surface any error here
                     if let error = appState.dbSetupError {
@@ -37,9 +40,18 @@ struct WorldTreeApp: App {
                     }
                     validateRestoredSelection()
                     startProjectRefresh()
-                    Task { await PermissionsService.shared.setup() }
-                    Task { await ProviderManager.shared.refreshHealth() }
-                    Task { EventStore.shared.prune() }
+                    Task {
+                        do { await PermissionsService.shared.setup() }
+                        catch { wtLog("[WorldTree] PermissionsService setup failed: \(error)") }
+                    }
+                    Task {
+                        do { await ProviderManager.shared.refreshHealth() }
+                        catch { wtLog("[WorldTree] ProviderManager refresh failed: \(error)") }
+                    }
+                    Task {
+                        do { EventStore.shared.prune() }
+                        catch { wtLog("[WorldTree] EventStore prune failed: \(error)") }
+                    }
                     DispatchSupervisor.shared.start()
                     DispatchSupervisor.shared.pruneOldDispatches()
                     BranchTerminalManager.shared.recoverOrphanedSessions()
@@ -53,19 +65,26 @@ struct WorldTreeApp: App {
                     startWorldTreeServerIfEnabled()
                     startPluginServerIfEnabled()
                     if UserDefaults.standard.bool(forKey: "pencil.feature.enabled") {
-                        Task { await PencilConnectionStore.shared.startPolling() }
+                        Task {
+                            do { await PencilConnectionStore.shared.startPolling() }
+                            catch { wtLog("[WorldTree] Pencil polling failed: \(error)") }
+                        }
                     }
                     PeekabooBridgeServer.shared.start()
                     WTCommandBridge.shared.start()
                     GlobalHotKey.shared.register()
                     // VoiceService configures lazily on first use — no startup call needed
                     Task {
-                        // Recover any responses that were interrupted by a crash or SIGTERM
-                        let recovered = await StreamCacheManager.shared.recoverOrphanedStreams()
-                        for (sessionId, content) in recovered where !content.isEmpty {
-                            wtLog("[StreamCache] Recovering interrupted response for session \(sessionId)")
-                            let msg = "[Recovered — response was interrupted]\n\n\(content)"
-                            _ = try? MessageStore.shared.sendMessage(sessionId: sessionId, role: .assistant, content: msg)
+                        do {
+                            // Recover any responses that were interrupted by a crash or SIGTERM
+                            let recovered = await StreamCacheManager.shared.recoverOrphanedStreams()
+                            for (sessionId, content) in recovered where !content.isEmpty {
+                                wtLog("[StreamCache] Recovering interrupted response for session \(sessionId)")
+                                let msg = "[Recovered — response was interrupted]\n\n\(content)"
+                                _ = try? MessageStore.shared.sendMessage(sessionId: sessionId, role: .assistant, content: msg)
+                            }
+                        } catch {
+                            wtLog("[WorldTree] Stream recovery failed: \(error)")
                         }
                     }
                 }
@@ -75,7 +94,11 @@ struct WorldTreeApp: App {
                     }
                     if phase == .background {
                         DaemonService.shared.stopMonitoring()
+                        CrashSentinel.shared.markCleanExit()
                     }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                    CrashSentinel.shared.markCleanExit()
                 }
         }
         .windowStyle(.titleBar)

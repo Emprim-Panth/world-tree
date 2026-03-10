@@ -42,6 +42,8 @@ targets:
         NSBonjourServices:
           - _worldtree._tcp
         NSLocalNetworkUsageDescription: "World Tree uses the local network to discover and connect to the World Tree Mac app on your network."
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         NSMicrophoneUsageDescription: "World Tree uses the microphone for voice dictation so you can speak your messages hands-free."
         NSSpeechRecognitionUsageDescription: "World Tree uses speech recognition to transcribe your voice into text messages."
         NSSupportsLiveActivities: true
@@ -162,9 +164,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.evanprimeau.world-tree-mobile.watchkitapp
         PRODUCT_NAME: WorldTreeWatch
         GENERATE_INFOPLIST_FILE: false
-        CODE_SIGN_IDENTITY: "Apple Development"
-        CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: 6JB5KB6D47
+        CODE_SIGN_IDENTITY: "Apple Development: Created via API (3LTWK6C7CN)"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: F75F8Z9ZPZ
         SWIFT_VERSION: "5.9"
         WATCHOS_DEPLOYMENT_TARGET: "10.0"
         SWIFT_STRICT_CONCURRENCY: complete

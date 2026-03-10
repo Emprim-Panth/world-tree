@@ -43,6 +43,11 @@ final class CommandCenterViewModel {
     var projectActivities: [ProjectActivity] = []
     var isShowingDispatchSheet = false
 
+    // Compass + Ticket state
+    var compassStates: [String: CompassState] = [:]
+    var ticketCounts: [String: Int] = [:]   // project → open ticket count
+    var blockedCounts: [String: Int] = [:]  // project → blocked ticket count
+
     private var observationTask: Task<Void, Never>?
     /// Fingerprint of the last rebuild — skip if dispatches + jobs haven't changed.
     private var lastRebuildFingerprint: String = ""
@@ -52,8 +57,12 @@ final class CommandCenterViewModel {
     func startObserving() {
         guard observationTask == nil else { return }
 
-        // Load projects once
+        // Load projects + Compass/Ticket state
         loadProjects()
+        refreshCompassAndTickets()
+
+        // Build initial project activities immediately — don't wait for dispatch observation
+        rebuildProjectActivities()
 
         // Start reactive observation of dispatches + jobs
         observationTask = Task { [weak self] in
@@ -131,9 +140,10 @@ final class CommandCenterViewModel {
     // MARK: - Activity Grouping
 
     private func rebuildProjectActivities() {
-        // Skip rebuild when the underlying data hasn't changed.
+        // Skip rebuild when the underlying data hasn't changed (but always allow first build).
         let fingerprint = activeDispatches.map(\.id).joined() + activeJobs.map(\.id).joined()
-        guard fingerprint != lastRebuildFingerprint else { return }
+        let isFirstBuild = projectActivities.isEmpty && !projects.isEmpty
+        guard isFirstBuild || fingerprint != lastRebuildFingerprint else { return }
         lastRebuildFingerprint = fingerprint
 
         let tmuxSessions = DaemonService.shared.tmuxSessions
@@ -177,12 +187,33 @@ final class CommandCenterViewModel {
             }
         }
 
-        // Sort: active projects first, then by last activity
-        projectActivities = activities.values.sorted { a, b in
+        // Sort: active projects first, then by attention score, then by last activity
+        projectActivities = activities.values.sorted(by: { a, b in
             if a.isActive != b.isActive { return a.isActive }
+
+            // Use Compass attention score when available
+            let aScore = compassStates[a.project.name]?.attentionScore ?? 0
+            let bScore = compassStates[b.project.name]?.attentionScore ?? 0
+            if aScore != bScore { return aScore > bScore }
+
             let aDate = a.lastActivityDate ?? .distantPast
             let bDate = b.lastActivityDate ?? .distantPast
             return aDate > bDate
+        })
+    }
+
+    // MARK: - Compass & Tickets
+
+    func refreshCompassAndTickets() {
+        let compassStore = CompassStore.shared
+        compassStore.refresh()
+        compassStates = compassStore.states
+
+        let ticketStore = TicketStore.shared
+        ticketStore.scanAll()
+        for project in projects {
+            ticketCounts[project.name] = ticketStore.openCount(for: project.name)
+            blockedCounts[project.name] = ticketStore.blockedCount(for: project.name)
         }
     }
 }

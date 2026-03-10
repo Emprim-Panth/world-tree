@@ -1,6 +1,6 @@
 # TASK-073: Dax — Phase 1 knowledge capture: Pencil MCP protocol documentation
 
-**Status:** Pending
+**Status:** Done
 **Priority:** medium
 **Assignee:** Dax
 **Phase:** 1 — MCP Client

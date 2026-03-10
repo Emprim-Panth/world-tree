@@ -31,7 +31,7 @@ final class PluginServer: ObservableObject {
     static let pluginID = "world-tree"
     static let pluginName = "World Tree"
     static let pluginVersion = "1.1.0"
-    static let toolCount = 7
+    static let toolCount = 8
     static let enabledKey = AppConstants.pluginServerEnabledKey
 
     @Published private(set) var isRunning = false
@@ -287,7 +287,8 @@ final class PluginServer: ObservableObject {
           {"name":"world_tree_list_active_jobs","description":"List queued and running background jobs in World Tree.","inputSchema":{"type":"object","properties":{},"required":[]}},
           {"name":"world_tree_list_pen_assets","description":"List .pen design files imported into World Tree for a project. Returns id, file_name, frame_count, node_count, last_parsed.","inputSchema":{"type":"object","properties":{"project":{"type":"string","description":"Project name to filter by (optional — omit for all projects)"}},"required":[]}},
           {"name":"world_tree_get_frame_ticket","description":"Get the ticket linked to a specific Pencil design frame. Returns ticket_id, title, status, priority, acceptance_criteria, and file_path. Returns null if no link exists.","inputSchema":{"type":"object","properties":{"frame_id":{"type":"string","description":"Pencil node ID of the frame"},"pen_asset_id":{"type":"string","description":"ID of the pen_asset containing the frame"}},"required":["frame_id","pen_asset_id"]}},
-          {"name":"world_tree_list_ticket_frames","description":"List all Pencil design frames linked to a ticket. Use this mid-implementation to find the design frames you need to build.","inputSchema":{"type":"object","properties":{"ticket_id":{"type":"string","description":"Ticket ID (e.g. TASK-067)"},"project":{"type":"string","description":"Project name"}},"required":["ticket_id","project"]}}
+          {"name":"world_tree_list_ticket_frames","description":"List all Pencil design frames linked to a ticket. Use this mid-implementation to find the design frames you need to build.","inputSchema":{"type":"object","properties":{"ticket_id":{"type":"string","description":"Ticket ID (e.g. TASK-067)"},"project":{"type":"string","description":"Project name"}},"required":["ticket_id","project"]}},
+          {"name":"world_tree_frame_screenshot","description":"Capture a PNG screenshot of a specific Pencil design frame. Returns a base64-encoded image. Use this to visually inspect a design frame while implementing a ticket.","inputSchema":{"type":"object","properties":{"frame_id":{"type":"string","description":"Pencil node ID of the frame"},"pen_asset_id":{"type":"string","description":"ID from world_tree_list_pen_assets"}},"required":["frame_id","pen_asset_id"]}}
         ]
         """#
         // swiftlint:enable line_length
@@ -328,6 +329,13 @@ final class PluginServer: ObservableObject {
             let ticketId = arguments["ticket_id"] as? String ?? ""
             let project = arguments["project"] as? String ?? ""
             return await toolListTicketFrames(ticketId: ticketId, project: project, id: id)
+
+        case "world_tree_frame_screenshot":
+            let frameId = arguments["frame_id"] as? String ?? ""
+            guard !frameId.isEmpty else {
+                return mcpError(id: id, message: "frame_id is required")
+            }
+            return await toolFrameScreenshot(frameId: frameId, id: id)
 
         default:
             return #"{"jsonrpc":"2.0","id":\#(id),"error":{"code":-32602,"message":"Unknown tool: \#(esc(name))"}}"#
@@ -517,6 +525,21 @@ final class PluginServer: ObservableObject {
         }
     }
 
+    private func toolFrameScreenshot(frameId: String, id: String) async -> String {
+        guard PencilConnectionStore.shared.isConnected else {
+            return mcpError(id: id, message: "Pencil is not connected")
+        }
+        PencilConnectionStore.shared.invalidateScreenshotCache(for: frameId)
+        do {
+            let pngData = try await PencilConnectionStore.shared.getFrameScreenshot(frameId: frameId)
+            let b64 = pngData.base64EncodedString()
+            return imageResult(id: id, data: b64, mimeType: "image/png")
+        } catch {
+            wtLog("[PluginServer] toolFrameScreenshot error: \(error)")
+            return mcpError(id: id, message: "Screenshot failed: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - HTTP Parser
 
     private struct ParsedRequest {
@@ -560,6 +583,11 @@ final class PluginServer: ObservableObject {
     /// Wraps a text payload as an MCP tools/call result.
     private func textResult(id: String, text: String) -> String {
         #"{"jsonrpc":"2.0","id":\#(id),"result":{"content":[{"type":"text","text":"\#(esc(text))"}]}}"#
+    }
+
+    /// Wraps a base64 image as an MCP image content block.
+    private func imageResult(id: String, data: String, mimeType: String) -> String {
+        #"{"jsonrpc":"2.0","id":\#(id),"result":{"content":[{"type":"image","data":"\#(data)","mimeType":"\#(mimeType)"}]}}"#
     }
 
     private func mcpError(id: String, message: String) -> String {

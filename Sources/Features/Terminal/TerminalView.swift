@@ -28,9 +28,35 @@ struct BranchTerminalView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: CapturingTerminalView, context: Context) {
-        // Make the terminal first responder whenever it (re)appears in the hierarchy.
-        // Without this, the NSView is visible but never receives keyboard events —
-        // the user can see output but can't type.
+        DispatchQueue.main.async {
+            if nsView.window != nil {
+                nsView.window?.makeFirstResponder(nsView)
+            }
+        }
+    }
+}
+
+// MARK: - ProjectTerminalView
+
+/// NSViewRepresentable for project-level terminals (wt-{projectName}).
+/// Unlike branch terminals, these persist across branch switches within the same project.
+/// Use .id(project) at the call site to swap terminals when switching projects.
+struct ProjectTerminalView: NSViewRepresentable {
+    let project: String
+    let workingDirectory: String
+
+    func makeNSView(context: Context) -> CapturingTerminalView {
+        let tv = BranchTerminalManager.shared.getOrCreateProjectTerminal(
+            project: project,
+            workingDirectory: workingDirectory
+        )
+        tv.nativeBackgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.10, alpha: 1.0)
+        tv.nativeForegroundColor = NSColor(red: 0.85, green: 0.87, blue: 0.91, alpha: 1.0)
+        tv.font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        return tv
+    }
+
+    func updateNSView(_ nsView: CapturingTerminalView, context: Context) {
         DispatchQueue.main.async {
             if nsView.window != nil {
                 nsView.window?.makeFirstResponder(nsView)

@@ -68,6 +68,8 @@ final class DispatchSupervisor {
         let activeIds = Set(provider.activeDispatchIds)
         // Update AppState task count for UI badge
         AppState.shared.activeTaskCount = activeIds.count
+        // Refresh heartbeat data alongside dispatch checks
+        HeartbeatStore.shared.refresh()
 
         // Cross-reference DB: find dispatches marked 'running' that aren't tracked in memory
         do {

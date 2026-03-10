@@ -1,6 +1,6 @@
 # TASK-067: PencilMCPClient — HTTP MCP client for Pencil's local server
 
-**Status:** Pending
+**Status:** Done
 **Priority:** high
 **Assignee:** Geordi
 **Phase:** 1 — MCP Client

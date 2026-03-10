@@ -1,6 +1,6 @@
 # TASK-077: Ticket detail — "Implemented by" design frames section
 
-**Status:** Pending
+**Status:** Done
 **Priority:** medium
 **Assignee:** Data
 **Phase:** 2 — .pen File Support

@@ -147,6 +147,27 @@ final class WorldTreeStore {
         case "message_received":
             serverSeen = true
 
+        case "message_added":
+            // Real-time broadcast: a message was persisted (from any client or the server).
+            // Append to the current branch's message list if we're viewing that branch.
+            if let branchId = event.branchId,
+               branchId == currentBranch?.id,
+               let id = event.messageId,
+               let role = event.messageRole,
+               let content = event.messageContent {
+                // Deduplicate — the server may also echo via messages_list on next load
+                if !messages.contains(where: { $0.id == id }) {
+                    let msg = Message(
+                        id: id,
+                        role: role,
+                        content: content,
+                        createdAt: event.messageCreatedAt ?? ISO8601DateFormatter().string(from: Date())
+                    )
+                    messages.append(msg)
+                    LocalDatabase.shared.upsertMessage(msg, branchId: branchId)
+                }
+            }
+
         case "token":
             if let token = event.token {
                 serverSeen = false  // server is actively responding — hide the seen indicator

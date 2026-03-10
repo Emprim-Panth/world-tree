@@ -1,6 +1,6 @@
 # TASK-075: PenAssetStore — CRUD for .pen file assets + frame→ticket resolution
 
-**Status:** Pending
+**Status:** Done
 **Priority:** high
 **Assignee:** Geordi
 **Phase:** 2 — .pen File Support

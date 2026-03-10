@@ -26,11 +26,13 @@ Sources/
 │   ├── Claude/   # Context builder for branch forks
 │   └── Models/   # ConversationTree, Branch, Message
 ├── Features/
-│   ├── Sidebar/  # Tree browser with recursive branch nodes
-│   ├── Canvas/   # Conversation view, message rows, fork menu
-│   ├── Implementation/ # Live daemon session view
-│   ├── Dashboard/ # Overview + quick actions
-│   └── Settings/  # Configuration
+│   ├── Sidebar/       # Tree browser with recursive branch nodes
+│   ├── Canvas/        # Conversation view, message rows, fork menu
+│   ├── CommandCenter/ # Compass project cards, dispatch, activity overview
+│   ├── Tickets/       # Ticket list, detail, inline status toggle
+│   ├── Terminal/      # Project + branch terminals (NSViewRepresentable)
+│   ├── Document/      # Single document view with integrated terminal
+│   └── Settings/      # Configuration
 └── Shared/       # Components, extensions, constants
 ```
 
@@ -45,10 +47,9 @@ Sources/
 ## Database
 
 Shared: `~/.cortana/claude-memory/conversations.db`
-Canvas adds: `canvas_trees`, `canvas_branches` tables (prefixed, isolated)
+Canvas tables: `canvas_trees`, `canvas_branches`, `canvas_tickets`, `canvas_dispatches`, `canvas_jobs`
+Compass (read-only): `~/.cortana/compass.db` — project state written by cortana-core MCP
 
-## Ticketmaster
+## Tickets
 
-**Project ID:** `world-tree`
-
-All work on this project is tracked in Ticketmaster. Every task gets a ticket before work starts. Use `mcp__ticketmaster__list_tasks("world-tree")` to see open work.
+Tickets live as `TASK-*.md` files in `.claude/epic/tasks/`. Compass scans them into `canvas_tickets` for the Command Center. Use `compass_tickets WorldTree` to see open work.

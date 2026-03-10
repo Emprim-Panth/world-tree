@@ -1054,6 +1054,13 @@ actor ToolExecutor {
             return ToolResult(content: "Screenshot captured (iOS Simulator).\nFile: \(outputPath)", isError: false)
         } else {
             // macOS screen — use ScreenCaptureKit in-process (inherits World Tree's TCC grant)
+            // Guard: never call SCShareableContent without a grant — it triggers the OS prompt.
+            guard CGPreflightScreenCaptureAccess() else {
+                return ToolResult(
+                    content: "Screen Recording permission not granted. Grant it in System Settings → Privacy & Security → Screen Recording → World Tree, then retry.",
+                    isError: true
+                )
+            }
             let bundleId = input["bundle_id"]?.value as? String
             do {
                 let content = try await SCShareableContent.current

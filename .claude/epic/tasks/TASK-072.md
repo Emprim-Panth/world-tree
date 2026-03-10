@@ -1,6 +1,6 @@
 # TASK-072: Worf — Phase 1 verification: MCP client tests
 
-**Status:** Pending
+**Status:** Done
 **Priority:** high
 **Assignee:** Worf
 **Phase:** 1 — MCP Client

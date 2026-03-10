@@ -1,6 +1,6 @@
 # TASK-068: PencilModels.swift — Swift value types for Pencil's .pen JSON schema
 
-**Status:** Pending
+**Status:** Done
 **Priority:** high
 **Assignee:** Geordi
 **Phase:** 1 — MCP Client

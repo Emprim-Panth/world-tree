@@ -1,6 +1,6 @@
 # TASK-080: PluginServer manifest update — version bump + app startup wiring
 
-**Status:** Pending
+**Status:** Done
 **Priority:** medium
 **Assignee:** Geordi
 **Phase:** 3 — World Tree MCP Tools

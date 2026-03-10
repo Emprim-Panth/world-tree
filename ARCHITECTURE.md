@@ -668,3 +668,70 @@ MessageStore + [NEW] JobQueue + [NEW] ProjectCache updates
 ---
 
 *Architecture shaped by Geordi. Execution begins with Phase 1.* 💠
+
+*Architecture shaped by Geordi. Execution begins with Phase 1.* 💠
+
+---
+
+## Pencil Intelligence Layer (EPIC-007)
+
+Connects Pencil.dev design frames to World Tree tickets. Read-only — World Tree never mutates canvas state.
+
+### Modules
+
+| File | Role |
+|------|------|
+| `Sources/Core/Pencil/PencilMCPClient.swift` | stdio MCP client — spawns Pencil binary, communicates via JSON-RPC 2.0 |
+| `Sources/Core/Pencil/PencilModels.swift` | Codable value types for `.pen` JSON schema |
+| `Sources/Core/Pencil/PencilConnectionStore.swift` | `@MainActor ObservableObject` — connection state, last editor state, last layout |
+| `Sources/Features/CommandCenter/PencilDesignSection.swift` | "Design" tab in Command Center — frame list, ticket badges |
+| `Sources/Features/Settings/PencilSettingsView.swift` | URL config, feature toggle, import trigger |
+| `Sources/Core/Pencil/WORLDTREE_MCP_TOOLS.md` | Claude Code reference — tool contracts + annotation convention |
+
+### Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `pen_assets` | Imported `.pen` files — id, project, file_name, file_path, frame_count, node_count, last_parsed |
+| `pen_frame_links` | Frame → ticket FK — pen_asset_id, frame_id, frame_name, ticket_id |
+
+### Three MCP Tools (Phase 3)
+
+| Tool | Input | Purpose |
+|------|-------|---------|
+| `world_tree_list_pen_assets` | `{ project? }` | List imported `.pen` files for a project |
+| `world_tree_get_frame_ticket` | `{ frame_id, pen_asset_id }` | Resolve a frame to its TASK ticket |
+| `world_tree_list_ticket_frames` | `{ ticket_id, project }` | Find design frames for a ticket |
+| `world_tree_frame_screenshot` | `{ frame_id, pen_asset_id }` | Capture live PNG of a frame — returns MCP image block |
+
+### Phase Roadmap
+
+```
+Phase 1 — MCP Client       PencilMCPClient, models, connection store, UI shell          ✓ Done
+Phase 2 — .pen File Support DB tables, file import, frame→ticket linking, inspector      ✓ Done
+Phase 3 — World Tree MCP   3 read-only tools in PluginServer                            ✓ Done
+Phase 4 — Visual Verify    FS watcher, frame screenshots, preview panel, visual diff    ✓ Done
+```
+
+### Phase 4 Deliverables
+
+| Deliverable | File | Notes |
+|-------------|------|-------|
+| Filesystem watcher | `PencilConnectionStore` | `DispatchSource` dir-level, <2s re-import |
+| `getFrameScreenshot` | `PencilMCPClient` | `set_selection` + `get_screenshot` |
+| Screenshot cache | `PencilConnectionStore` | In-memory `[String: Data]`, cleared on disconnect |
+| Frame preview panel | `PencilDesignSection / PencilFrameRow` | Expandable inline thumbnail, max 300pt |
+| Visual diff view | `PencilDiffView` | `HSplitView` — Pencil frame vs frontmost app window |
+| MCP screenshot tool | `PluginServer` | `world_tree_frame_screenshot` → MCP image block |
+
+### Annotation Convention
+
+Frames link to tickets via Pencil's `annotation` field. Set annotation to `TASK-067` (exact, case-sensitive). World Tree auto-resolves on next `.pen` import.
+
+### Design Invariants
+
+- **Read-only.** Canvas authority stays in Pencil.
+- **Auto-import via FS watcher.** `DispatchSource` watches each `.pen` file's directory. Saves auto re-import within 2 seconds of any change.
+- **Binary discovery:** UserDefaults override → `/Applications/Pencil.app` → `~/.vscode/extensions/` → `~/.cursor/extensions/`
+
+*Pencil layer: Phases 1–4 complete. 💠*

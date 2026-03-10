@@ -107,7 +107,7 @@ struct ConversationView: View {
     private var backToolbarItem: some ToolbarContent {
         if store.currentBranch != nil {
             // In BranchView → back to BranchesListView
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarLeading) {
                 Button(action: { store.clearBranch() }) {
                     Label("Branches", systemImage: "chevron.left")
                         .labelStyle(.titleAndIcon)
@@ -115,9 +115,9 @@ struct ConversationView: View {
             }
         } else if store.currentTree != nil {
             // In BranchesListView → back to TreeListView
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarLeading) {
                 Button(action: { store.clearTree() }) {
-                    Label("Projects", systemImage: "chevron.left")
+                    Label("Conversations", systemImage: "chevron.left")
                         .labelStyle(.titleAndIcon)
                 }
             }

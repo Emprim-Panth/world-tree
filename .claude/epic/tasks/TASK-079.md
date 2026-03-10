@@ -1,6 +1,6 @@
 # TASK-079: Three new MCP tools in PluginServer — ticket+frame query tools
 
-**Status:** Pending
+**Status:** Done
 **Priority:** high
 **Assignee:** Geordi
 **Phase:** 3 — World Tree MCP Tools

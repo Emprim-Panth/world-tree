@@ -1,6 +1,6 @@
 # TASK-082: Dax — Phase 3 knowledge capture: MCP tool contracts + integration guide
 
-**Status:** Pending
+**Status:** Done
 **Priority:** medium
 **Assignee:** Dax
 **Phase:** 3 — World Tree MCP Tools

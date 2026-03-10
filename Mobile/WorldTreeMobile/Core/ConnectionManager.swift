@@ -209,6 +209,7 @@ final class ConnectionManager {
 
         guard reconnectAttempts < maxReconnectAttempts else {
             state = .disconnected
+            currentServer = nil  // Return to server picker after exhausting all retries
             return
         }
         reconnectAttempts += 1

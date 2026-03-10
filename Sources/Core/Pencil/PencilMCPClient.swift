@@ -192,6 +192,27 @@ actor PencilMCPClient {
         return try decode([PencilVariable].self, from: result)
     }
 
+    /// Capture a PNG screenshot of a specific frame by ID.
+    ///
+    /// Flow: select the frame → take screenshot → return raw PNG Data.
+    /// Selection is a UI operation only — no canvas geometry is mutated.
+    func getFrameScreenshot(frameId: String) async throws -> Data {
+        // 1. Select the target frame
+        do {
+            _ = try await callTool("set_selection", arguments: ["nodeIds": [frameId]])
+        } catch {
+            throw PencilMCPError.toolCallFailed("set_selection failed: \(error.localizedDescription)")
+        }
+
+        // 2. Capture screenshot
+        let result = try await callTool("get_screenshot", arguments: [:])
+        guard let base64 = result as? String, !base64.isEmpty,
+              let data = Data(base64Encoded: base64), !data.isEmpty else {
+            throw PencilMCPError.toolCallFailed("screenshot empty")
+        }
+        return data
+    }
+
     // MARK: - Write Tools (Internal — Read-Only Consumer Policy)
 
     /// Batch design operations on the canvas.
@@ -336,7 +357,9 @@ actor PencilMCPClient {
         }
 
         // Write newline-terminated JSON to stdin
-        let payload = (line + "\n").data(using: .utf8)!
+        guard let payload = (line + "\n").data(using: .utf8) else {
+            throw PencilMCPError.parseError
+        }
         stdin.fileHandleForWriting.write(payload)
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -396,7 +419,9 @@ actor PencilMCPClient {
                 try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
                 throw PencilMCPError.serverUnreachable
             }
-            let result = try await group.next()!
+            guard let result = try await group.next() else {
+                throw PencilMCPError.serverUnreachable
+            }
             group.cancelAll()
             return result
         }
@@ -427,7 +452,8 @@ private extension ProcessInfo {
         uname(&sysinfo)
         return withUnsafeBytes(of: &sysinfo.machine) { ptr in
             let bytes = ptr.bindMemory(to: CChar.self)
-            return String(cString: bytes.baseAddress!)
+            guard let base = bytes.baseAddress else { return "unknown" }
+            return String(cString: base)
         }
     }
 }

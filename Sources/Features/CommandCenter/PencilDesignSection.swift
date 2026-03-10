@@ -9,6 +9,9 @@ struct PencilDesignSection: View {
     @ObservedObject private var pencil = PencilConnectionStore.shared
     @State private var selectedFrame: PencilNode?
     @State private var isShowingInspector = false
+    @State private var isShowingDiff = false
+    @State private var diffFrame: PencilNode?
+    @State private var expandedFrameId: String?
     @State private var isRefreshing = false
 
     var body: some View {
@@ -22,9 +25,17 @@ struct PencilDesignSection: View {
         }
         .onAppear { PencilConnectionStore.shared.startPolling() }
         .onDisappear { PencilConnectionStore.shared.stopPolling() }
+        .onReceive(NotificationCenter.default.publisher(for: .pencilAssetUpdated)) { _ in
+            expandedFrameId = nil   // Collapse on re-import so fresh data shows
+        }
         .sheet(isPresented: $isShowingInspector) {
             if let frame = selectedFrame {
                 PencilFrameInspectorView(frame: frame)
+            }
+        }
+        .sheet(isPresented: $isShowingDiff) {
+            if let frame = diffFrame {
+                PencilDiffView(frame: frame)
             }
         }
     }
@@ -114,10 +125,23 @@ struct PencilDesignSection: View {
                 .padding(.leading, 2)
 
             ForEach(frames) { frame in
-                PencilFrameRow(frame: frame) {
-                    selectedFrame = frame
-                    isShowingInspector = true
-                }
+                PencilFrameRow(
+                    frame: frame,
+                    isExpanded: expandedFrameId == frame.id,
+                    onExpandToggle: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            expandedFrameId = expandedFrameId == frame.id ? nil : frame.id
+                        }
+                    },
+                    onInspect: {
+                        selectedFrame = frame
+                        isShowingInspector = true
+                    },
+                    onCompare: {
+                        diffFrame = frame
+                        isShowingDiff = true
+                    }
+                )
             }
         }
     }
@@ -197,51 +221,147 @@ struct PencilDesignSection: View {
 
 private struct PencilFrameRow: View {
     let frame: PencilNode
-    let onTap: () -> Void
+    let isExpanded: Bool
+    let onExpandToggle: () -> Void
+    let onInspect: () -> Void
+    let onCompare: () -> Void
+
+    @ObservedObject private var pencil = PencilConnectionStore.shared
+    @State private var screenshot: NSImage?
+    @State private var isLoadingScreenshot = false
+    @State private var screenshotError: String?
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 8) {
-                Image(systemName: iconForType(frame.type))
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 14)
-
-                Text(frame.displayName)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-
-                Spacer()
-
-                if let w = frame.width, let h = frame.height {
-                    Text("\(Int(w))×\(Int(h))")
-                        .font(.system(size: 9, design: .monospaced))
+        VStack(alignment: .leading, spacing: 0) {
+            // Row header
+            Button(action: onExpandToggle) {
+                HStack(spacing: 8) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8))
                         .foregroundStyle(.tertiary)
-                }
+                        .frame(width: 10)
 
-                if let annotation = frame.annotation, !annotation.isEmpty {
-                    Text(annotation)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.blue)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(3)
-                }
+                    Image(systemName: iconForType(frame.type))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14)
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8))
-                    .foregroundStyle(.tertiary)
+                    Text(frame.displayName)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    if let w = frame.width, let h = frame.height {
+                        Text("\(Int(w))×\(Int(h))")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    if let annotation = frame.annotation, !annotation.isEmpty {
+                        Text(annotation)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.blue)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(3)
+                    }
+
+                    Button {
+                        onInspect()
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Inspect frame")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            // Expanded preview
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    if isLoadingScreenshot {
+                        HStack {
+                            ProgressView().controlSize(.mini)
+                            Text("Loading preview…")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 8)
+                    } else if let img = screenshot {
+                        Image(nsImage: img)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 300)
+                            .cornerRadius(4)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
+                            )
+
+                        HStack {
+                            Button("Compare") { onCompare() }
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+
+                            Button("Refresh") {
+                                pencil.invalidateScreenshotCache(for: frame.id)
+                                screenshot = nil
+                                Task { await loadScreenshot() }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+
+                            Spacer()
+                        }
+                    } else if let err = screenshotError {
+                        Text(err)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 6)
+                    } else if !pencil.isConnected {
+                        Text("Pencil not running — can't load preview")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 6)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
+                .task { await loadScreenshot() }
+            }
         }
-        .buttonStyle(.plain)
-        .background(Color.primary.opacity(0.03))
+        .background(Color.primary.opacity(isExpanded ? 0.05 : 0.03))
         .cornerRadius(6)
         .accessibilityLabel("Frame: \(frame.displayName)")
+        .onChange(of: isExpanded) { expanded in
+            if !expanded { screenshotError = nil }
+        }
+    }
+
+    private func loadScreenshot() async {
+        guard pencil.isConnected, screenshot == nil, !isLoadingScreenshot else { return }
+        isLoadingScreenshot = true
+        screenshotError = nil
+        defer { isLoadingScreenshot = false }
+        do {
+            let data = try await pencil.getFrameScreenshot(frameId: frame.id)
+            screenshot = NSImage(data: data)
+            if screenshot == nil { screenshotError = "Invalid image data" }
+        } catch {
+            screenshotError = error.localizedDescription
+        }
     }
 
     private func iconForType(_ type: PencilNodeType) -> String {
@@ -523,7 +643,8 @@ struct PencilFrameInspectorView: View {
 // MARK: - Notification
 
 extension Notification.Name {
-    static let pencilOpenTicket = Notification.Name("pencilOpenTicket")
+    static let pencilOpenTicket   = Notification.Name("pencilOpenTicket")
+    static let pencilAssetUpdated = Notification.Name("pencilAssetUpdated")
 }
 
 // MARK: - Color Hex Extension

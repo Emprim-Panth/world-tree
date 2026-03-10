@@ -48,15 +48,16 @@ struct ServerEvent: Decodable {
     var toolName: String?
     var toolStatus: String?
 
-    // message_complete payload
+    // message_complete / message_added payload
     var messageId: String?
     var messageRole: String?
     var messageContent: String?
+    var messageCreatedAt: String?
 
     // error payload
     var errorMessage: String?
 
-    // branch context (present in token, tool_status, message_complete)
+    // branch context (present in token, tool_status, message_complete, message_added)
     var branchId: String?
 
     private enum EnvelopeKeys: String, CodingKey {
@@ -79,10 +80,11 @@ struct ServerEvent: Decodable {
         // tool_status
         case tool
         case status
-        // message_complete
+        // message_complete / message_added
         case messageId
         case role
         case content
+        case createdAt
         // error
         case message
     }
@@ -120,6 +122,13 @@ struct ServerEvent: Decodable {
             messageId = try? payload.decode(String.self, forKey: .messageId)
             messageRole = try? payload.decode(String.self, forKey: .role)
             messageContent = try? payload.decode(String.self, forKey: .content)
+
+        case "message_added":
+            branchId = try? payload.decode(String.self, forKey: .branchId)
+            messageId = try? payload.decode(String.self, forKey: .messageId)
+            messageRole = try? payload.decode(String.self, forKey: .role)
+            messageContent = try? payload.decode(String.self, forKey: .content)
+            messageCreatedAt = try? payload.decode(String.self, forKey: .createdAt)
 
         case "error":
             errorMessage = try? payload.decode(String.self, forKey: .message)

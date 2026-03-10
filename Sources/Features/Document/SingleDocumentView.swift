@@ -15,10 +15,15 @@ struct SingleDocumentView: View {
         _viewModel = StateObject(wrappedValue: SingleDocumentViewModel(treeId: treeId, branchId: branchId))
     }
 
-    /// The branch whose terminal to show at the bottom.
+    /// The branch whose terminal to show at the bottom (fallback when no project).
     /// Prefers the sidebar-selected branch; falls back to this tree's main branch.
     private var activeTerminalBranchId: String {
         appState.selectedBranchId ?? viewModel.mainBranchId
+    }
+
+    /// Whether this tree is bound to a project (and should use a project-level terminal).
+    private var hasProjectTerminal: Bool {
+        viewModel.projectName != nil
     }
 
     var body: some View {
@@ -82,20 +87,37 @@ struct SingleDocumentView: View {
             }
             .frame(minHeight: 200)
 
-            // ── Terminal panel (branch-bound, persistent) ─────────────────
+            // ── Terminal panel (project-bound when available, else branch-bound) ──
             if showTerminal {
-                TerminalPanelView(
-                    branchId: activeTerminalBranchId,
-                    workingDirectory: viewModel.workingDirectory,
-                    onClose: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            showTerminal = false
+                if let project = viewModel.projectName {
+                    // Project terminal — persists across branch switches
+                    TerminalPanelView(
+                        project: project,
+                        workingDirectory: viewModel.workingDirectory,
+                        onClose: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                showTerminal = false
+                            }
                         }
-                    }
-                )
-                .id(activeTerminalBranchId)
-                .frame(minHeight: 160, idealHeight: 300, maxHeight: 600)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                    )
+                    .id("project-\(project)")
+                    .frame(minHeight: 160, idealHeight: 300, maxHeight: 600)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    // Branch terminal — fallback for workspace trees without a project
+                    TerminalPanelView(
+                        branchId: activeTerminalBranchId,
+                        workingDirectory: viewModel.workingDirectory,
+                        onClose: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                showTerminal = false
+                            }
+                        }
+                    )
+                    .id(activeTerminalBranchId)
+                    .frame(minHeight: 160, idealHeight: 300, maxHeight: 600)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
         }
         .toolbar {
@@ -138,14 +160,20 @@ struct SingleDocumentView: View {
             )
         }
         .onAppear {
-            // Pre-warm the main branch terminal so it's ready when user opens it.
-            // Pass the persisted tmux session name so that on app restart we reattach
-            // to the exact same tmux session (preserves shell history + running processes).
-            BranchTerminalManager.shared.warmUp(
-                branchId: viewModel.mainBranchId,
-                workingDirectory: viewModel.workingDirectory,
-                knownTmuxSession: viewModel.mainBranchTmuxSession
-            )
+            if let project = viewModel.projectName {
+                // Project-level terminal — warm up the persistent project session
+                _ = BranchTerminalManager.shared.getOrCreateProjectTerminal(
+                    project: project,
+                    workingDirectory: viewModel.workingDirectory
+                )
+            } else {
+                // Branch-level terminal fallback
+                BranchTerminalManager.shared.warmUp(
+                    branchId: viewModel.mainBranchId,
+                    workingDirectory: viewModel.workingDirectory,
+                    knownTmuxSession: viewModel.mainBranchTmuxSession
+                )
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .canvasServerRequestedTerminalOpen)) { note in
             guard let branchId = note.object as? String else { return }
@@ -181,6 +209,9 @@ class SingleDocumentViewModel: ObservableObject {
     /// Cached at init — workingDirectory is immutable after tree creation.
     /// Prevents repeated DB reads on every body re-evaluation.
     let workingDirectory: String
+    /// Project name from the tree — nil for workspace trees.
+    /// When set, terminal binds to project-level tmux session instead of branch-level.
+    let projectName: String?
     var branchLayout: BranchLayoutViewModel
 
     init(treeId: String, branchId: String? = nil) {
@@ -244,6 +275,7 @@ class SingleDocumentViewModel: ObservableObject {
         }
 
         self.workingDirectory = workDir
+        self.projectName = existingTree?.project
         self.branchLayout = BranchLayoutViewModel(treeId: treeId)
     }
 
@@ -257,14 +289,35 @@ class SingleDocumentViewModel: ObservableObject {
 // MARK: - Terminal Panel
 
 /// Integrated terminal panel — styled to feel native to Canvas, not bolted-on.
-/// Adds a header bar with directory context and a close button above the raw SwiftTerm view.
+/// Supports both project-level terminals (wt-{project}) and branch-level terminals (canvas-{branch}).
+/// Project terminals persist across branch switches; branch terminals are the fallback.
 struct TerminalPanelView: View {
-    let branchId: String
+    /// Project name — when set, uses project-level terminal. Mutually exclusive with branchId.
+    let project: String?
+    /// Branch ID — fallback when no project is set.
+    let branchId: String?
     let workingDirectory: String
     let onClose: () -> Void
 
-    private var directoryName: String {
-        URL(fileURLWithPath: workingDirectory).lastPathComponent
+    /// Project-mode initializer — uses wt-{project} tmux session.
+    init(project: String, workingDirectory: String, onClose: @escaping () -> Void) {
+        self.project = project
+        self.branchId = nil
+        self.workingDirectory = workingDirectory
+        self.onClose = onClose
+    }
+
+    /// Branch-mode initializer — uses canvas-{branchId} tmux session.
+    init(branchId: String, workingDirectory: String, onClose: @escaping () -> Void) {
+        self.project = nil
+        self.branchId = branchId
+        self.workingDirectory = workingDirectory
+        self.onClose = onClose
+    }
+
+    private var headerLabel: String {
+        if let project { return project }
+        return URL(fileURLWithPath: workingDirectory).lastPathComponent
     }
 
     private var shortenedPath: String {
@@ -281,7 +334,7 @@ struct TerminalPanelView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
 
-                Text(directoryName)
+                Text(headerLabel)
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(.primary)
 
@@ -292,6 +345,16 @@ struct TerminalPanelView: View {
                     .truncationMode(.head)
 
                 Spacer()
+
+                if project != nil {
+                    Text("project")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.cyan)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.cyan.opacity(0.1))
+                        .clipShape(Capsule())
+                }
 
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -310,10 +373,17 @@ struct TerminalPanelView: View {
                 .opacity(0.4)
 
             // ── Terminal ──────────────────────────────────────────────────
-            BranchTerminalView(
-                branchId: branchId,
-                workingDirectory: workingDirectory
-            )
+            if let project {
+                ProjectTerminalView(
+                    project: project,
+                    workingDirectory: workingDirectory
+                )
+            } else if let branchId {
+                BranchTerminalView(
+                    branchId: branchId,
+                    workingDirectory: workingDirectory
+                )
+            }
         }
         .background(Color(red: 0.08, green: 0.08, blue: 0.10))
         .clipShape(RoundedRectangle(cornerRadius: 0))

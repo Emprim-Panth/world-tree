@@ -3,6 +3,7 @@ import Foundation
 /// Which top-level view shows in the detail pane when no tree is selected.
 enum SidebarDestination: String, Hashable {
     case commandCenter
+    case tickets
     case timeline
     case graph
 }

@@ -23,6 +23,9 @@ final class DatabaseManager {
 
     /// Opens the database at the configured path (local, with fallback)
     func setup() throws {
+        // Guard against double-init race
+        guard dbPool == nil else { return }
+
         let path = resolveDatabasePath()
 
         var config = Configuration()
@@ -37,10 +40,12 @@ final class DatabaseManager {
             try db.execute(sql: "PRAGMA synchronous = NORMAL")
         }
 
-        dbPool = try DatabasePool(path: path, configuration: config)
+        let pool = try DatabasePool(path: path, configuration: config)
 
-        // Run canvas-specific migrations
-        try MigrationManager.migrate(dbPool!)
+        // Run canvas-specific migrations before publishing the pool
+        try MigrationManager.migrate(pool)
+
+        dbPool = pool
 
         // Start periodic WAL checkpoint to keep file size bounded
         startCheckpointTimer()

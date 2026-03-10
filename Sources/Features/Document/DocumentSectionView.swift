@@ -68,7 +68,8 @@ struct DocumentSectionView: View {
                 } else {
                     MarkdownTextView(
                         content: section.content,
-                        author: section.author
+                        author: section.author,
+                        parsedMarkdown: section.parsedMarkdown
                     )
                     .textSelection(.enabled)
                     .onTapGesture(count: 2) {
@@ -396,22 +397,21 @@ struct ToolCallView: View {
 /// Renders assistant content with markdown awareness.
 /// Code fences (``` blocks) are extracted and rendered via CodeBlockView.
 /// Everything else uses SwiftUI's built-in AttributedString markdown support.
+///
+/// Performance: markdown parsing is done once in applyMessages and cached
+/// in `parsedMarkdown`. The view body only reads the cached result.
 struct MarkdownTextView: View {
     let content: AttributedString
     let author: Author
+    /// Pre-parsed markdown from DocumentSection — avoids re-parsing on every render.
+    var parsedMarkdown: AttributedString?
 
     @ViewBuilder
     var body: some View {
-        let raw = String(content.characters)
-
         // For non-assistant messages, plain text is fine
         if case .assistant = author {
-            // Parse markdown — use AttributedString(markdown:) for inline formatting
-            let rendered = (try? AttributedString(
-                markdown: raw,
-                options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-            )) ?? content
-
+            let raw = String(content.characters)
+            let rendered = parsedMarkdown ?? content
             MarkdownCodeFenceView(raw: raw, rendered: rendered)
         } else {
             Text(content)

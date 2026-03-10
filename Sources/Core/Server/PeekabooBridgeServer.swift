@@ -41,11 +41,10 @@ final class PeekabooBridgeServer {
         guard !isRunning else { lock.unlock(); return }
         lock.unlock()
 
-        // Request Screen Recording permission if not already granted.
-        // Deferred here from app startup — only needed when the bridge actually starts.
-        if !CGPreflightScreenCaptureAccess() {
-            CGRequestScreenCaptureAccess()
-        }
+        // Request Screen Recording once — never re-prompts after the first time.
+        // If a rebuild invalidated the grant, silently degrades (capture requests
+        // return empty/error instead of prompting the user on every build).
+        PermissionsService.requestScreenRecordingOnce()
 
         // Clean up stale socket from a previous run.
         try? FileManager.default.removeItem(atPath: socketPath)
@@ -59,11 +58,17 @@ final class PeekabooBridgeServer {
         // Copy socket path into sun_path (fixed-length C char tuple).
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(socketPath.utf8)
         withUnsafeMutableBytes(of: &addr.sun_path) { pathBuf in
-            let bytes = Array(socketPath.utf8)
-            precondition(bytes.count < pathBuf.count, "Bridge socket path too long")
-            for (i, b) in bytes.enumerated() { pathBuf[i] = b }
-            pathBuf[bytes.count] = 0
+            guard pathBytes.count < pathBuf.count else {
+                wtLog("[PeekabooBridge] Socket path too long (\(pathBytes.count) >= \(pathBuf.count)), truncating")
+                let truncated = pathBytes.prefix(pathBuf.count - 1)
+                for (i, b) in truncated.enumerated() { pathBuf[i] = b }
+                pathBuf[truncated.count] = 0
+                return
+            }
+            for (i, b) in pathBytes.enumerated() { pathBuf[i] = b }
+            pathBuf[pathBytes.count] = 0
         }
 
         let bindRC = withUnsafePointer(to: &addr) {
@@ -210,6 +215,8 @@ final class PeekabooBridgeServer {
     // MARK: - Handshake / Permissions
 
     private func respondHandshake(_: [String: Any]) -> Data? {
+        let hasScreenRecording = CGPreflightScreenCaptureAccess()
+        let hasAccessibility = AXIsProcessTrusted()
         let payload: [String: Any] = [
             "handshake": [
                 "_0": [
@@ -222,22 +229,26 @@ final class PeekabooBridgeServer {
                         "permissionsStatus",
                     ],
                     "permissions": [
-                        "screenRecording": true,
-                        "accessibility": false,
+                        "screenRecording": hasScreenRecording,
+                        "accessibility": hasAccessibility,
                         "appleScript": false,
                     ],
                     "permissionTags": [String: Any](),
                 ],
             ],
         ]
-        wtLog("[PeekabooBridge] Handshake complete — bridge active")
+        wtLog("[PeekabooBridge] Handshake complete — screenRecording=\(hasScreenRecording), accessibility=\(hasAccessibility)")
         return try? JSONSerialization.data(withJSONObject: payload)
     }
 
     private func respondPermissions() -> Data? {
         let payload: [String: Any] = [
             "permissionsStatus": [
-                "_0": ["screenRecording": true, "accessibility": false, "appleScript": false],
+                "_0": [
+                    "screenRecording": CGPreflightScreenCaptureAccess(),
+                    "accessibility": AXIsProcessTrusted(),
+                    "appleScript": false,
+                ],
             ],
         ]
         return try? JSONSerialization.data(withJSONObject: payload)
@@ -250,6 +261,12 @@ final class PeekabooBridgeServer {
     // API to a synchronous call for the socket handler thread.
 
     private func captureSync(windowID: CGWindowID?, bundleID: String?) -> Data? {
+        // Never call SCShareableContent without a grant — it triggers the OS permission prompt.
+        guard CGPreflightScreenCaptureAccess() else {
+            wtLog("[PeekabooBridge] Screen Recording not granted — returning error instead of prompting")
+            return respondError("permissionDenied", "Screen Recording not granted. Add World Tree in System Settings → Privacy & Security → Screen Recording.")
+        }
+
         let sem = DispatchSemaphore(value: 0)
         var result: Data?
 

@@ -105,6 +105,14 @@ struct ArtifactRendererView: NSViewRepresentable {
             self.skipGenericHeightQuery = skipGenericHeightQuery
         }
 
+        /// WebContent process crashed (e.g. memory pressure, sandbox violation).
+        /// Reload to restart the process — otherwise the dead WKWebView will crash on
+        /// any subsequent layout or JS call.
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            hasLoaded = false  // allow reload
+            webView.reload()
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             webView.isHidden = false
             if skipGenericHeightQuery {

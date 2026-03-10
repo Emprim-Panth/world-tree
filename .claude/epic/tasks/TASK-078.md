@@ -1,6 +1,6 @@
 # TASK-078: Worf — Phase 2 verification: asset import + frame linking tests
 
-**Status:** Pending
+**Status:** Done
 **Priority:** high
 **Assignee:** Worf
 **Phase:** 2 — .pen File Support

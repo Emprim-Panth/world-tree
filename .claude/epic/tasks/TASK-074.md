@@ -1,6 +1,6 @@
 # TASK-074: DB Migration v22 — pen_assets and pen_frame_links tables
 
-**Status:** Pending
+**Status:** Done
 **Priority:** high
 **Assignee:** Geordi
 **Phase:** 2 — .pen File Support

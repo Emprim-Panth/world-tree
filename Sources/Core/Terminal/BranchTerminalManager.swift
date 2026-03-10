@@ -175,6 +175,144 @@ final class BranchTerminalManager: ObservableObject {
         tmuxNames[branchId]
     }
 
+    // MARK: - Project-Level Terminals
+
+    /// Project terminals keyed by project name — persistent across branches.
+    private var projectTerminals: [String: CapturingTerminalView] = [:]
+    private var projectTmuxNames: [String: String] = [:]
+
+    /// Returns the existing project terminal, or spawns a new one.
+    /// Project terminals use `wt-{projectName}` tmux sessions and persist across branch switches.
+    func getOrCreateProjectTerminal(project: String, workingDirectory: String) -> CapturingTerminalView {
+        if let existing = projectTerminals[project] { return existing }
+
+        let frame = NSRect(x: 0, y: 0, width: 800, height: 400)
+        let tv = CapturingTerminalView(frame: frame)
+
+        var env = ProcessInfo.processInfo.environment
+        env.removeValue(forKey: "CLAUDECODE")
+        env["TERM"] = "xterm-256color"
+
+        let sessionName = projectTmuxNames[project] ?? "wt-\(project.lowercased().replacingOccurrences(of: " ", with: "-"))"
+        projectTmuxNames[project] = sessionName
+
+        if FileManager.default.fileExists(atPath: tmuxExecutable) {
+            tv.startProcess(
+                executable: tmuxExecutable,
+                args: ["new-session", "-A", "-s", sessionName],
+                environment: env.map { "\($0.key)=\($0.value)" },
+                execName: "tmux",
+                currentDirectory: workingDirectory
+            )
+            wtLog("[BranchTerminalManager] project tmux '\(sessionName)' attached/created for \(project)")
+        } else {
+            tv.startProcess(
+                executable: "/bin/zsh",
+                args: ["-i"],
+                environment: env.map { "\($0.key)=\($0.value)" },
+                execName: "zsh",
+                currentDirectory: workingDirectory
+            )
+        }
+
+        projectTerminals[project] = tv
+        return tv
+    }
+
+    /// Whether a project has an active terminal.
+    func isProjectTerminalActive(project: String) -> Bool {
+        projectTerminals[project] != nil
+    }
+
+    /// tmux session name for a project terminal.
+    func projectSessionName(for project: String) -> String? {
+        projectTmuxNames[project]
+    }
+
+    /// Recent output from a project terminal.
+    func getProjectRecentOutput(project: String) -> String {
+        projectTerminals[project]?.recentOutput ?? ""
+    }
+
+    /// Send text to a project terminal (as keyboard input to the process).
+    func sendToProject(_ project: String, text: String) {
+        guard let tv = projectTerminals[project] else { return }
+        let bytes = ArraySlice(Array(text.utf8))
+        tv.send(source: tv, data: bytes)
+    }
+
+    /// Mirror text to a project terminal's display — bypasses the shell process entirely.
+    /// Used to show Claude's live output (tool calls, results, text) without typing into zsh.
+    func mirrorToProject(_ project: String, text: String) {
+        guard let tv = projectTerminals[project] else { return }
+        tv.feed(text: text)
+    }
+
+    // MARK: - Agent Terminals (Hidden)
+
+    /// Agent terminals for background work — hidden from main view.
+    private var agentTerminals: [String: CapturingTerminalView] = [:]
+
+    /// Spawn a hidden tmux session for agent work. Returns the terminal for output capture.
+    /// Session is named `wt-agent-{jobId}` and doesn't appear in the main terminal panel.
+    @discardableResult
+    func spawnAgentTerminal(jobId: String, workingDirectory: String) -> CapturingTerminalView {
+        if let existing = agentTerminals[jobId] { return existing }
+
+        let frame = NSRect(x: 0, y: 0, width: 800, height: 400)
+        let tv = CapturingTerminalView(frame: frame)
+
+        var env = ProcessInfo.processInfo.environment
+        env.removeValue(forKey: "CLAUDECODE")
+        env["TERM"] = "xterm-256color"
+
+        let sessionName = "wt-agent-\(jobId.prefix(8))"
+
+        if FileManager.default.fileExists(atPath: tmuxExecutable) {
+            tv.startProcess(
+                executable: tmuxExecutable,
+                args: ["new-session", "-A", "-s", sessionName],
+                environment: env.map { "\($0.key)=\($0.value)" },
+                execName: "tmux",
+                currentDirectory: workingDirectory
+            )
+            wtLog("[BranchTerminalManager] agent tmux '\(sessionName)' spawned for job \(jobId.prefix(8))")
+        } else {
+            tv.startProcess(
+                executable: "/bin/zsh",
+                args: ["-i"],
+                environment: env.map { "\($0.key)=\($0.value)" },
+                execName: "zsh",
+                currentDirectory: workingDirectory
+            )
+        }
+
+        agentTerminals[jobId] = tv
+        return tv
+    }
+
+    /// Terminate an agent terminal and kill its tmux session.
+    func terminateAgentTerminal(jobId: String) {
+        agentTerminals[jobId]?.cleanup()
+        agentTerminals.removeValue(forKey: jobId)
+
+        let sessionName = "wt-agent-\(jobId.prefix(8))"
+        if FileManager.default.fileExists(atPath: tmuxExecutable) {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: tmuxExecutable)
+            task.arguments = ["kill-session", "-t", sessionName]
+            task.standardOutput = FileHandle.nullDevice
+            task.standardError = FileHandle.nullDevice
+            try? task.run()
+        }
+        wtLog("[BranchTerminalManager] agent terminal terminated for job \(jobId.prefix(8))")
+    }
+
+    /// Get captured output from an agent terminal.
+    func getAgentOutput(jobId: String) -> String {
+        agentTerminals[jobId]?.recentOutput ?? ""
+    }
+
     // MARK: - Agent Windows
 
     /// Open a new named tmux window in the branch's session for an agent task.
@@ -198,6 +336,13 @@ final class BranchTerminalManager: ObservableObject {
         guard let tv = terminals[branchId] else { return }
         let bytes = ArraySlice(Array(text.utf8))
         tv.send(source: tv, data: bytes)
+    }
+
+    /// Mirror text to a branch terminal's display — bypasses the shell process entirely.
+    /// Used to show Claude's live output without typing into the shell.
+    func mirror(to branchId: String, text: String) {
+        guard let tv = terminals[branchId] else { return }
+        tv.feed(text: text)
     }
 
     // MARK: - Terminal Output Capture
@@ -251,6 +396,25 @@ final class BranchTerminalManager: ObservableObject {
         terminals.removeAll()
         workingDirs.removeAll()
         tmuxNames.removeAll()
+
+        for (_, tv) in projectTerminals { tv.cleanup() }
+        projectTerminals.removeAll()
+        projectTmuxNames.removeAll()
+
+        // Agent terminals ARE killed on quit — they're ephemeral
+        for (jobId, tv) in agentTerminals {
+            tv.cleanup()
+            let sessionName = "wt-agent-\(jobId.prefix(8))"
+            if FileManager.default.fileExists(atPath: tmuxExecutable) {
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: tmuxExecutable)
+                task.arguments = ["kill-session", "-t", sessionName]
+                task.standardOutput = FileHandle.nullDevice
+                task.standardError = FileHandle.nullDevice
+                try? task.run()
+            }
+        }
+        agentTerminals.removeAll()
     }
 
     // MARK: - Session Verification
@@ -314,16 +478,19 @@ final class BranchTerminalManager: ObservableObject {
             try? pipe.fileHandleForReading.close()
             guard let output = String(data: data, encoding: .utf8) else { return }
 
-            let canvasSessions = output.split(separator: "\n")
-                .map(String.init)
-                .filter { $0.hasPrefix("canvas-") }
+            let allSessions = output.split(separator: "\n").map(String.init)
+            let canvasSessions = allSessions.filter { $0.hasPrefix("canvas-") }
+            let projectSessions = allSessions.filter { $0.hasPrefix("wt-") && !$0.hasPrefix("wt-agent-") }
 
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                let knownNames = Set(self.tmuxNames.values)
-                let orphans = canvasSessions.filter { !knownNames.contains($0) }
-                if !orphans.isEmpty {
-                    wtLog("[BranchTerminalManager] Found \(orphans.count) orphaned canvas tmux session(s): \(orphans.joined(separator: ", "))")
+                let knownBranch = Set(self.tmuxNames.values)
+                let knownProject = Set(self.projectTmuxNames.values)
+                let branchOrphans = canvasSessions.filter { !knownBranch.contains($0) }
+                let projectOrphans = projectSessions.filter { !knownProject.contains($0) }
+                let allOrphans = branchOrphans + projectOrphans
+                if !allOrphans.isEmpty {
+                    wtLog("[BranchTerminalManager] Found \(allOrphans.count) orphaned tmux session(s): \(allOrphans.joined(separator: ", "))")
                 }
             }
         }

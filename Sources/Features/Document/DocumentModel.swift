@@ -22,6 +22,10 @@ struct DocumentSection: Identifiable {
     var hasFindingSignal: Bool  // Scanner detected signal words post-response
     var source: String?         // Message origin — "telegram" for mobile-sourced messages
 
+    /// Pre-parsed markdown content — computed once in applyMessages, not on every render.
+    /// Nil for user/system messages (they use plain text).
+    var parsedMarkdown: AttributedString?
+
     init(
         id: UUID = UUID(),
         content: AttributedString,
@@ -34,7 +38,8 @@ struct DocumentSection: Identifiable {
         hasBranches: Bool = false,
         isFinding: Bool = false,
         hasFindingSignal: Bool = false,
-        source: String? = nil
+        source: String? = nil,
+        parsedMarkdown: AttributedString? = nil
     ) {
         self.id = id
         self.content = content
@@ -48,6 +53,7 @@ struct DocumentSection: Identifiable {
         self.isFinding = isFinding
         self.hasFindingSignal = hasFindingSignal
         self.source = source
+        self.parsedMarkdown = parsedMarkdown
     }
 }
 

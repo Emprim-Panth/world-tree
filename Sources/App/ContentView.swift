@@ -47,6 +47,8 @@ struct ContentView: View {
                 switch appState.sidebarDestination {
                 case .commandCenter:
                     CommandCenterView()
+                case .tickets:
+                    AllTicketsView()
                 case .timeline:
                     EventTimelineView()
                 case .graph:

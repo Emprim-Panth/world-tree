@@ -46,7 +46,15 @@ struct DocumentEditorView: View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 // --- Scrollable message area ---
+                // The ScrollView is only mounted once messages have loaded (initialLoadDone).
+                // This ensures .defaultScrollAnchor(.bottom) fires on the FIRST layout pass
+                // with actual content present — not on an empty container that wastes the anchor.
                 ScrollViewReader { proxy in
+                    if !viewModel.initialLoadDone && viewModel.document.sections.isEmpty {
+                        // Loading state — brief, before GRDB delivers messages
+                        Color(nsColor: .textBackgroundColor)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
                             // Pagination trigger — loads older messages when visible
@@ -121,21 +129,6 @@ struct DocumentEditorView: View {
                 }
                 .animation(.easeInOut(duration: 0.2), value: showSearch)
                 .background(Color(nsColor: .textBackgroundColor))
-                .onAppear {
-                    isFocused = true
-                    viewModel.loadDocument()
-                    viewModel.parentBranchLayout = parentBranchLayout
-                    // Auto-send pending synthesis prompt (set by SynthesisService)
-                    let synthKey = "pending_synthesis_\(sessionId)"
-                    if let prompt = UserDefaults.standard.string(forKey: synthKey) {
-                        UserDefaults.standard.removeObject(forKey: synthKey)
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(600))
-                            viewModel.currentInput = prompt
-                            viewModel.submitInput()
-                        }
-                    }
-                }
                 .onDisappear {
                     viewModel.writeSnapshotCheckpoint()
                 }
@@ -149,33 +142,20 @@ struct DocumentEditorView: View {
                             guard !newBranchId.isEmpty,
                                   let treeId = viewModel.treeId else { return }
                             AppState.shared.selectBranch(newBranchId, in: treeId)
-                            // Open as side panel — load branch and add to the shared layout
                             if let branch = try? TreeStore.shared.getBranch(newBranchId) {
                                 viewModel.parentBranchLayout?.visibleBranches.append(branch)
                             }
                         }
                     )
                 }
-                // Unlock gated scroll handlers after initial load.
-                // defaultScrollAnchor(.bottom) handles the initial position — no explicit
-                // scrollTo needed here. proxy.scrollTo with nil anchor defaults to .center
-                // alignment which drifts "scroll-bottom" (24px from true content bottom)
-                // to mid-viewport, causing visible upward scroll. Trust the anchor.
-                .onChange(of: viewModel.initialLoadDone) { _, done in
-                    guard done else { return }
-                    Task { @MainActor in
-                        // Brief yield so layout settles before onChange(sections.count) fires.
-                        try? await Task.sleep(for: .milliseconds(50))
-                        viewModel.initialScrollComplete = true
-                    }
+                // Mark initial scroll complete after ScrollView's first layout pass.
+                // Because we gate ScrollView creation on initialLoadDone, the content
+                // is present on the very first render — .defaultScrollAnchor(.bottom) works.
+                .onAppear {
+                    viewModel.initialScrollComplete = true
                 }
                 // Auto-scroll for subsequent new messages — only if user is at the bottom.
-                // If they've scrolled up to read, show the "new messages" FAB instead.
                 .onChange(of: viewModel.document.sections.count) { _, _ in
-                    // Gate on initialScrollComplete (not initialLoadDone) — the initial load
-                    // sets both sections.count and initialLoadDone in the same SwiftUI frame,
-                    // so guarding on initialLoadDone still fires before layout is measured.
-                    // initialScrollComplete is only set AFTER the 100ms deferred scroll Task.
                     guard viewModel.initialScrollComplete else { return }
                     guard viewModel.streaming.content == nil, !viewModel.isProcessing else { return }
                     if viewModel.isScrolledToBottom {
@@ -183,25 +163,18 @@ struct DocumentEditorView: View {
                     }
                 }
                 .onReceive(viewModel.streaming.$content) { content in
-                    // Combine emits the current value immediately on subscription (before layout).
-                    // Gate on initialLoadDone so the nil emission on view-appear doesn't misfire.
                     guard viewModel.initialLoadDone else { return }
                     if content != nil {
-                        // Only auto-scroll while streaming if user hasn't scrolled up
                         if viewModel.isScrolledToBottom {
                             proxy.scrollTo("scroll-bottom", anchor: .bottom)
                         }
                     } else {
-                        // Streaming ended — snap to bottom so input is in view
                         proxy.scrollTo("scroll-bottom", anchor: .bottom)
                         if viewModel.hasNewStreamContent { viewModel.hasNewStreamContent = false }
                     }
                 }
-                // Track scroll position — inhibit auto-scroll when user scrolled up
-                // onScrollGeometryChange requires macOS 15.0+
                 .modifier(ScrollBottomTracker(isScrolledToBottom: $viewModel.isScrolledToBottom,
                                              hasNewStreamContent: $viewModel.hasNewStreamContent))
-                // "Scroll to bottom" FAB — appears when streaming with user scrolled up
                 .overlay(alignment: .bottomTrailing) {
                     if viewModel.hasNewStreamContent && !viewModel.isScrolledToBottom {
                         ScrollToBottomFAB {
@@ -221,7 +194,6 @@ struct DocumentEditorView: View {
                     if processing && viewModel.streaming.content == nil {
                         proxy.scrollTo("scroll-bottom", anchor: .bottom)
                     }
-                    // Snap to bottom when the response finishes committing
                     if !processing && viewModel.isScrolledToBottom {
                         proxy.scrollTo("scroll-bottom", anchor: .bottom)
                     }
@@ -239,6 +211,21 @@ struct DocumentEditorView: View {
                     guard let targetBranchId = note.object as? String,
                           targetBranchId == branchId else { return }
                     viewModel.forkFromLastMessage()
+                }
+                }  // closes else (ScrollView branch)
+            }  // closes ScrollViewReader
+            .onAppear {
+                isFocused = true
+                viewModel.loadDocument()
+                viewModel.parentBranchLayout = parentBranchLayout
+                let synthKey = "pending_synthesis_\(sessionId)"
+                if let prompt = UserDefaults.standard.string(forKey: synthKey) {
+                    UserDefaults.standard.removeObject(forKey: synthKey)
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(600))
+                        viewModel.currentInput = prompt
+                        viewModel.submitInput()
+                    }
                 }
             }
             .frame(maxHeight: .infinity)
@@ -452,7 +439,7 @@ class DocumentEditorViewModel: ObservableObject {
     /// which would cause a premature scroll before layout is measured.
     @Published var initialScrollComplete = false
 
-    private let pageSize = 100
+    private let pageSize = 30
     private var initialLoadComplete = false
 
     // MARK: - Token Batching (CADisplayLink-equivalent via main-RunLoop Timer)
@@ -520,6 +507,30 @@ class DocumentEditorViewModel: ObservableObject {
     /// Non-nil means the CLI session was just compacted — next processUserInput will
     /// inject this as priority context then clear it.
     private var checkpointContext: String?
+
+    /// Mirror text to whichever terminal is actually visible — writes directly to the
+    /// terminal display via feed(), bypassing the shell process. Project terminal if a
+    /// project is set (the panel shows `wt-{project}`), otherwise branch terminal.
+    private func mirrorToTerminal(_ text: String) {
+        if let project = cachedProject {
+            BranchTerminalManager.shared.mirrorToProject(project, text: text)
+        } else {
+            BranchTerminalManager.shared.mirror(to: branchId, text: text)
+        }
+    }
+
+    /// HH:MM:SS timestamp for terminal tool headers.
+    private static func terminalTimestamp() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f.string(from: Date())
+    }
+
+    /// Shorten an absolute path for terminal display — replaces home dir with ~.
+    private static func shortenPath(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return path.replacingOccurrences(of: home, with: "~")
+    }
     /// Stable UUID per message ID — prevents random UUIDs being generated each
     /// render cycle when msg.id is an integer string (not a UUID string).
     private var stableSectionIds: [String: UUID] = [:]
@@ -591,14 +602,15 @@ class DocumentEditorViewModel: ObservableObject {
         loadRetryCount = 0  // reset on success
 
         let sid = sessionId  // capture value type, not self
+        let limit = pageSize
 
         // trackingConstantRegion: observed tables (messages, canvas_branches) are fixed
         // regardless of data values. Enables concurrent reader execution on DatabasePool
         // that doesn't block writes — critical during streaming when tokens arrive rapidly.
         let observation = ValueObservation.trackingConstantRegion { db -> [Message] in
-            // Load the LATEST 100 messages, sorted oldest→newest for display.
+            // Load the LATEST pageSize messages, sorted oldest→newest for display.
             // Using a subquery so we get the tail (newest) not the head (oldest),
-            // which means conversations with >100 messages still show current context.
+            // which means long conversations still show current context.
             // Pagination via "Load earlier" handles the older messages separately.
             let sql = """
                 SELECT * FROM (
@@ -608,7 +620,7 @@ class DocumentEditorViewModel: ObservableObject {
                     FROM messages m
                     WHERE m.session_id = ?
                     ORDER BY m.timestamp DESC
-                    LIMIT 100
+                    LIMIT \(limit)
                 ) sub ORDER BY sub.timestamp ASC
                 """
             return try Message.fetchAll(db, sql: sql, arguments: [sid])
@@ -806,6 +818,17 @@ class DocumentEditorViewModel: ObservableObject {
                 }
             }()
 
+            // Pre-parse markdown once here — not on every SwiftUI render.
+            // This is the expensive operation that was killing scroll performance.
+            var parsed: AttributedString? = nil
+            if case .assistant = author {
+                let raw = msg.content
+                parsed = (try? AttributedString(
+                    markdown: raw,
+                    options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+                )) ?? AttributedString(raw)
+            }
+
             let section = DocumentSection(
                 id: stableId(for: msg.id),
                 content: AttributedString(msg.content),
@@ -815,7 +838,8 @@ class DocumentEditorViewModel: ObservableObject {
                 isEditable: msg.role == .user && !isFinding,
                 messageId: msg.id,
                 hasBranches: msg.hasBranches,
-                isFinding: isFinding
+                isFinding: isFinding,
+                parsedMarkdown: parsed
             )
             document.sections.append(section)
             seenMessageIds.insert(msg.id)
@@ -847,6 +871,7 @@ class DocumentEditorViewModel: ObservableObject {
     private func startExternalRefreshTimer() {
         refreshTimer?.invalidate()
         let sid = sessionId
+        let limit = pageSize
         let sql = """
             SELECT * FROM (
                 SELECT m.*,
@@ -855,7 +880,7 @@ class DocumentEditorViewModel: ObservableObject {
                 FROM messages m
                 WHERE m.session_id = ?
                 ORDER BY m.timestamp DESC
-                LIMIT 100
+                LIMIT \(limit)
             ) sub ORDER BY sub.timestamp ASC
             """
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
@@ -1232,21 +1257,77 @@ class DocumentEditorViewModel: ObservableObject {
                 case .text(let token):
                     fullResponse += token
                     pendingTokenBuffer += token  // batched — Timer flushes at 60fps
-                    BranchTerminalManager.shared.send(to: branchId, text: token)
+                    // Mirror Claude's response text — bold white so it stands out from tool noise
+                    mirrorToTerminal("\u{1B}[1;37m\(token)\u{1B}[0m")
                     // Fire-and-forget — actor serialises writes, never blocks the stream
                     Task { await StreamCacheManager.shared.appendToStream(sessionId: self.sessionId, chunk: token) }
 
                 case .toolStart(let name, let input):
                     let activity = ToolActivity(name: name, input: input, status: .running)
                     currentTool = activity.displayDescription
-                    BranchTerminalManager.shared.send(to: branchId, text: "\r\n\u{1B}[2m⟩ \(activity.displayDescription)\u{1B}[0m\r\n")
+                    let ts = Self.terminalTimestamp()
+                    // ── Tool header with separator, timestamp, and rich context ──
+                    var header = "\r\n\u{1B}[2m\u{1B}[90m─── \(ts) "
+                    if let parsed = activity.parsedInput {
+                        switch name {
+                        case "Bash", "bash":
+                            let cmd = parsed["command"] as? String ?? ""
+                            let preview = cmd.components(separatedBy: .newlines).first ?? cmd
+                            let truncated = preview.count > 120 ? String(preview.prefix(120)) + "…" : preview
+                            header += "\u{1B}[0m\r\n\u{1B}[1;36m  ❯ \(truncated)\u{1B}[0m"
+                        case "Read", "read_file":
+                            let path = Self.shortenPath(parsed["file_path"] as? String ?? "file")
+                            header += "\u{1B}[0m\r\n\u{1B}[33m  ◆ Read \(path)\u{1B}[0m"
+                        case "Edit", "edit_file":
+                            let path = Self.shortenPath(parsed["file_path"] as? String ?? "file")
+                            header += "\u{1B}[0m\r\n\u{1B}[32m  ◆ Edit \(path)\u{1B}[0m"
+                        case "Write", "write_file":
+                            let path = Self.shortenPath(parsed["file_path"] as? String ?? "file")
+                            header += "\u{1B}[0m\r\n\u{1B}[32m  ◆ Write \(path)\u{1B}[0m"
+                        case "Grep", "grep":
+                            let pattern = parsed["pattern"] as? String ?? ""
+                            let path = Self.shortenPath(parsed["path"] as? String ?? "")
+                            header += "\u{1B}[0m\r\n\u{1B}[35m  ◆ Grep \"\(pattern)\" \(path)\u{1B}[0m"
+                        case "Glob", "glob":
+                            let pattern = parsed["pattern"] as? String ?? ""
+                            header += "\u{1B}[0m\r\n\u{1B}[35m  ◆ Glob \"\(pattern)\"\u{1B}[0m"
+                        case "Agent", "agent":
+                            let desc = parsed["description"] as? String ?? "subagent"
+                            header += "\u{1B}[0m\r\n\u{1B}[34m  ◆ Agent: \(desc)\u{1B}[0m"
+                        default:
+                            header += "\u{1B}[0m\r\n\u{1B}[2m  ◆ \(activity.displayDescription)\u{1B}[0m"
+                        }
+                    } else {
+                        header += "\u{1B}[0m\r\n\u{1B}[2m  ◆ \(activity.displayDescription)\u{1B}[0m"
+                    }
+                    mirrorToTerminal(header + "\r\n")
 
-                case .toolEnd:
+                case .toolEnd(let name, let result, let isError):
                     currentTool = nil
+                    if !result.isEmpty {
+                        let lines = result.components(separatedBy: .newlines)
+                        // Indent every line of output for visual nesting under the tool header
+                        let maxLines = isError ? 20 : 15
+                        let previewLines = lines.prefix(maxLines)
+                        let indented = previewLines.map { line -> String in
+                            let trimmed = line.count > 200 ? String(line.prefix(200)) + "…" : line
+                            return "  \u{1B}[90m│\u{1B}[0m \u{1B}[2m\(trimmed)\u{1B}[0m"
+                        }.joined(separator: "\r\n")
+                        let overflow = lines.count > maxLines
+                            ? "\r\n  \u{1B}[90m│ … \(lines.count - maxLines) more lines\u{1B}[0m" : ""
+                        let statusIcon = isError ? "\u{1B}[31m✗\u{1B}[0m" : "\u{1B}[32m✓\u{1B}[0m"
+                        mirrorToTerminal("\(indented)\(overflow)\r\n  \u{1B}[90m└─\u{1B}[0m \(statusIcon)\r\n")
+                    } else {
+                        let statusIcon = isError ? "\u{1B}[31m✗\u{1B}[0m" : "\u{1B}[32m✓\u{1B}[0m"
+                        mirrorToTerminal("  \u{1B}[90m└─\u{1B}[0m \(statusIcon)\r\n")
+                    }
 
                 case .done(let usage):
-                    // Record token usage to canvas_token_usage + project metrics
                     if usage.totalInputTokens > 0 || usage.totalOutputTokens > 0 {
+                        let inK = String(format: "%.1f", Double(usage.totalInputTokens) / 1000.0)
+                        let outK = String(format: "%.1f", Double(usage.totalOutputTokens) / 1000.0)
+                        mirrorToTerminal("\r\n\u{1B}[90m━━━ \(inK)K in · \(outK)K out ━━━\u{1B}[0m\r\n\r\n")
+
                         TokenStore.shared.record(
                             sessionId: sessionId,
                             branchId: branchId,
@@ -1260,6 +1341,7 @@ class DocumentEditorViewModel: ObservableObject {
                 case .error(let msg):
                     hadExplicitError = true
                     wtLog("[DocumentEditor] Provider error: \(msg)")
+                    mirrorToTerminal("\r\n\u{1B}[1;31m  ⚠ Error: \(msg)\u{1B}[0m\r\n")
                     if fullResponse.isEmpty {
                         fullResponse = "⚠️ \(msg)"
                     }

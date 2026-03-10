@@ -30,7 +30,7 @@ final class TimelineStore {
                 """))
 
             // 1. Sessions
-            if eventTypes == nil || eventTypes!.contains(.session) {
+            if eventTypes?.contains(.session) != false {
                 let rows = try Row.fetchAll(db, sql: """
                     SELECT s.id, s.started_at, s.working_directory, s.description,
                            (SELECT COUNT(*) FROM messages WHERE session_id = s.id) as msg_count
@@ -65,7 +65,7 @@ final class TimelineStore {
             }
 
             // 2. Dispatches
-            if eventTypes == nil || eventTypes!.contains(.dispatch) {
+            if eventTypes?.contains(.dispatch) != false {
                 if existingTables.contains("canvas_dispatches") {
                     let rows = try Row.fetchAll(db, sql: """
                         SELECT id, project, message, status, model, created_at
@@ -98,7 +98,7 @@ final class TimelineStore {
             }
 
             // 3. Knowledge entries
-            if eventTypes == nil || eventTypes!.contains(.knowledgeAdd) {
+            if eventTypes?.contains(.knowledgeAdd) != false {
                 if existingTables.contains("knowledge") {
                     let rows = try Row.fetchAll(db, sql: """
                         SELECT id, type, title, project, created_at, heat_score
@@ -132,7 +132,7 @@ final class TimelineStore {
             }
 
             // 4. Knowledge updates (version > 1 means the entry was edited)
-            if eventTypes == nil || eventTypes!.contains(.knowledgeUpdate) {
+            if eventTypes?.contains(.knowledgeUpdate) != false {
                 if existingTables.contains("knowledge_versions") {
                     let rows = try Row.fetchAll(db, sql: """
                         SELECT kv.id, kv.knowledge_id, kv.version, kv.rationale, kv.created_at,
@@ -169,7 +169,7 @@ final class TimelineStore {
             }
 
             // 5. Crew dispatches (agent-to-agent handoffs)
-            if eventTypes == nil || eventTypes!.contains(.crewDispatch) {
+            if eventTypes?.contains(.crewDispatch) != false {
                 if existingTables.contains("crew_handoffs") {
                     let rows = try Row.fetchAll(db, sql: """
                         SELECT id, from_agent, to_agent, task_summary, status, created_at
@@ -201,7 +201,7 @@ final class TimelineStore {
             }
 
             // 6. Conversation archives
-            if eventTypes == nil || eventTypes!.contains(.archival) {
+            if eventTypes?.contains(.archival) != false {
                 if existingTables.contains("conversation_archive") {
                     let rows = try Row.fetchAll(db, sql: """
                         SELECT session_id, project, message_count, token_estimate,

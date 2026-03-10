@@ -76,7 +76,13 @@ actor StreamCacheManager {
     func appendToStream(sessionId: String, chunk: String) {
         guard let handle = handles[sessionId],
               let data = chunk.data(using: .utf8) else { return }
-        handle.write(data)
+        do {
+            try handle.write(contentsOf: data)
+        } catch {
+            wtLog("[StreamCache] Write failed for \(sessionId): \(error) — closing handle")
+            try? handle.close()
+            handles[sessionId] = nil
+        }
     }
 
     /// Normal completion — stream finished cleanly, nothing to recover. Delete the file.

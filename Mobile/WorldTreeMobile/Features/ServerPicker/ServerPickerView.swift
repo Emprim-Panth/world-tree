@@ -56,6 +56,16 @@ struct ServerPickerView: View {
                 bonjourBrowser.stop()
                 pathMonitor.cancel()
             }
+            .onChange(of: bonjourBrowser.servers) { _, newServers in
+                // Auto-connect to first discovered server if not already connected/connecting.
+                guard autoConnect,
+                      !connectionManager.suppressAutoConnect,
+                      connectionManager.state == .disconnected,
+                      connectionManager.currentServer == nil,
+                      let first = newServers.first else { return }
+                didAutoConnect = true
+                connectToDiscovered(first)
+            }
         }
     }
 
@@ -75,11 +85,7 @@ struct ServerPickerView: View {
                 } else {
                     ForEach(bonjourBrowser.servers) { discovered in
                         NearbyServerRow(server: discovered) {
-                            addServerPrefill = AddServerPrefill(
-                                name: discovered.name,
-                                host: discovered.host,
-                                port: "\(discovered.port)"
-                            )
+                            connectToDiscovered(discovered)
                         }
                     }
                 }
@@ -119,6 +125,24 @@ struct ServerPickerView: View {
         Task { await connectionManager.connect(to: server) }
         persistLastServer(server)
         updateLastConnected(server)
+    }
+
+    /// Tap a Bonjour-discovered server → save it (if not already saved) and connect immediately.
+    private func connectToDiscovered(_ discovered: BonjourBrowser.DiscoveredServer) {
+        // Reuse an existing saved entry for this host to avoid duplicates.
+        let existing = savedServers.first(where: { $0.host == discovered.host })
+        let server = existing ?? SavedServer(
+            id: UUID().uuidString,
+            name: discovered.name,
+            host: discovered.host,
+            port: discovered.port,
+            source: .bonjour
+        )
+        if existing == nil {
+            savedServers.append(server)
+            persistServers()
+        }
+        connectTo(server)
     }
 
     private func startNetworkMonitor() {

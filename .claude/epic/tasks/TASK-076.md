@@ -1,6 +1,6 @@
 # TASK-076: .pen File Inspector UI — read-only frame tree + ticket badges
 
-**Status:** Pending
+**Status:** Done
 **Priority:** high
 **Assignee:** Data
 **Phase:** 2 — .pen File Support

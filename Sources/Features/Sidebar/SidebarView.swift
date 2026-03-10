@@ -63,11 +63,10 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Global nav — Command Center, Timeline, Graph
+            // Global nav — Command Center, Tickets
             HStack(spacing: 2) {
                 sidebarNavButton("Command Center", icon: "square.grid.2x2", dest: .commandCenter)
-                sidebarNavButton("Timeline", icon: "clock", dest: .timeline)
-                sidebarNavButton("Graph", icon: "point.3.connected.trianglepath.dotted", dest: .graph)
+                sidebarNavButton("Tickets", icon: "checklist", dest: .tickets)
             }
             .padding(.horizontal, 8)
             .padding(.top, 6)

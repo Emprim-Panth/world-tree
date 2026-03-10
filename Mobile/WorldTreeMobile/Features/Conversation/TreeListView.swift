@@ -50,6 +50,11 @@ struct TreeListView: View {
         .refreshable {
             await connectionManager.send(.listTrees())
         }
+        .onAppear {
+            // Re-fetch trees on every appearance so a dropped initial listTrees
+            // or a stale list doesn't leave the user stranded on an empty screen.
+            Task { await connectionManager.send(.listTrees()) }
+        }
         .searchable(
             text: $searchText,
             placement: .navigationBarDrawer(displayMode: .always),

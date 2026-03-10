@@ -48,16 +48,17 @@ struct BranchView: View {
                     } else {
                         messageText = store.draft(for: id)
                     }
-                    if store.messages.isEmpty, let tree = store.currentTree {
-                        // Always try the cache first — eliminates the spinner for cached branches
-                        // and shows content immediately when offline.
+                    // Always try the cache first — shows content immediately when offline or slow.
+                    if store.messages.isEmpty {
                         store.loadCachedMessages(branchId: id)
-                        if !isOffline {
-                            store.isLoadingHistory = store.messages.isEmpty
-                            Task {
-                                await connectionManager.send(.subscribe(treeId: tree.id, branchId: id))
-                                await connectionManager.send(.loadHistory(branchId: id))
-                            }
+                    }
+                    // Always subscribe and fetch fresh messages when connected —
+                    // not gated by message count so stale state never blocks a reload.
+                    if !isOffline, let tree = store.currentTree {
+                        store.isLoadingHistory = store.messages.isEmpty
+                        Task {
+                            await connectionManager.send(.subscribe(treeId: tree.id, branchId: id))
+                            await connectionManager.send(.loadHistory(branchId: id))
                         }
                     }
                 }
@@ -271,7 +272,7 @@ private struct MessageBubble: View {
     var body: some View {
         HStack {
             if isUser { Spacer(minLength: 60) }
-            Text(message.content)
+            messageContent
                 .font(.system(size: fontSize))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -290,6 +291,25 @@ private struct MessageBubble: View {
             if !isUser { Spacer(minLength: 60) }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+    }
+
+    /// Render assistant messages with markdown; user messages as plain text.
+    @ViewBuilder
+    private var messageContent: some View {
+        if isUser {
+            Text(message.content)
+        } else {
+            // Use SwiftUI's built-in markdown rendering (iOS 15+).
+            // Fall back to plain text if parsing fails.
+            if let attributed = try? AttributedString(
+                markdown: message.content,
+                options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+            ) {
+                Text(attributed)
+            } else {
+                Text(message.content)
+            }
+        }
     }
 }
 
