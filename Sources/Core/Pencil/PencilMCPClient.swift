@@ -3,80 +3,155 @@ import Foundation
 // MARK: - PencilMCPError
 
 enum PencilMCPError: Error, LocalizedError {
+    case binaryNotFound
+    case processStartFailed(String)
     case serverUnreachable
     case toolCallFailed(String)
     case parseError
 
     var errorDescription: String? {
         switch self {
-        case .serverUnreachable:    return "Pencil MCP server is not reachable"
-        case .toolCallFailed(let msg): return "Tool call failed: \(msg)"
-        case .parseError:           return "Failed to parse Pencil response"
+        case .binaryNotFound:
+            return "Pencil MCP binary not found. Install Pencil.app or the VS Code extension."
+        case .processStartFailed(let msg):
+            return "Failed to start Pencil MCP server: \(msg)"
+        case .serverUnreachable:
+            return "Pencil MCP server is not responding"
+        case .toolCallFailed(let msg):
+            return "Tool call failed: \(msg)"
+        case .parseError:
+            return "Failed to parse Pencil response"
         }
     }
 }
 
 // MARK: - PencilMCPClient
 
-/// HTTP MCP client for Pencil's local server.
+/// Stdio MCP client for Pencil's local server.
+///
+/// Spawns the Pencil MCP binary as a subprocess and communicates via
+/// stdin/stdout pipes using newline-delimited JSON-RPC 2.0.
 ///
 /// World Tree is a **read-only consumer** of Pencil's canvas.
 /// `batchDesign` and `setVariables` are internal and never exposed to UI —
 /// calling them risks corrupting canvas state during live Claude Code sessions.
 ///
-/// Follows the GatewayClient actor pattern: URLSession, 15s/60s timeouts,
-/// no @MainActor on the actor itself.
+/// Binary discovery order:
+///   1. UserDefaults override (pencil.binary.path)
+///   2. /Applications/Pencil.app bundle
+///   3. ~/.vscode/extensions/highagency.pencildev-*/out/
+///   4. ~/.cursor/extensions/highagency.pencildev-*/out/
 actor PencilMCPClient {
-    private let session: URLSession
-    private let pingSession: URLSession   // Dedicated 2s timeout for ping
-    private var requestIDCounter: Int = 0
-    private var serverURL: URL
 
-    static let userDefaultsURLKey = "pencil.mcp.url"
-    static let defaultURL = "http://localhost:4100"
+    // MARK: - Static Keys
 
-    init(urlOverride: String? = nil) {
-        let urlString = urlOverride
-            ?? UserDefaults.standard.string(forKey: Self.userDefaultsURLKey)
-            ?? Self.defaultURL
-        self.serverURL = URL(string: urlString) ?? URL(string: Self.defaultURL)!
+    static let binaryPathOverrideKey = "pencil.binary.path"
 
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 15
-        config.timeoutIntervalForResource = 60
-        self.session = URLSession(configuration: config)
+    // MARK: - Process State
 
-        let pingConfig = URLSessionConfiguration.default
-        pingConfig.timeoutIntervalForRequest = 2
-        pingConfig.timeoutIntervalForResource = 5
-        self.pingSession = URLSession(configuration: pingConfig)
-    }
+    private var process: Process?
+    private var stdinPipe: Pipe?
+    private var stdoutReadTask: Task<Void, Never>?
+    private var isInitialized = false
 
-    func updateURL(_ urlString: String) {
-        if let url = URL(string: urlString) {
-            serverURL = url
+    // MARK: - Request Routing
+
+    private var requestIDCounter = 0
+    private var pendingRequests: [Int: CheckedContinuation<Any, Error>] = [:]
+
+    // MARK: - Init / Deinit
+
+    init() {}
+
+    // MARK: - Binary Discovery
+
+    /// Finds the Pencil MCP server binary on this machine.
+    /// Returns nil if Pencil is not installed anywhere we know to look.
+    static func discoverBinaryPath() -> String? {
+        // 1. User override
+        if let override = UserDefaults.standard.string(forKey: binaryPathOverrideKey),
+           !override.isEmpty,
+           FileManager.default.fileExists(atPath: override) {
+            return override
         }
+
+        let fm = FileManager.default
+        let home = NSHomeDirectory()
+        let arch = ProcessInfo.processInfo.machineHardwareClass
+
+        // Binary names to try (arm64 first on Apple Silicon, x86 fallback)
+        let binaryNames: [String]
+        if arch == "arm64" {
+            binaryNames = ["mcp-server-darwin-arm64", "mcp-server-darwin-x64", "mcp-server"]
+        } else {
+            binaryNames = ["mcp-server-darwin-x64", "mcp-server-darwin-arm64", "mcp-server"]
+        }
+
+        // 2. Standalone Pencil.app
+        let appPaths = [
+            "/Applications/Pencil.app",
+            "\(home)/Applications/Pencil.app"
+        ]
+        for appPath in appPaths {
+            for name in binaryNames {
+                let candidates = [
+                    "\(appPath)/Contents/MacOS/\(name)",
+                    "\(appPath)/Contents/Resources/\(name)",
+                    "\(appPath)/Contents/Resources/app/\(name)",
+                ]
+                for c in candidates where fm.fileExists(atPath: c) { return c }
+            }
+        }
+
+        // 3. VS Code extension
+        let vscodeExtDir = "\(home)/.vscode/extensions"
+        if let exts = try? fm.contentsOfDirectory(atPath: vscodeExtDir) {
+            for ext in exts.sorted().reversed() where ext.hasPrefix("highagency.pencildev") {
+                for name in binaryNames {
+                    let path = "\(vscodeExtDir)/\(ext)/out/\(name)"
+                    if fm.fileExists(atPath: path) { return path }
+                }
+            }
+        }
+
+        // 4. Cursor extension
+        let cursorExtDir = "\(home)/.cursor/extensions"
+        if let exts = try? fm.contentsOfDirectory(atPath: cursorExtDir) {
+            for ext in exts.sorted().reversed() where ext.hasPrefix("highagency.pencildev") {
+                for name in binaryNames {
+                    let path = "\(cursorExtDir)/\(ext)/out/\(name)"
+                    if fm.fileExists(atPath: path) { return path }
+                }
+            }
+        }
+
+        // 5. Windsurf extension
+        let windsurfExtDir = "\(home)/.windsurf/extensions"
+        if let exts = try? fm.contentsOfDirectory(atPath: windsurfExtDir) {
+            for ext in exts.sorted().reversed() where ext.hasPrefix("highagency.pencildev") {
+                for name in binaryNames {
+                    let path = "\(windsurfExtDir)/\(ext)/out/\(name)"
+                    if fm.fileExists(atPath: path) { return path }
+                }
+            }
+        }
+
+        return nil
     }
 
     // MARK: - Health
 
-    /// Returns true if the Pencil MCP server is reachable, false otherwise.
-    /// Guaranteed to return within ~2 seconds regardless of server state.
+    /// Returns true if the Pencil binary exists and responds to initialize.
+    /// Guaranteed to return within ~3 seconds.
     func ping() async -> Bool {
-        let url = serverURL.appendingPathComponent("health")
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
         do {
-            let (_, response) = try await pingSession.data(for: request)
-            return (response as? HTTPURLResponse)?.statusCode == 200
-        } catch {
-            // Fall through — try initialize handshake instead
-        }
-        // Some MCP servers don't have /health — try initialize
-        do {
-            _ = try await callRaw(method: "initialize", params: [:], usePingSession: true)
+            try ensureProcessRunning()
+            if !isInitialized {
+                try await performInitialize()
+            }
             return true
         } catch {
+            terminateProcess()
             return false
         }
     }
@@ -85,8 +160,7 @@ actor PencilMCPClient {
 
     /// Get specific nodes by ID from the canvas
     func batchGet(nodeIds: [String]) async throws -> [PencilNode] {
-        let params: [String: Any] = ["nodeIds": nodeIds]
-        let result = try await callTool("batch_get", arguments: params)
+        let result = try await callTool("batch_get", arguments: ["nodeIds": nodeIds])
         return try decode([PencilNode].self, from: result)
     }
 
@@ -122,10 +196,8 @@ actor PencilMCPClient {
 
     /// Batch design operations on the canvas.
     /// Intentionally not exposed to UI — read-only consumer policy.
-    /// Calling this risks corrupting canvas state during live Claude Code sessions.
     internal func batchDesign(ops: [[String: Any]]) async throws -> PencilBatchResult {
-        let params: [String: Any] = ["operations": ops]
-        let result = try await callTool("batch_design", arguments: params)
+        let result = try await callTool("batch_design", arguments: ["operations": ops])
         return try decode(PencilBatchResult.self, from: result)
     }
 
@@ -133,75 +205,201 @@ actor PencilMCPClient {
     /// Intentionally not exposed to UI — read-only consumer policy.
     internal func setVariables(_ vars: [PencilVariable]) async throws {
         let encoded = vars.map { ["name": $0.name, "value": $0.value] }
-        let params: [String: Any] = ["variables": encoded]
-        _ = try await callTool("set_variables", arguments: params)
+        _ = try await callTool("set_variables", arguments: ["variables": encoded])
     }
 
-    // MARK: - JSON-RPC Core
+    // MARK: - Process Management
 
-    private func nextID() -> Int {
-        requestIDCounter += 1
-        return requestIDCounter
+    private func ensureProcessRunning() throws {
+        if let p = process, p.isRunning { return }
+
+        guard let binaryPath = Self.discoverBinaryPath() else {
+            throw PencilMCPError.binaryNotFound
+        }
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: binaryPath)
+        p.arguments = []
+
+        let stdin = Pipe()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        p.standardInput = stdin
+        p.standardOutput = stdout
+        p.standardError = stderr
+
+        p.terminationHandler = { [weak self] _ in
+            Task { [weak self] in await self?.handleProcessTermination() }
+        }
+
+        do {
+            try p.launch()
+        } catch {
+            throw PencilMCPError.processStartFailed(error.localizedDescription)
+        }
+
+        process = p
+        stdinPipe = stdin
+        isInitialized = false
+
+        // Start reading stdout in background
+        let fileHandle = stdout.fileHandleForReading
+        stdoutReadTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                for try await line in fileHandle.bytes.lines {
+                    guard !line.isEmpty else { continue }
+                    guard let data = line.data(using: .utf8),
+                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                        continue
+                    }
+                    await self.handleMessage(json)
+                }
+            } catch {
+                // Process ended or pipe closed — terminate cleanly
+                await self.handleProcessTermination()
+            }
+        }
+    }
+
+    private func terminateProcess() {
+        stdoutReadTask?.cancel()
+        stdoutReadTask = nil
+        process?.terminate()
+        process = nil
+        stdinPipe = nil
+        isInitialized = false
+
+        // Fail all pending requests
+        let pending = pendingRequests
+        pendingRequests = [:]
+        for (_, continuation) in pending {
+            continuation.resume(throwing: PencilMCPError.serverUnreachable)
+        }
+    }
+
+    private func handleProcessTermination() {
+        process = nil
+        stdinPipe = nil
+        isInitialized = false
+        stdoutReadTask?.cancel()
+        stdoutReadTask = nil
+
+        let pending = pendingRequests
+        pendingRequests = [:]
+        for (_, continuation) in pending {
+            continuation.resume(throwing: PencilMCPError.serverUnreachable)
+        }
+    }
+
+    // MARK: - MCP Protocol
+
+    private func performInitialize() async throws {
+        let params: [String: Any] = [
+            "protocolVersion": "2024-11-05",
+            "capabilities": [:],
+            "clientInfo": ["name": "WorldTree", "version": "1.1.0"]
+        ]
+        _ = try await withMCPTimeout(3) {
+            try await self.sendRequest(method: "initialize", params: params)
+        }
+        isInitialized = true
     }
 
     private func callTool(_ name: String, arguments: [String: Any]) async throws -> Any {
-        return try await callRaw(
-            method: "tools/call",
-            params: ["name": name, "arguments": arguments],
-            usePingSession: false
-        )
+        try ensureProcessRunning()
+        if !isInitialized { try await performInitialize() }
+        return try await withMCPTimeout(15) {
+            try await self.sendRequest(
+                method: "tools/call",
+                params: ["name": name, "arguments": arguments]
+            )
+        }
     }
 
-    private func callRaw(method: String, params: [String: Any], usePingSession: Bool) async throws -> Any {
+    private func sendRequest(method: String, params: [String: Any]) async throws -> Any {
         let id = nextID()
-        let body: [String: Any] = [
+        let message: [String: Any] = [
             "jsonrpc": "2.0",
             "method": method,
             "params": params,
             "id": id
         ]
 
-        let url = serverURL.appendingPathComponent("mcp")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        guard let data = try? JSONSerialization.data(withJSONObject: message),
+              let line = String(data: data, encoding: .utf8) else {
+            throw PencilMCPError.parseError
+        }
 
-        let chosenSession = usePingSession ? pingSession : session
-        let (data, response) = try await chosenSession.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
+        guard let stdin = stdinPipe else {
             throw PencilMCPError.serverUnreachable
         }
 
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw PencilMCPError.parseError
+        // Write newline-terminated JSON to stdin
+        let payload = (line + "\n").data(using: .utf8)!
+        stdin.fileHandleForWriting.write(payload)
+
+        return try await withCheckedThrowingContinuation { continuation in
+            pendingRequests[id] = continuation
+        }
+    }
+
+    private func handleMessage(_ json: [String: Any]) {
+        // MCP responses have an "id" field — notifications do not
+        guard let id = json["id"] as? Int,
+              let continuation = pendingRequests.removeValue(forKey: id) else {
+            return  // Notification or unknown message — ignore
         }
 
         if let error = json["error"] as? [String: Any],
            let message = error["message"] as? String {
-            throw PencilMCPError.toolCallFailed(message)
+            continuation.resume(throwing: PencilMCPError.toolCallFailed(message))
+            return
         }
 
         guard let result = json["result"] else {
-            throw PencilMCPError.parseError
+            continuation.resume(throwing: PencilMCPError.parseError)
+            return
         }
 
-        // MCP tools/call returns result.content[0].text as JSON string
+        // MCP tools/call wraps result in content[0].text as a JSON string
         if let resultDict = result as? [String: Any],
            let content = resultDict["content"] as? [[String: Any]],
            let firstContent = content.first,
            let text = firstContent["text"] as? String {
-            // Try to parse as JSON, fall back to raw string
             if let jsonData = text.data(using: .utf8),
                let parsed = try? JSONSerialization.jsonObject(with: jsonData) {
-                return parsed
+                continuation.resume(returning: parsed)
+            } else {
+                continuation.resume(returning: text)
             }
-            return text
+            return
         }
 
-        return result
+        continuation.resume(returning: result)
+    }
+
+    private func nextID() -> Int {
+        requestIDCounter += 1
+        return requestIDCounter
+    }
+
+    // MARK: - Timeout Helper
+
+    private func withMCPTimeout<T: Sendable>(
+        _ seconds: Double,
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw PencilMCPError.serverUnreachable
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
     }
 
     // MARK: - Decode Helpers
@@ -217,10 +415,19 @@ actor PencilMCPClient {
         } else {
             throw PencilMCPError.parseError
         }
-        do {
-            return try JSONDecoder().decode(type, from: data)
-        } catch {
-            throw PencilMCPError.parseError
+        return try JSONDecoder().decode(type, from: data)
+    }
+}
+
+// MARK: - ProcessInfo Extension
+
+private extension ProcessInfo {
+    var machineHardwareClass: String {
+        var sysinfo = utsname()
+        uname(&sysinfo)
+        return withUnsafeBytes(of: &sysinfo.machine) { ptr in
+            let bytes = ptr.bindMemory(to: CChar.self)
+            return String(cString: bytes.baseAddress!)
         }
     }
 }
