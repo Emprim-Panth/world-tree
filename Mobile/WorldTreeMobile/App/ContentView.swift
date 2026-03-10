@@ -20,9 +20,23 @@ struct ContentView: View {
                 if isIPad && connectionManager.currentServer != nil {
                     iPadRootView()
                 } else {
-                    ConversationView()
+                    mainTabView
                 }
             }
+        }
+    }
+
+    private var mainTabView: some View {
+        TabView {
+            ConversationView()
+                .tabItem {
+                    Label("Conversations", systemImage: "bubble.left.and.bubble.right")
+                }
+
+            CrewActivityView()
+                .tabItem {
+                    Label("Crew", systemImage: "person.3")
+                }
         }
     }
 }

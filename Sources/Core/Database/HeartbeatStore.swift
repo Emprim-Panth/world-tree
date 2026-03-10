@@ -14,7 +14,7 @@ struct HeartbeatSignal: Identifiable {
 
 // MARK: - Heartbeat Run Model
 
-struct HeartbeatRun {
+struct HeartbeatRun: Identifiable {
     let id: String
     let intensity: String
     let startedAt: Date?
@@ -22,6 +22,52 @@ struct HeartbeatRun {
     let signalsFound: Int
     let dispatchesMade: Int
     let summary: String?
+}
+
+// MARK: - Dispatch Job Model
+
+struct CrewDispatchJob: Identifiable {
+    let id: String
+    let project: String
+    let model: String
+    let crewAgent: String
+    let prompt: String
+    let ticketId: String?
+    let status: String          // pending, running, completed, failed
+    let attempts: Int
+    let maxAttempts: Int
+    let lastError: String?
+    let createdAt: Date?
+
+    var agentIcon: String {
+        switch crewAgent.lowercased() {
+        case "geordi":  return "wrench.and.screwdriver"
+        case "data":    return "chart.bar"
+        case "scotty":  return "hammer"
+        case "worf":    return "shield"
+        case "torres":  return "gearshape.2"
+        case "spock":   return "brain"
+        case "dax":     return "book"
+        case "uhura":   return "antenna.radiowaves.left.and.right"
+        default:        return "person.circle"
+        }
+    }
+
+    var statusColor: String {
+        switch status {
+        case "running":   return "blue"
+        case "pending":   return "orange"
+        case "completed": return "green"
+        case "failed":    return "red"
+        default:          return "gray"
+        }
+    }
+
+    /// First ~60 chars of the prompt, cleaned up for display
+    var shortPrompt: String {
+        let cleaned = prompt.components(separatedBy: "\n").first ?? prompt
+        return cleaned.count > 80 ? String(cleaned.prefix(80)) + "…" : cleaned
+    }
 }
 
 // MARK: - Heartbeat Store
@@ -38,6 +84,10 @@ final class HeartbeatStore: ObservableObject {
     @Published private(set) var lastDispatchCount: Int = 0
     @Published private(set) var activeDispatches: Int = 0
     @Published private(set) var recentSignals: [HeartbeatSignal] = []
+
+    // Crew dispatch queue
+    @Published private(set) var dispatchJobs: [CrewDispatchJob] = []
+    @Published private(set) var recentRuns: [HeartbeatRun] = []
 
     private static let dateFormatter: DateFormatter = {
         let df = DateFormatter()
@@ -76,6 +126,62 @@ final class HeartbeatStore: ObservableObject {
                     """) ?? 0
             }
             activeDispatches = count
+
+            // Crew dispatch queue — pending + running + last 20 completed/failed
+            let jobRows = try DatabaseManager.shared.read { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT id, project, model, crew_agent, prompt, ticket_id,
+                           status, attempts, max_attempts, last_error, created_at
+                    FROM dispatch_queue
+                    ORDER BY
+                        CASE status
+                            WHEN 'running' THEN 0
+                            WHEN 'pending' THEN 1
+                            ELSE 2
+                        END,
+                        created_at DESC
+                    LIMIT 40
+                    """)
+            }
+            dispatchJobs = jobRows.map { row in
+                let dateStr: String? = row["created_at"]
+                return CrewDispatchJob(
+                    id: row["id"] ?? UUID().uuidString,
+                    project: row["project"] ?? "",
+                    model: row["model"] ?? "sonnet",
+                    crewAgent: row["crew_agent"] ?? "unknown",
+                    prompt: row["prompt"] ?? "",
+                    ticketId: row["ticket_id"],
+                    status: row["status"] ?? "unknown",
+                    attempts: row["attempts"] ?? 0,
+                    maxAttempts: row["max_attempts"] ?? 3,
+                    lastError: row["last_error"],
+                    createdAt: dateStr.flatMap { Self.dateFormatter.date(from: $0) }
+                )
+            }
+
+            // Recent heartbeat runs (last 10)
+            let runRows = try DatabaseManager.shared.read { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT id, intensity, started_at, completed_at,
+                           signals_found, dispatches_made, summary
+                    FROM heartbeat_runs
+                    ORDER BY started_at DESC LIMIT 10
+                    """)
+            }
+            recentRuns = runRows.map { row in
+                let startStr: String? = row["started_at"]
+                let endStr: String? = row["completed_at"]
+                return HeartbeatRun(
+                    id: row["id"] ?? UUID().uuidString,
+                    intensity: row["intensity"] ?? "unknown",
+                    startedAt: startStr.flatMap { Self.dateFormatter.date(from: $0) },
+                    completedAt: endStr.flatMap { Self.dateFormatter.date(from: $0) },
+                    signalsFound: row["signals_found"] ?? 0,
+                    dispatchesMade: row["dispatches_made"] ?? 0,
+                    summary: row["summary"]
+                )
+            }
 
             // Recent governance signals (last 24h)
             let signalRows = try DatabaseManager.shared.read { db in

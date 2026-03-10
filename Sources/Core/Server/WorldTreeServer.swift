@@ -1,4 +1,6 @@
+import GRDB
 import Foundation
+import GRDB
 import Network
 
 // MARK: - WorldTreeServer
@@ -372,6 +374,9 @@ final class WorldTreeServer: ObservableObject {
             let sid = String(p.dropFirst("/api/messages/".count)).components(separatedBy: "?").first ?? ""
             await handleMessages(connection, sessionId: sid)
 
+        case ("GET", "/api/crew"):
+            await handleCrew(connection)
+
         default:
             sendResponse(connection, status: 404, body: #"{"error":"not found"}"#)
         }
@@ -411,6 +416,97 @@ final class WorldTreeServer: ObservableObject {
                 #"{"role":"\#(m.role.rawValue)","content":"\#(esc(m.content))"}"#
             }
             sendResponse(connection, status: 200, body: "[\(items.joined(separator: ","))]")
+        } catch {
+            sendResponse(connection, status: 500,
+                         body: #"{"error":"\#(esc(error.localizedDescription))"}"#)
+        }
+    }
+
+    // MARK: - Crew Activity
+
+    private func handleCrew(_ connection: NWConnection) async {
+        let iso = Self.iso8601
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        fmt.timeZone = TimeZone(identifier: "UTC")
+
+        do {
+            // Dispatch jobs
+            let jobRows = try DatabaseManager.shared.read { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT id, project, model, crew_agent, prompt, ticket_id,
+                           status, attempts, max_attempts, last_error, created_at
+                    FROM dispatch_queue
+                    ORDER BY
+                        CASE status WHEN 'running' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
+                        created_at DESC
+                    LIMIT 40
+                    """)
+            }
+            let jobsJSON = jobRows.map { row -> String in
+                let id:         String  = row["id"] ?? ""
+                let project:    String  = row["project"] ?? ""
+                let model:      String  = row["model"] ?? "sonnet"
+                let agent:      String  = row["crew_agent"] ?? ""
+                let prompt:     String  = row["prompt"] ?? ""
+                let ticketId:   String? = row["ticket_id"]
+                let status:     String  = row["status"] ?? "unknown"
+                let attempts:   Int     = row["attempts"] ?? 0
+                let maxAttempts:Int     = row["max_attempts"] ?? 3
+                let lastError:  String? = row["last_error"]
+                let createdAt:  String  = row["created_at"] ?? ""
+                let ticketJSON = ticketId.map { "\"\(esc($0))\"" } ?? "null"
+                let errorJSON  = lastError.map { "\"\(esc($0))\"" } ?? "null"
+                return """
+                {"id":"\(esc(id))","project":"\(esc(project))","model":"\(esc(model))","crew_agent":"\(esc(agent))","prompt":"\(esc(prompt))","ticket_id":\(ticketJSON),"status":"\(esc(status))","attempts":\(attempts),"max_attempts":\(maxAttempts),"last_error":\(errorJSON),"created_at":"\(esc(createdAt))"}
+                """.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            // Last heartbeat
+            let hbRow = try DatabaseManager.shared.read { db in
+                try Row.fetchOne(db, sql: """
+                    SELECT intensity, started_at, signals_found, dispatches_made, summary
+                    FROM heartbeat_runs ORDER BY started_at DESC LIMIT 1
+                    """)
+            }
+            let heartbeatJSON: String
+            if let row = hbRow {
+                let intensity: String = row["intensity"] ?? "unknown"
+                let startedAt: String = row["started_at"] ?? ""
+                let signals:   Int    = row["signals_found"] ?? 0
+                let dispatches:Int    = row["dispatches_made"] ?? 0
+                let summary:   String = row["summary"] ?? ""
+                heartbeatJSON = """
+                {"intensity":"\(esc(intensity))","started_at":"\(esc(startedAt))","signals_found":\(signals),"dispatches_made":\(dispatches),"summary":"\(esc(summary))"}
+                """.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                heartbeatJSON = "null"
+            }
+
+            // Recent governance
+            let govRows = try DatabaseManager.shared.read { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT id, category, content, project, created_at
+                    FROM governance_journal ORDER BY created_at DESC LIMIT 10
+                    """)
+            }
+            let govJSON = govRows.map { row -> String in
+                let id:       String  = row["id"] ?? ""
+                let category: String  = row["category"] ?? ""
+                let content:  String  = row["content"] ?? ""
+                let project:  String? = row["project"]
+                let ts:       String  = row["created_at"] ?? ""
+                let projJSON  = project.map { "\"\(esc($0))\"" } ?? "null"
+                return """
+                {"id":"\(esc(id))","category":"\(esc(category))","content":"\(esc(content))","project":\(projJSON),"created_at":"\(esc(ts))"}
+                """.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            let body = """
+            {"dispatches":[\(jobsJSON.joined(separator: ","))],"heartbeat":\(heartbeatJSON),"governance":[\(govJSON.joined(separator: ","))]}
+            """.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            sendResponse(connection, status: 200, body: body)
         } catch {
             sendResponse(connection, status: 500,
                          body: #"{"error":"\#(esc(error.localizedDescription))"}"#)

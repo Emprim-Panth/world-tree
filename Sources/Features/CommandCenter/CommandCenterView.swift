@@ -12,6 +12,7 @@ struct CommandCenterView: View {
             VStack(spacing: 20) {
                 header
                 projectGrid
+                StarfleetActivitySection()
                 if UserDefaults.standard.bool(forKey: "pencil.feature.enabled") {
                     PencilDesignSection()
                 }
