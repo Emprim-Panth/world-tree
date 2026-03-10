@@ -46,6 +46,11 @@ struct SettingsView: View {
                 .tabItem {
                     Label("Voice", systemImage: "speaker.wave.2")
                 }
+
+            pencilTab
+                .tabItem {
+                    Label("Pencil", systemImage: "pencil.circle")
+                }
         }
         .frame(width: 520)
         .frame(minHeight: 400)
@@ -862,5 +867,11 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    // MARK: - Pencil Tab
+
+    private var pencilTab: some View {
+        PencilSettingsView()
     }
 }

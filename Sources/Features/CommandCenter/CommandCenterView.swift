@@ -5,12 +5,16 @@ import SwiftUI
 struct CommandCenterView: View {
     @State private var viewModel = CommandCenterViewModel()
     @ObservedObject private var daemonService = DaemonService.shared
+    @ObservedObject private var heartbeatStore = HeartbeatStore.shared
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 header
                 projectGrid
+                if UserDefaults.standard.bool(forKey: "pencil.feature.enabled") {
+                    PencilDesignSection()
+                }
                 activeWork
                 recentCompletions
                 Spacer(minLength: 40)
@@ -37,9 +41,17 @@ struct CommandCenterView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Command Center")
-                    .font(.title2)
-                    .fontWeight(.bold)
+                HStack(spacing: 10) {
+                    Text("Command Center")
+                        .font(.title2)
+                        .fontWeight(.bold)
+
+                    HeartbeatIndicator(
+                        activeTaskCount: heartbeatStore.activeDispatches,
+                        lastHeartbeat: heartbeatStore.lastHeartbeat,
+                        signalCount: heartbeatStore.lastSignalCount
+                    )
+                }
 
                 HStack(spacing: 12) {
                     statusPill(
@@ -78,6 +90,7 @@ struct CommandCenterView: View {
             // Refresh
             Button {
                 viewModel.loadProjects()
+                viewModel.refreshCompassAndTickets()
                 daemonService.refreshTmuxSessions()
             } label: {
                 Image(systemName: "arrow.clockwise")
@@ -110,7 +123,12 @@ struct CommandCenterView: View {
 
                 LazyVGrid(columns: columns, spacing: 8) {
                     ForEach(viewModel.projectActivities) { activity in
-                        ProjectCardView(activity: activity)
+                        CompassProjectCard(
+                            activity: activity,
+                            compassState: viewModel.compassStates[activity.project.name],
+                            ticketCount: viewModel.ticketCounts[activity.project.name] ?? 0,
+                            blockedCount: viewModel.blockedCounts[activity.project.name] ?? 0
+                        )
                     }
                 }
             } else if viewModel.projects.isEmpty {
