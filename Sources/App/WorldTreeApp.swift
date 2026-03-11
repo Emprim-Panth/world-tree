@@ -92,9 +92,11 @@ struct WorldTreeApp: App {
                     startWorldTreeServerIfEnabled()
                     startPluginServerIfEnabled()
                     if UserDefaults.standard.bool(forKey: "pencil.feature.enabled") {
+                        launchPencilInBackground()
                         Task {
-                            do { await PencilConnectionStore.shared.startPolling() }
-                            catch { wtLog("[WorldTree] Pencil polling failed: \(error)") }
+                            // Give Pencil a moment to finish launching before polling
+                            try? await Task.sleep(nanoseconds: 2_000_000_000)
+                            await PencilConnectionStore.shared.startPolling()
                         }
                     }
                     PeekabooBridgeServer.shared.start()
@@ -228,6 +230,32 @@ struct WorldTreeApp: App {
     
     private func startProjectRefresh() {
         ProjectRefreshService.shared.startAutoRefresh()
+    }
+
+    /// Launch Pencil.app in the background — hidden, no activation.
+    /// If already running, this is a no-op (NSWorkspace won't open a second instance).
+    private func launchPencilInBackground() {
+        let candidates = [
+            "/Applications/Pencil.app",
+            "\(NSHomeDirectory())/Applications/Pencil.app"
+        ]
+        guard let appPath = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+            wtLog("[WorldTree] Pencil.app not found — skipping auto-launch")
+            return
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = false
+        config.hides = true
+        NSWorkspace.shared.openApplication(
+            at: URL(fileURLWithPath: appPath),
+            configuration: config
+        ) { _, error in
+            if let error {
+                wtLog("[WorldTree] Pencil background launch failed: \(error.localizedDescription)")
+            } else {
+                wtLog("[WorldTree] Pencil launched in background")
+            }
+        }
     }
 
     private func startWorldTreeServerIfEnabled() {
