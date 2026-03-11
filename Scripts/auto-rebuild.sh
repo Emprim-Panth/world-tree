@@ -6,7 +6,19 @@
 
 PROJECT_DIR="/Users/evanprimeau/Development/WorldTree"
 LOG="$HOME/.cortana/logs/wt-rebuild.log"
+LOCKFILE="/tmp/wt-rebuild.lock"
+
 mkdir -p "$(dirname "$LOG")"
+
+# Serialize concurrent builds — multiple rapid commits would otherwise spawn N builds
+# that each killall+relaunch World Tree in rapid succession (the crash-loop bug).
+# Use noclobber (set -C) for atomic test-and-set: fails if file already exists.
+if ! (set -C; > "$LOCKFILE") 2>/dev/null; then
+    echo "=== $(date) Skipping — another build already running (lock: $LOCKFILE) ===" >> "$LOG"
+    exit 0
+fi
+# Release lock on exit regardless of how we leave (success, failure, signal)
+trap "rm -f '$LOCKFILE'" EXIT
 
 exec >> "$LOG" 2>&1
 echo ""
