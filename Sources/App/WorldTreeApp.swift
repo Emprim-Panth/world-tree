@@ -55,6 +55,33 @@ struct WorldTreeApp: App {
                     DispatchSupervisor.shared.start()
                     DispatchSupervisor.shared.pruneOldDispatches()
                     BranchTerminalManager.shared.recoverOrphanedSessions()
+                    // Pre-warm terminals for all recently-active branches that have a persisted
+                    // tmux session — instant terminal attach when navigating between branches.
+                    // workingDirectory is on the tree; for tmux reattach it's irrelevant
+                    // (the session already exists at its own CWD). Pass home as fallback.
+                    Task {
+                        if let branches = try? DatabaseManager.shared.read({ db in
+                            try Branch.fetchAll(db, sql: """
+                                SELECT * FROM canvas_branches
+                                WHERE tmux_session_name IS NOT NULL
+                                  AND updated_at > datetime('now', '-7 days')
+                                LIMIT 20
+                                """)
+                        }) {
+                            await MainActor.run {
+                                for branch in branches {
+                                    BranchTerminalManager.shared.warmUp(
+                                        branchId: branch.id,
+                                        workingDirectory: NSHomeDirectory(),
+                                        knownTmuxSession: branch.tmuxSessionName
+                                    )
+                                }
+                                if !branches.isEmpty {
+                                    wtLog("[WorldTree] Pre-warmed \(branches.count) branch terminal(s)")
+                                }
+                            }
+                        }
+                    }
                     // Compass + Tickets + Heartbeat: initial scan on launch
                     CompassStore.shared.refresh()
                     TicketStore.shared.scanAll()

@@ -645,6 +645,11 @@ class DocumentEditorViewModel: ObservableObject {
                 wtLog("[DocumentEditor] Message observation error: \(error)")
                 self?.messageObservation = nil
                 self?.usePollingFallback = true  // observation failed — re-enable polling
+                // Schedule re-subscription — transient DB errors shouldn't kill observation permanently
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(5))
+                    self?.loadDocument()  // guard messageObservation == nil makes this safe
+                }
             },
             onChange: { [weak self] messages in
                 self?.usePollingFallback = false  // observation healthy — suppress polling

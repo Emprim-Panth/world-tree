@@ -22,6 +22,14 @@ else
     echo "xcodegen not found — skipping project regen (using existing .xcodeproj)"
 fi
 
+# If Xcode has the project open, it holds the build DB exclusively.
+# Let Xcode handle the rebuild in that case — user can ⌘R or it auto-builds.
+if pgrep -x "Xcode" &>/dev/null; then
+    echo "Xcode is running — skipping CLI build (Xcode will pick up changes on next ⌘R)."
+    osascript -e 'display notification "Committed. Press ⌘R in Xcode to rebuild, or close Xcode for auto-build." with title "World Tree" sound name "Pop"' &
+    exit 0
+fi
+
 # Build — the post-build script in project.yml handles:
 #   killall "World Tree", ditto to /Applications/, codesign
 echo "Building..."
