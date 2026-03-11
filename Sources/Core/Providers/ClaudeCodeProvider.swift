@@ -216,6 +216,12 @@ final class ClaudeCodeProvider: LLMProvider {
             proc.standardOutput = stdoutPipe
             proc.standardError = stderrPipe
 
+            // Prevent App Nap for the duration of the CLI response.
+            // Without this, macOS throttles GCD queues when World Tree is
+            // behind other windows — pipe callbacks slow to a crawl and tokens
+            // only appear when the user returns to the app.
+            WakeLock.shared.acquire()
+
             // Set both _isRunning and _currentProcess atomically so cancel()
             // can never observe isRunning=true with a nil process handle.
             self.stateLock.lock()
@@ -334,6 +340,7 @@ final class ClaudeCodeProvider: LLMProvider {
                     usage.turnCount = parser.numTurns
                     continuation.yield(.done(usage: usage))
                     continuation.finish()
+                    WakeLock.shared.release()
 
                     self?.stateLock.lock()
                     self?._isRunning = false
@@ -347,6 +354,7 @@ final class ClaudeCodeProvider: LLMProvider {
             // _currentProcess, so cancelling stream-1 would kill stream-2's process.
             continuation.onTermination = { _ in
                 proc.terminate()
+                WakeLock.shared.release()
             }
 
             do {
@@ -354,6 +362,7 @@ final class ClaudeCodeProvider: LLMProvider {
                 wtLog("[ClaudeCodeProvider] CLI launched: session=\(context.sessionId), resume=\(cliSessionId ?? "none")")
             } catch {
                 wtLog("[ClaudeCodeProvider] Failed to launch CLI: \(error)")
+                WakeLock.shared.release()
                 continuation.yield(.error("Failed to launch Claude CLI: \(error.localizedDescription)"))
                 continuation.finish()
                 self.stateLock.lock()
