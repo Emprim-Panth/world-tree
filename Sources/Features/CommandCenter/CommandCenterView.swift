@@ -88,6 +88,7 @@ struct CommandCenterView: View {
                     .font(.system(size: 12, weight: .medium))
             }
             .buttonStyle(.borderedProminent)
+            .accessibilityHint("Opens dispatch sheet to send work to agents")
 
             // Refresh
             Button {

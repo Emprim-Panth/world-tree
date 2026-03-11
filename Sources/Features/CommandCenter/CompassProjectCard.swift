@@ -29,6 +29,8 @@ struct CompassProjectCard: View {
         .padding(10)
         .background(cardBackground)
         .overlay(cardBorder)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("Toggle project details for \(project.name)")
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.2)) {
                 isExpanded.toggle()
@@ -49,6 +51,7 @@ struct CompassProjectCard: View {
             Circle()
                 .fill(statusColor)
                 .frame(width: 8, height: 8)
+                .accessibilityLabel("Status: \(statusLabel)")
 
             Image(systemName: project.type.icon)
                 .font(.system(size: 11))
@@ -248,6 +251,13 @@ struct CompassProjectCard: View {
         if activity.isActive { return .green }
         if compassState?.isDirty == true { return .orange }
         return .gray.opacity(0.4)
+    }
+
+    private var statusLabel: String {
+        if let state = compassState, !state.blockers.isEmpty { return "blocked" }
+        if activity.isActive { return "active" }
+        if compassState?.isDirty == true { return "modified" }
+        return "inactive"
     }
 
     private var cardBackground: some View {

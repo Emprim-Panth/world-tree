@@ -20,7 +20,7 @@ final class WorldTreeServer: ObservableObject {
     /// Native WebSocket port (NWProtocolWebSocket) — iOS connects here.
     /// One above the HTTP port so clients derive it as `port + 1`.
     static let wsPort: UInt16 = 5866
-    static let tokenKey = AppConstants.serverTokenKey   // kept for Settings UI compat — no longer enforced
+    static let tokenKey = AppConstants.serverTokenKey
     static let enabledKey = AppConstants.serverEnabledKey
     static let bonjourEnabledKey = AppConstants.bonjourEnabledKey
 
@@ -55,7 +55,26 @@ final class WorldTreeServer: ObservableObject {
 
     private static let iso8601 = ISO8601DateFormatter()
 
+    private let authRateLimiter = AuthRateLimiter()
+
     private init() {}
+
+    // MARK: - Token Validation
+
+    /// Retrieve the configured server token from UserDefaults.
+    /// Returns nil if no token is set (auth effectively disabled).
+    private var configuredToken: String? {
+        let token = UserDefaults.standard.string(forKey: Self.tokenKey) ?? ""
+        return token.isEmpty ? nil : token
+    }
+
+    /// Validate a token against the configured server token.
+    /// Returns true if valid, false if invalid. Returns true if no token is configured (open mode).
+    private func validateToken(_ token: String?) -> Bool {
+        guard let expected = configuredToken else { return true } // No token configured — allow
+        guard let provided = token, !provided.isEmpty else { return false }
+        return provided == expected
+    }
 
     // MARK: - Lifecycle
 
@@ -296,6 +315,11 @@ final class WorldTreeServer: ObservableObject {
         }
     }
 
+    /// Check if an IP string is a loopback address (IPv4 127.0.0.1 or IPv6 ::1).
+    private nonisolated static func isLoopback(_ ip: String) -> Bool {
+        ip == "127.0.0.1" || ip == "::1" || ip == "localhost"
+    }
+
     // MARK: - Receive Loop (nonisolated)
 
     /// Accumulates raw TCP bytes until a complete HTTP/1.1 request arrives, then dispatches.
@@ -372,7 +396,38 @@ final class WorldTreeServer: ObservableObject {
         }
 
         requestCount += 1
+
+        // Resolve client IP for rate limiting: trust X-Forwarded-For only when
+        // the direct connection is from loopback (i.e. behind a local reverse proxy).
+        // Otherwise use the socket address to prevent spoofing. (FRD-007 / TASK-104)
+        let clientIP: String
+        if Self.isLoopback(remoteIP),
+           let forwarded = req.headers["x-forwarded-for"],
+           let first = forwarded.split(separator: ",").first {
+            clientIP = first.trimmingCharacters(in: .whitespaces)
+        } else {
+            clientIP = remoteIP
+        }
+
         wtLog("[WorldTreeServer] \(req.method) \(req.path)")
+
+        // Authenticate all /api/* routes — /health is public
+        let isProtected = req.path.hasPrefix("/api/")
+        if isProtected {
+            // Rate limit check first
+            if authRateLimiter.isBlocked(ip: clientIP) {
+                sendResponse(connection, status: 429, body: #"{"error":"too many failed auth attempts"}"#)
+                return
+            }
+
+            let providedToken = req.headers["x-worldtree-token"]
+            if !validateToken(providedToken) {
+                authRateLimiter.recordFailure(ip: clientIP)
+                wtLog("[WorldTreeServer] Auth failed from \(clientIP) for \(req.method) \(req.path)")
+                sendResponse(connection, status: 401, body: #"{"error":"unauthorized"}"#)
+                return
+            }
+        }
 
         switch (req.method, req.path) {
         case ("GET", "/health"):
@@ -421,18 +476,25 @@ final class WorldTreeServer: ObservableObject {
 
     private func handleMessages(_ connection: NWConnection, sessionId: String) async {
         guard !sessionId.isEmpty else {
-            sendResponse(connection, status: 400, body: #"{"error":"missing session id"}"#)
+            // TASK-107: Return uniform 404 for missing/invalid session IDs to prevent enumeration
+            sendResponse(connection, status: 404, body: #"{"error":"not found"}"#)
             return
         }
         do {
             let msgs = try MessageStore.shared.getMessages(sessionId: sessionId, limit: 100)
+            // TASK-107: Return uniform 404 for both "not found" and "no messages" to prevent
+            // session ID enumeration — don't reveal whether a session exists.
+            guard !msgs.isEmpty else {
+                sendResponse(connection, status: 404, body: #"{"error":"not found"}"#)
+                return
+            }
             let items = msgs.map { m in
                 #"{"role":"\#(m.role.rawValue)","content":"\#(esc(m.content))"}"#
             }
             sendResponse(connection, status: 200, body: "[\(items.joined(separator: ","))]")
         } catch {
-            sendResponse(connection, status: 500,
-                         body: #"{"error":"\#(esc(error.localizedDescription))"}"#)
+            // TASK-107: Return uniform 404 on errors too — don't leak internal error details
+            sendResponse(connection, status: 404, body: #"{"error":"not found"}"#)
         }
     }
 
@@ -806,6 +868,7 @@ final class WorldTreeServer: ObservableObject {
             // Only store headers the server actually reads
             guard key == "content-length" || key == "content-type" ||
                   key == "authorization" || key == "x-worldtree-token" ||
+                  key == "x-forwarded-for" ||
                   key == "upgrade" || key == "connection" ||
                   key == "sec-websocket-key" || key == "sec-websocket-version"
             else { continue }
@@ -879,6 +942,7 @@ struct WebSocketClient {
     var subscribedTreeId: String?
     var subscribedBranchId: String?
     var lastPongAt: Date
+    var authenticated: Bool = false
 }
 
 // MARK: - WebSocket Client Management
@@ -913,8 +977,6 @@ extension WorldTreeServer {
 
         wtLog("[WorldTreeServer] WS[\(clientId.prefix(8))] → \(msg.type)")
 
-        // Route by message type (protocol handling will be implemented in FRD-003 phase)
-        // For now, acknowledge the message types and respond with appropriate structures
         guard let msgType = WSClientMessageType(rawValue: msg.type) else {
             let errMsg = WSMessage.error(code: "unknown_type", message: "Unknown message type: \(msg.type)", id: msg.id)
             if let json = errMsg.toJSON() {
@@ -923,7 +985,24 @@ extension WorldTreeServer {
             return
         }
 
+        // Auth message is always allowed — all others require authentication
+        if msgType == .auth {
+            handleWSAuth(clientId: clientId, message: msg)
+            return
+        }
+
+        // Gate all non-auth messages behind authentication
+        guard client.authenticated else {
+            let errMsg = WSMessage.error(code: "unauthorized", message: "Authentication required — send {\"type\":\"auth\",\"payload\":{\"token\":\"...\"}} first", id: msg.id)
+            if let json = errMsg.toJSON() {
+                client.wsConnection?.send(text: json)
+            }
+            return
+        }
+
         switch msgType {
+        case .auth:
+            break // Already handled above
         case .subscribe:
             handleWSSubscribe(clientId: clientId, message: msg)
         case .unsubscribe:
@@ -954,6 +1033,49 @@ extension WorldTreeServer {
     }
 
     // MARK: - WebSocket Message Handlers
+
+    private func handleWSAuth(clientId: String, message: WSMessage) {
+        guard var client = webSocketClients[clientId] else { return }
+
+        // Already authenticated — idempotent
+        if client.authenticated {
+            let ack = WSMessage(type: "authenticated", id: message.id)
+            if let json = ack.toJSON() { client.wsConnection?.send(text: json) }
+            return
+        }
+
+        let remoteIP = Self.remoteIP(from: client.connection)
+
+        // Rate limit check
+        if authRateLimiter.isBlocked(ip: remoteIP) {
+            let errMsg = WSMessage.error(code: "rate_limited", message: "Too many failed auth attempts", id: message.id)
+            if let json = errMsg.toJSON() { client.wsConnection?.send(text: json) }
+            client.wsConnection?.sendCloseAndDisconnect(code: 1008, reason: "Rate limited")
+            return
+        }
+
+        guard let payload = message.payload,
+              let authPayload = try? payload.decode(as: WSAuthPayload.self) else {
+            sendWSError(to: clientId, code: "invalid_payload", message: "auth requires {\"token\":\"...\"}", id: message.id)
+            return
+        }
+
+        guard validateToken(authPayload.token) else {
+            authRateLimiter.recordFailure(ip: remoteIP)
+            wtLog("[WorldTreeServer] WS auth failed from \(remoteIP)")
+            let errMsg = WSMessage.error(code: "unauthorized", message: "Invalid token", id: message.id)
+            if let json = errMsg.toJSON() { client.wsConnection?.send(text: json) }
+            client.wsConnection?.sendCloseAndDisconnect(code: 1008, reason: "Invalid token")
+            return
+        }
+
+        client.authenticated = true
+        webSocketClients[clientId] = client
+        wtLog("[WorldTreeServer] WS[\(clientId.prefix(8))] authenticated from \(remoteIP)")
+
+        let ack = WSMessage(type: "authenticated", id: message.id)
+        if let json = ack.toJSON() { client.wsConnection?.send(text: json) }
+    }
 
     private func handleWSSubscribe(clientId: String, message: WSMessage) {
         guard var client = webSocketClients[clientId] else { return }
@@ -1357,12 +1479,18 @@ extension WorldTreeServer {
 
     /// Send a message to all WebSocket clients subscribed to a specific branch.
     /// Uses SubscriptionManager's O(1) branch→clients index instead of scanning all connections.
+    /// Only broadcasts to authenticated clients (TASK-105: prevent token leakage).
     func broadcastToSubscribers(branchId: String, message: WSMessage) {
         let subscribers = SubscriptionManager.shared.subscribers(for: branchId)
         guard !subscribers.isEmpty, let json = message.toJSON() else { return }
         for clientId in subscribers {
             guard let client = webSocketClients[clientId] else {
                 // Client disappeared — clean up stale subscription
+                SubscriptionManager.shared.remove(clientId: clientId)
+                continue
+            }
+            // Skip unauthenticated clients — defense-in-depth against token leakage
+            guard client.authenticated else {
                 SubscriptionManager.shared.remove(clientId: clientId)
                 continue
             }
@@ -1555,6 +1683,27 @@ extension WorldTreeServer {
 
         wsConn.startReading()
         startPingTimerIfNeeded()
+
+        // Auth timeout: if client hasn't authenticated within 10s, disconnect.
+        // Skip timeout if no token is configured (open mode).
+        if configuredToken != nil {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 10_000_000_000) // 10s
+                guard let self else { return }
+                if let client = self.webSocketClients[clientId], !client.authenticated {
+                    wtLog("[WorldTreeServer] WS[\(clientId.prefix(8))] auth timeout — disconnecting")
+                    let errMsg = WSMessage.error(code: "auth_timeout", message: "Authentication required within 10 seconds")
+                    if let json = errMsg.toJSON() { client.wsConnection?.send(text: json) }
+                    client.wsConnection?.sendCloseAndDisconnect(code: 1008, reason: "Auth timeout")
+                    self.removeWebSocketClient(clientId, code: 1008, reason: "Auth timeout")
+                }
+            }
+        } else {
+            // No token configured — auto-authenticate all clients
+            var updatedClient = webSocketClients[clientId]!
+            updatedClient.authenticated = true
+            webSocketClients[clientId] = updatedClient
+        }
     }
 
 }

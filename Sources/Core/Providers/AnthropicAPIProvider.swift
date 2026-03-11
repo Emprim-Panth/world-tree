@@ -66,6 +66,10 @@ final class AnthropicAPIProvider: LLMProvider {
     // MARK: - Send
 
     func send(context: ProviderSendContext) -> AsyncStream<BridgeEvent> {
+        // Cancel any in-flight task before starting a new one
+        currentTask?.cancel()
+        currentTask = nil
+
         isCancelled = false
         isRunning = true
         WakeLock.shared.acquire()
@@ -249,14 +253,18 @@ final class AnthropicAPIProvider: LLMProvider {
                                 toolResults.append((tu.id, result.content, result.isError))
                                 continuation.yield(.toolEnd(
                                     name: tu.name,
-                                    result: String(result.content.prefix(200)),
+                                    result: String(result.content.prefix(4000)),
                                     isError: result.isError
                                 ))
                             }
 
                             state.addToolResults(toolResults)
                             // Persist after each tool iteration to survive crashes
-                            try? state.persist()
+                            do {
+                                try state.persist()
+                            } catch {
+                                wtLog("[AnthropicAPIProvider] mid-loop persist failed: \(error)")
+                            }
                             textAccumulator = ""
                             toolUseBlocks = []
                         } else {
@@ -371,7 +379,12 @@ final class AnthropicAPIProvider: LLMProvider {
             project: project
         )
 
-        _ = try? await getOrCreateStateManager(context: context)
+        do {
+            _ = try await getOrCreateStateManager(context: context)
+        } catch {
+            wtLog("[AnthropicAPIProvider] warmUp failed for session=\(sessionId): \(error)")
+            return
+        }
         wtLog("[AnthropicAPIProvider] context warm for session=\(sessionId)")
     }
 

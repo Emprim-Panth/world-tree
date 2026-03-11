@@ -69,25 +69,32 @@ struct GlobalSearchView: View {
             Divider()
 
             // Results
-            if filteredResults.isEmpty && !query.isEmpty && !isSearching {
+            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ContentUnavailableView(
+                    "Search Everything",
+                    systemImage: "magnifyingglass",
+                    description: Text("Search across messages, knowledge, archives, and graph nodes.")
+                )
+            } else if filteredResults.isEmpty && !isSearching {
                 ContentUnavailableView(
                     "No Results",
                     systemImage: "magnifyingglass",
-                    description: Text("No matches for \"\(query)\"")
+                    description: Text("No matches for \"\(query)\". Try a different term or broaden your source filters.")
                 )
             } else {
                 List(filteredResults) { result in
-                    searchResultRow(result)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            navigateToResult(result)
+                    Button {
+                        navigateToResult(result)
+                    } label: {
+                        searchResultRow(result)
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovering in
+                        if result.branchId != nil {
+                            NSCursor.pointingHand.set()
+                            if !hovering { NSCursor.arrow.set() }
                         }
-                        .onHover { hovering in
-                            if result.branchId != nil {
-                                NSCursor.pointingHand.set()
-                                if !hovering { NSCursor.arrow.set() }
-                            }
-                        }
+                    }
                 }
                 .listStyle(.inset)
             }

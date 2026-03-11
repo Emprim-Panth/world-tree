@@ -144,7 +144,7 @@ final class PeekabooBridgeServer {
     // MARK: - Client Handler  (background thread)
 
     private func handleClient(fd: Int32) {
-        defer { connectionSemaphore.signal(); close(fd) }
+        defer { connectionSemaphore.signal(); clearAuthenticated(fd: fd); close(fd) }
         wtLog("[PeekabooBridge] Client connected fd=\(fd)")
 
         // Set a 30-second read timeout to prevent stale connections from holding semaphore slots
@@ -176,6 +176,32 @@ final class PeekabooBridgeServer {
         wtLog("[PeekabooBridge] Client disconnected fd=\(fd)")
     }
 
+    /// Whether this connection has been authenticated via a valid token in the handshake.
+    /// Tracked per-fd via the authenticated set.
+    private var authenticatedFDs: Set<Int32> = []
+    private let authLock = NSLock()
+
+    private func isAuthenticated(fd: Int32) -> Bool {
+        authLock.lock(); defer { authLock.unlock() }
+        return authenticatedFDs.contains(fd)
+    }
+
+    private func markAuthenticated(fd: Int32) {
+        authLock.lock(); defer { authLock.unlock() }
+        authenticatedFDs.insert(fd)
+    }
+
+    private func clearAuthenticated(fd: Int32) {
+        authLock.lock(); defer { authLock.unlock() }
+        authenticatedFDs.remove(fd)
+    }
+
+    /// Retrieve the configured server token from UserDefaults.
+    private var configuredToken: String? {
+        let token = UserDefaults.standard.string(forKey: AppConstants.serverTokenKey) ?? ""
+        return token.isEmpty ? nil : token
+    }
+
     private func tryDispatch(_ json: [String: Any], fd: Int32) {
         // Log every incoming request for diagnostics.
         let keys = json.keys.sorted().joined(separator: ", ")
@@ -183,7 +209,23 @@ final class PeekabooBridgeServer {
         try? logLine.appendToFile(atPath: "/tmp/peekaboo_bridge.log")
         wtLog("[PeekabooBridge] ← \(keys)")
 
-        guard let responseData = dispatch(json) else { return }
+        // Handshake messages always go through (they carry the token for validation).
+        // All other messages require prior authentication via handshake.
+        let isHandshake = json["handshake"] != nil
+        if !isHandshake && !isAuthenticated(fd: fd) {
+            // Check if auth is even required (no token configured = open mode)
+            if configuredToken != nil {
+                wtLog("[PeekabooBridge] Rejected unauthenticated request fd=\(fd)")
+                if let errData = respondError("unauthorized", "Handshake with valid token required first") {
+                    var toSend = errData
+                    toSend.append(UInt8(ascii: "\n"))
+                    toSend.withUnsafeBytes { ptr in _ = write(fd, ptr.baseAddress!, ptr.count) }
+                }
+                return
+            }
+        }
+
+        guard let responseData = dispatch(json, fd: fd) else { return }
         var toSend = responseData
         toSend.append(UInt8(ascii: "\n"))
         toSend.withUnsafeBytes { ptr in _ = write(fd, ptr.baseAddress!, ptr.count) }
@@ -191,8 +233,17 @@ final class PeekabooBridgeServer {
 
     // MARK: - Dispatch
 
-    private func dispatch(_ json: [String: Any]) -> Data? {
+    private func dispatch(_ json: [String: Any], fd: Int32) -> Data? {
         if let box = json["handshake"] as? [String: Any], let inner = box["_0"] as? [String: Any] {
+            // Validate token from handshake if server token is configured
+            if let expected = configuredToken {
+                let providedToken = inner["token"] as? String ?? ""
+                if providedToken != expected {
+                    wtLog("[PeekabooBridge] Handshake auth failed fd=\(fd)")
+                    return respondError("unauthorized", "Invalid or missing token in handshake")
+                }
+            }
+            markAuthenticated(fd: fd)
             return respondHandshake(inner)
         }
         if json["permissionsStatus"] != nil {

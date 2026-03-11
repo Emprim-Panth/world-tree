@@ -16,6 +16,8 @@ final class DaemonService: ObservableObject {
 
     private let socket = DaemonSocket()
     private var healthTimer: Timer?
+    /// Tasks spawned by the health timer — cancelled on stopMonitoring().
+    private var pendingTasks: [Task<Void, Never>] = []
 
     /// Counter for health ticks — tmux discovery only runs every 3rd tick (30s).
     private var healthTickCount = 0
@@ -50,7 +52,7 @@ final class DaemonService: ObservableObject {
             refreshTmuxSessions()
         }
         healthTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            let task = Task { @MainActor in
                 guard let self else { return }
                 self.checkHealth()
                 await self.refreshSessions()
@@ -59,12 +61,19 @@ final class DaemonService: ObservableObject {
                     self.refreshTmuxSessions()
                 }
             }
+            Task { @MainActor [weak self] in
+                self?.pendingTasks.append(task)
+                // Prune completed tasks to prevent unbounded growth
+                self?.pendingTasks.removeAll { $0.isCancelled }
+            }
         }
     }
 
     func stopMonitoring() {
         healthTimer?.invalidate()
         healthTimer = nil
+        pendingTasks.forEach { $0.cancel() }
+        pendingTasks.removeAll()
     }
 
     // MARK: - Health
@@ -89,7 +98,7 @@ final class DaemonService: ObservableObject {
                     return
                 }
             } catch {
-                // HTTP failed — fall through to file-based check
+                wtLog("[DaemonService] HTTP health check failed: \(error.localizedDescription)")
             }
         }
 

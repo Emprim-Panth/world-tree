@@ -6,9 +6,12 @@ actor GatewayClient {
     private let authToken: String
     private let session: URLSession
 
+    /// Default gateway URL — extracted as a constant so the fallback never force-unwraps.
+    private static let defaultURL = URL(string: "http://localhost:4862")!  // swiftlint:disable:this force_unwrapping — compile-time constant, always valid
+
     init(baseURL: String = "http://localhost:4862", authToken: String) {
         // Fall back to default if a misconfigured URL is passed — prevents crash on bad input
-        self.baseURL = URL(string: baseURL) ?? URL(string: "http://localhost:4862")!
+        self.baseURL = URL(string: baseURL) ?? Self.defaultURL
         self.authToken = authToken
 
         let config = URLSessionConfiguration.default

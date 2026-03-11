@@ -319,6 +319,14 @@ final class TreeStore {
         workingDirectory: String? = nil
     ) throws -> Branch {
         try db.write { db in
+            // Validate parent branch still exists — prevents FK-safe but logically orphaned branches
+            if let parentId = parentBranch {
+                let parentExists = try Branch.fetchOne(db, key: parentId) != nil
+                if !parentExists {
+                    throw TreeStoreError.parentBranchDeleted(parentId)
+                }
+            }
+
             // Create a session in the existing sessions table (cortana-core compatible)
             let sessionId = UUID().uuidString
             let cwd = workingDirectory ?? "~/Development"
@@ -414,7 +422,13 @@ final class TreeStore {
 
     /// Delete a single branch and its associated session/messages.
     /// Children are reparented to the deleted branch's parent (or become root branches).
+    /// Cancels any active stream on the branch before deleting to prevent orphaned tasks.
     func deleteBranch(_ id: String) throws {
+        // Cancel active stream before DB delete — prevents orphaned streaming tasks
+        if GlobalStreamRegistry.shared.streams[id] != nil {
+            GlobalStreamRegistry.shared.endStream(branchId: id, notify: false)
+        }
+
         try db.write { db in
             // Reparent children so they aren't orphaned
             let parentRow = try Row.fetchOne(
@@ -578,12 +592,12 @@ final class TreeStore {
     func getBranchPath(to branchId: String) throws -> [Branch] {
         try db.read { db in
             let sql = """
-                WITH RECURSIVE ancestors(id) AS (
-                    SELECT id FROM canvas_branches WHERE id = ?
+                WITH RECURSIVE ancestors(id, depth) AS (
+                    SELECT id, 0 FROM canvas_branches WHERE id = ?
                     UNION ALL
-                    SELECT cb.parent_branch_id FROM canvas_branches cb
+                    SELECT cb.parent_branch_id, a.depth + 1 FROM canvas_branches cb
                     JOIN ancestors a ON cb.id = a.id
-                    WHERE cb.parent_branch_id IS NOT NULL
+                    WHERE cb.parent_branch_id IS NOT NULL AND a.depth < 100
                 )
                 SELECT cb.* FROM canvas_branches cb
                 JOIN ancestors a ON cb.id = a.id
@@ -664,5 +678,18 @@ final class TreeStore {
         return branches
             .filter { $0.parentBranchId == nil }
             .compactMap { attachChildren(to: $0.id) }
+    }
+}
+
+// MARK: - Errors
+
+enum TreeStoreError: LocalizedError {
+    case parentBranchDeleted(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .parentBranchDeleted(let id):
+            return "Parent branch \(id.prefix(8))… no longer exists — it may have been deleted."
+        }
     }
 }

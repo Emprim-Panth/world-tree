@@ -211,8 +211,14 @@ enum SendContextBuilder {
     /// ConversationScorer output. This guarantees that cold starts and post-compaction
     /// sessions never lose track of what was just discussed.
     private static func buildRecentMessagesContext(sessionId: String, limit: Int = 20) -> String? {
-        guard let messages = try? MessageStore.shared.getMessages(sessionId: sessionId, limit: limit),
-              !messages.isEmpty else { return nil }
+        let messages: [Message]
+        do {
+            messages = try MessageStore.shared.getMessages(sessionId: sessionId, limit: limit)
+        } catch {
+            wtLog("[SendContextBuilder] buildRecentMessagesContext failed for session \(sessionId): \(error)")
+            return nil
+        }
+        guard !messages.isEmpty else { return nil }
 
         let lines = messages.compactMap { msg -> String? in
             let prefix: String
@@ -264,11 +270,18 @@ enum SendContextBuilder {
 
     /// Look up the parent branch's session ID for context inheritance.
     private static func resolveParentSessionId(branchId: String) -> String? {
-        guard let branch = try? TreeStore.shared.getBranch(branchId),
-              let parentBranchId = branch.parentBranchId,
-              let parentBranch = try? TreeStore.shared.getBranch(parentBranchId) else {
+        do {
+            guard let branch = try TreeStore.shared.getBranch(branchId),
+                  let parentBranchId = branch.parentBranchId else {
+                return nil
+            }
+            guard let parentBranch = try TreeStore.shared.getBranch(parentBranchId) else {
+                return nil
+            }
+            return parentBranch.sessionId
+        } catch {
+            wtLog("[SendContextBuilder] resolveParentSessionId failed for branch \(branchId): \(error)")
             return nil
         }
-        return parentBranch.sessionId
     }
 }

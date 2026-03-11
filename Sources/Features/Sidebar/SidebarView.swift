@@ -213,6 +213,32 @@ struct SidebarView: View {
 
                     // Normal tree list (hidden when content search is active)
                     if viewModel.searchScope != .content || viewModel.searchText.isEmpty {
+                        if viewModel.allProjectGroups.isEmpty {
+                            VStack(spacing: 12) {
+                                Image(systemName: "tree")
+                                    .font(.system(size: 28))
+                                    .foregroundStyle(.tertiary)
+                                Text("No conversations yet")
+                                    .font(.callout)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(.secondary)
+                                Text("Create your first tree to get started.")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                                    .multilineTextAlignment(.center)
+                                Button {
+                                    showNewTreeSheet = true
+                                } label: {
+                                    Label("New Tree", systemImage: "plus.circle")
+                                        .font(.callout)
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 40)
+                            .padding(.horizontal, 16)
+                        }
+
                         ForEach(viewModel.allProjectGroups, id: \.project) { group in
                             let isActiveProject = viewModel.isActive(group.project, trees: group.trees)
                             let isDragTarget = dragOverProject == group.project && draggingProject != group.project

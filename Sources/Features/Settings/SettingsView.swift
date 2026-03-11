@@ -68,6 +68,9 @@ struct SettingsView: View {
                               ? "largecircle.fill.circle" : "circle")
                             .foregroundStyle(provider.identifier == providerManager.selectedProviderId
                                              ? .blue : .secondary)
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityLabel("Select \(provider.displayName)")
+                            .accessibilityValue(provider.identifier == providerManager.selectedProviderId ? "selected" : "not selected")
                             .onTapGesture {
                                 providerManager.selectedProviderId = provider.identifier
                             }

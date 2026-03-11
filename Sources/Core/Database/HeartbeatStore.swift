@@ -120,9 +120,10 @@ final class HeartbeatStore: ObservableObject {
     /// Pull latest heartbeat data from conversations.db.
     func refresh() {
         do {
-            // Last heartbeat run
-            if let row = try DatabaseManager.shared.read({ db in
-                try Row.fetchOne(db, sql: """
+            // Last heartbeat run — table created by cortana-core, may not exist on fresh install
+            if let row = try DatabaseManager.shared.read({ db -> Row? in
+                guard try db.tableExists("heartbeat_runs") else { return nil }
+                return try Row.fetchOne(db, sql: """
                     SELECT id, intensity, started_at, completed_at, signals_found, dispatches_made, summary
                     FROM heartbeat_runs
                     ORDER BY started_at DESC LIMIT 1
@@ -137,7 +138,8 @@ final class HeartbeatStore: ObservableObject {
 
             // Active canvas dispatches (running or queued)
             let count = try DatabaseManager.shared.read { db in
-                try Int.fetchOne(db, sql: """
+                guard try db.tableExists("canvas_dispatches") else { return 0 }
+                return try Int.fetchOne(db, sql: """
                     SELECT count(*) FROM canvas_dispatches
                     WHERE status IN ('queued', 'running')
                     """) ?? 0
@@ -146,7 +148,8 @@ final class HeartbeatStore: ObservableObject {
 
             // Crew dispatch queue — pending + running + last 20 completed/failed
             let jobRows = try DatabaseManager.shared.read { db in
-                try Row.fetchAll(db, sql: """
+                guard try db.tableExists("dispatch_queue") else { return [Row]() }
+                return try Row.fetchAll(db, sql: """
                     SELECT id, project, model, crew_agent, prompt, ticket_id,
                            status, attempts, max_attempts, last_error, created_at
                     FROM dispatch_queue
@@ -179,7 +182,8 @@ final class HeartbeatStore: ObservableObject {
 
             // Recent heartbeat runs (last 10)
             let runRows = try DatabaseManager.shared.read { db in
-                try Row.fetchAll(db, sql: """
+                guard try db.tableExists("heartbeat_runs") else { return [Row]() }
+                return try Row.fetchAll(db, sql: """
                     SELECT id, intensity, started_at, completed_at,
                            signals_found, dispatches_made, summary
                     FROM heartbeat_runs
@@ -202,7 +206,8 @@ final class HeartbeatStore: ObservableObject {
 
             // Recent governance signals (last 24h)
             let signalRows = try DatabaseManager.shared.read { db in
-                try Row.fetchAll(db, sql: """
+                guard try db.tableExists("governance_journal") else { return [Row]() }
+                return try Row.fetchAll(db, sql: """
                     SELECT id, category, content, project, action_taken, created_at
                     FROM governance_journal
                     ORDER BY created_at DESC
@@ -242,8 +247,9 @@ final class HeartbeatStore: ObservableObject {
     private static func fetchAllAsync() async throws -> FetchResult {
         let df = dateFormatter
 
-        let lastRunRow = try await DatabaseManager.shared.asyncRead { db in
-            try Row.fetchOne(db, sql: """
+        let lastRunRow = try await DatabaseManager.shared.asyncRead { db -> Row? in
+            guard try db.tableExists("heartbeat_runs") else { return nil }
+            return try Row.fetchOne(db, sql: """
                 SELECT id, intensity, started_at, completed_at, signals_found, dispatches_made, summary
                 FROM heartbeat_runs
                 ORDER BY started_at DESC LIMIT 1
@@ -264,14 +270,16 @@ final class HeartbeatStore: ObservableObject {
         }
 
         let activeDispatches = try await DatabaseManager.shared.asyncRead { db in
-            try Int.fetchOne(db, sql: """
+            guard try db.tableExists("canvas_dispatches") else { return 0 }
+            return try Int.fetchOne(db, sql: """
                 SELECT count(*) FROM canvas_dispatches
                 WHERE status IN ('queued', 'running')
                 """) ?? 0
         }
 
         let jobRows = try await DatabaseManager.shared.asyncRead { db in
-            try Row.fetchAll(db, sql: """
+            guard try db.tableExists("dispatch_queue") else { return [Row]() }
+            return try Row.fetchAll(db, sql: """
                 SELECT id, project, model, crew_agent, prompt, ticket_id,
                        status, attempts, max_attempts, last_error, created_at
                 FROM dispatch_queue
@@ -303,7 +311,8 @@ final class HeartbeatStore: ObservableObject {
         }
 
         let runRows = try await DatabaseManager.shared.asyncRead { db in
-            try Row.fetchAll(db, sql: """
+            guard try db.tableExists("heartbeat_runs") else { return [Row]() }
+            return try Row.fetchAll(db, sql: """
                 SELECT id, intensity, started_at, completed_at,
                        signals_found, dispatches_made, summary
                 FROM heartbeat_runs
@@ -325,7 +334,8 @@ final class HeartbeatStore: ObservableObject {
         }
 
         let signalRows = try await DatabaseManager.shared.asyncRead { db in
-            try Row.fetchAll(db, sql: """
+            guard try db.tableExists("governance_journal") else { return [Row]() }
+            return try Row.fetchAll(db, sql: """
                 SELECT id, category, content, project, action_taken, created_at
                 FROM governance_journal
                 ORDER BY created_at DESC

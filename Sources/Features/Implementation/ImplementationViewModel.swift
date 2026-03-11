@@ -96,9 +96,9 @@ final class ImplementationViewModel: ObservableObject {
             for await line in tailer.tail() {
                 await MainActor.run {
                     self.logLines.append(line)
-                    // Cap at 5000 lines to prevent memory issues
-                    if self.logLines.count > 5000 {
-                        self.logLines.removeFirst(100)
+                    // Cap at 1000 lines to prevent unbounded memory growth (TASK-132)
+                    if self.logLines.count > 1000 {
+                        self.logLines.removeFirst(self.logLines.count - 500)
                     }
                 }
             }

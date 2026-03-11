@@ -172,6 +172,14 @@ struct ForkMenu: View {
         error = nil
 
         do {
+            // Validate parent branch still exists — guards against race where branch
+            // was deleted between opening the fork menu and pressing Create.
+            guard let _ = try TreeStore.shared.getBranch(parentBranch.id) else {
+                error = "Parent branch no longer exists — it may have been deleted."
+                isCreating = false
+                return
+            }
+
             // Build context — nil means parent branch has no session yet
             let context: String?
             if branchType == .implementation {

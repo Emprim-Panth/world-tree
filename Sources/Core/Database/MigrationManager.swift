@@ -1,11 +1,40 @@
 import Foundation
 import GRDB
+import os.log
+
+private let migrationLog = Logger(subsystem: "com.forgeandcode.WorldTree", category: "Migration")
 
 /// Manages canvas-specific schema migrations.
 /// Only creates new canvas_* tables — never touches existing cortana-core tables.
 enum MigrationManager {
 
+    /// Attempts to copy the database file as a pre-migration backup.
+    /// Best-effort: logs a warning if the backup fails but does not block migration.
+    private static func backupDatabaseFile(at pool: DatabasePool) {
+        do {
+            let dbPath = pool.path
+            let backupPath = dbPath + ".pre-migration-backup"
+            let fm = FileManager.default
+            // Remove stale backup from a previous run
+            try? fm.removeItem(atPath: backupPath)
+            try fm.copyItem(atPath: dbPath, toPath: backupPath)
+            migrationLog.info("Pre-migration backup created at \(backupPath)")
+        } catch {
+            migrationLog.warning("Could not create pre-migration backup: \(error.localizedDescription). Proceeding without backup.")
+        }
+    }
+
     static func migrate(_ dbPool: DatabasePool) throws {
+        // Back up the database file before any migrations run
+        backupDatabaseFile(at: dbPool)
+
+        // Checkpoint WAL to ensure a clean, consistent state before migrating.
+        // TRUNCATE mode flushes WAL into the main DB and resets the WAL file.
+        try dbPool.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+        }
+        migrationLog.info("WAL checkpoint completed before migration")
+
         // Disable deferred FK checks — the database is shared with cortana-core
         // and may have orphaned rows in tables we don't own (sessions, messages, summaries).
         // World Tree only controls canvas_* tables.
@@ -259,13 +288,17 @@ enum MigrationManager {
                 WHERE type = 'table' AND name = 'messages_fts'
                 """) ?? false) ?? false
             if !hasFTS5 {
-                try? db.execute(sql: """
-                    CREATE VIRTUAL TABLE messages_fts USING fts5(
-                        content,
-                        content=messages,
-                        content_rowid=id
-                    )
-                    """)
+                do {
+                    try db.execute(sql: """
+                        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                            content,
+                            content=messages,
+                            content_rowid=id
+                        )
+                        """)
+                } catch {
+                    migrationLog.error("FTS5 messages_fts creation failed: \(error.localizedDescription). Search will fall back to LIKE.")
+                }
             }
         }
 
@@ -419,13 +452,17 @@ enum MigrationManager {
                 WHERE type = 'table' AND name = 'conversation_archive_fts'
                 """) ?? false) ?? false
             if !hasCaFts {
-                try? db.execute(sql: """
-                    CREATE VIRTUAL TABLE conversation_archive_fts USING fts5(
-                        compressed_summary, key_entities, key_decisions,
-                        content='conversation_archive',
-                        content_rowid='rowid'
-                    )
-                    """)
+                do {
+                    try db.execute(sql: """
+                        CREATE VIRTUAL TABLE IF NOT EXISTS conversation_archive_fts USING fts5(
+                            compressed_summary, key_entities, key_decisions,
+                            content='conversation_archive',
+                            content_rowid='rowid'
+                        )
+                        """)
+                } catch {
+                    migrationLog.error("FTS5 conversation_archive_fts creation failed: \(error.localizedDescription). Archive search unavailable.")
+                }
             }
 
             // FTS5 for knowledge graph nodes
@@ -440,13 +477,17 @@ enum MigrationManager {
                     WHERE type = 'table' AND name = 'cg_nodes'
                     """) ?? false
                 if hasCgNodes {
-                    try? db.execute(sql: """
-                        CREATE VIRTUAL TABLE cg_nodes_fts USING fts5(
-                            label, content,
-                            content='cg_nodes',
-                            content_rowid='rowid'
-                        )
-                        """)
+                    do {
+                        try db.execute(sql: """
+                            CREATE VIRTUAL TABLE IF NOT EXISTS cg_nodes_fts USING fts5(
+                                label, content,
+                                content='cg_nodes',
+                                content_rowid='rowid'
+                            )
+                            """)
+                    } catch {
+                        migrationLog.error("FTS5 cg_nodes_fts creation failed: \(error.localizedDescription). Graph search unavailable.")
+                    }
                 }
             }
         }
@@ -459,14 +500,14 @@ enum MigrationManager {
         // pattern established in v12 for messages_fts.
         migrator.registerMigration("v16_conversation_archive_fts_triggers") { db in
             // Guard: only create triggers if both tables exist
-            let hasFts = (try? Bool.fetchOne(db, sql: """
+            let hasFts = try Bool.fetchOne(db, sql: """
                 SELECT COUNT(*) > 0 FROM sqlite_master
                 WHERE type = 'table' AND name = 'conversation_archive_fts'
-                """) ?? false) ?? false
-            let hasArchive = (try? Bool.fetchOne(db, sql: """
+                """) ?? false
+            let hasArchive = try Bool.fetchOne(db, sql: """
                 SELECT COUNT(*) > 0 FROM sqlite_master
                 WHERE type = 'table' AND name = 'conversation_archive'
-                """) ?? false) ?? false
+                """) ?? false
 
             guard hasFts && hasArchive else { return }
 

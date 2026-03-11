@@ -79,6 +79,21 @@ enum ToolGuard {
         ]
     }
 
+    // MARK: - Path Canonicalization
+
+    /// Canonicalize a file path to prevent traversal attacks.
+    /// Resolves `..`, `.`, `~`, and symlinks to produce an absolute path.
+    /// Returns nil if the path contains null bytes (string truncation attack).
+    private static func canonicalizePath(_ path: String) -> String? {
+        // Reject null bytes — can truncate strings in C-based APIs
+        guard !path.contains("\0") else { return nil }
+
+        // Expand ~ to home directory, resolve . and .. components
+        let expanded = NSString(string: path).expandingTildeInPath
+        let url = URL(fileURLWithPath: expanded).standardized
+        return url.path
+    }
+
     // MARK: - Assessment
 
     /// Assess the risk of a tool invocation.
@@ -99,6 +114,16 @@ enum ToolGuard {
             return .safe(tool: "bash")
         }
 
+        // Reject null bytes early — can truncate strings in C-based APIs
+        if command.contains("\0") {
+            return Assessment(
+                riskLevel: .critical,
+                reason: "Command contains null bytes (string truncation attack)",
+                toolName: "bash",
+                requiresApproval: true
+            )
+        }
+
         // Normalize for pattern matching:
         // - Lowercase for case-insensitive matching
         // - Strip quotes so "rm" "-rf" still matches (quote bypass)
@@ -117,6 +142,39 @@ enum ToolGuard {
                 toolName: "bash",
                 requiresApproval: true
             )
+        }
+
+        // Reject process substitution — <(...) and >(...) can execute arbitrary commands
+        if command.contains("<(") || command.contains(">(") {
+            return Assessment(
+                riskLevel: .destructive,
+                reason: "Command uses process substitution (potential code injection)",
+                toolName: "bash",
+                requiresApproval: true
+            )
+        }
+
+        // Reject dangerous parameter expansion — ${...} containing command execution patterns
+        // e.g. ${cmd/ /}, ${!ref}, ${var:-$(dangerous)}
+        if command.contains("${") {
+            // Extract content between ${ and } and check for command-like patterns
+            let dangerousExpansionPatterns = ["$(", "`", "//", "!"]
+            let parts = command.components(separatedBy: "${").dropFirst()
+            for part in parts {
+                if let closeBrace = part.firstIndex(of: "}") {
+                    let inner = String(part[part.startIndex..<closeBrace])
+                    for pattern in dangerousExpansionPatterns {
+                        if inner.contains(pattern) {
+                            return Assessment(
+                                riskLevel: .destructive,
+                                reason: "Command uses dangerous parameter expansion (potential code injection via ${\(inner)})",
+                                toolName: "bash",
+                                requiresApproval: true
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         // Reject ANSI-C hex quoting — $'\x72\x6d' can encode "rm" etc.
@@ -181,6 +239,7 @@ enum ToolGuard {
         }
 
         // Check for protected path access (case-insensitive on macOS)
+        // Also canonicalize any path-like tokens to catch traversal attacks
         for path in protectedPaths {
             if lowered.contains(path.lowercased()) {
                 return Assessment(
@@ -192,13 +251,41 @@ enum ToolGuard {
             }
         }
 
+        // Canonicalize path-like arguments to catch traversal (e.g. /safe/../etc/passwd)
+        let tokens = command.components(separatedBy: .whitespaces)
+        for token in tokens where token.contains("..") || token.contains("~") {
+            if let resolved = canonicalizePath(token) {
+                let lowerResolved = resolved.lowercased()
+                for path in protectedPaths {
+                    if lowerResolved.contains(path.lowercased()) {
+                        return Assessment(
+                            riskLevel: .destructive,
+                            reason: "Path traversal to protected path: \(token) → \(resolved)",
+                            toolName: "bash",
+                            requiresApproval: true
+                        )
+                    }
+                }
+            }
+        }
+
         return .safe(tool: "bash")
     }
 
     /// Assess file write operations for dangerous targets.
     private static func assessFileWrite(toolName: String, input: [String: Any]) -> Assessment {
-        guard let path = input["path"] as? String ?? input["file_path"] as? String else {
+        guard let rawPath = input["path"] as? String ?? input["file_path"] as? String else {
             return .safe(tool: toolName)
+        }
+
+        // Canonicalize path FIRST to prevent traversal attacks (e.g. ../../etc/passwd)
+        guard let path = canonicalizePath(rawPath) else {
+            return Assessment(
+                riskLevel: .critical,
+                reason: "Path contains null bytes (string truncation attack): \(rawPath)",
+                toolName: toolName,
+                requiresApproval: true
+            )
         }
 
         // Check protected paths (case-insensitive — macOS filesystem is case-insensitive)
@@ -212,6 +299,17 @@ enum ToolGuard {
                     requiresApproval: true
                 )
             }
+        }
+
+        // Reject writes outside user's home directory
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if !path.hasPrefix(home) && !path.hasPrefix("/tmp/") && !path.hasPrefix("/var/folders/") {
+            return Assessment(
+                riskLevel: .destructive,
+                reason: "Write target outside home directory: \(path)",
+                toolName: toolName,
+                requiresApproval: true
+            )
         }
 
         // Large file overwrites

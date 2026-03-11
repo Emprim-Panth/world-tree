@@ -45,6 +45,7 @@ struct VoiceControlView: View {
             .padding(.vertical, 8)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(viewModel.isListening ? "Stop listening" : "Open voice input")
     }
 
     private var expandedView: some View {
@@ -61,6 +62,7 @@ struct VoiceControlView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Close voice input")
             }
 
             // Waveform visualizer
@@ -97,6 +99,7 @@ struct VoiceControlView: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(viewModel.isListening ? "Stop listening" : "Start listening")
             .frame(width: 80, height: 80)
             .background(viewModel.isListening ? Color.red.opacity(0.1) : Color.accentColor.opacity(0.1))
             .cornerRadius(12)
@@ -114,6 +117,9 @@ class VoiceControlViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     private var levelTimer: Timer?
+    private var transcriptionObserver: NSObjectProtocol?
+    private var listeningStateObserver: NSObjectProtocol?
+    private var voiceErrorObserver: NSObjectProtocol?
 
     var statusText: String {
         if let error = errorMessage { return error }
@@ -122,39 +128,43 @@ class VoiceControlViewModel: ObservableObject {
     }
 
     init() {
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleTranscription),
-            name: VoiceService.transcriptionUpdated, object: nil)
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleListeningState),
-            name: VoiceService.listeningStateChanged, object: nil)
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleVoiceError),
-            name: VoiceService.voiceError, object: nil)
+        transcriptionObserver = NotificationCenter.default.addObserver(
+            forName: VoiceService.transcriptionUpdated, object: nil, queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                self?.currentTranscription = note.userInfo?["text"] as? String ?? ""
+            }
+        }
+        listeningStateObserver = NotificationCenter.default.addObserver(
+            forName: VoiceService.listeningStateChanged, object: nil, queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                let listening = note.userInfo?["isListening"] as? Bool ?? false
+                self?.isListening = listening
+                if !listening {
+                    self?.stopAudioLevelMonitoring()
+                }
+            }
+        }
+        voiceErrorObserver = NotificationCenter.default.addObserver(
+            forName: VoiceService.voiceError, object: nil, queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                self?.errorMessage = note.userInfo?["error"] as? String
+                // Clear error after 5 seconds
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(5))
+                    self?.errorMessage = nil
+                }
+            }
+        }
     }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
+        if let obs = transcriptionObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = listeningStateObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = voiceErrorObserver { NotificationCenter.default.removeObserver(obs) }
         levelTimer?.invalidate()
-    }
-
-    @objc private func handleTranscription(_ notification: Notification) {
-        currentTranscription = notification.userInfo?["text"] as? String ?? ""
-    }
-
-    @objc private func handleListeningState(_ notification: Notification) {
-        isListening = notification.userInfo?["isListening"] as? Bool ?? false
-        if !isListening {
-            stopAudioLevelMonitoring()
-        }
-    }
-
-    @objc private func handleVoiceError(_ notification: Notification) {
-        errorMessage = notification.userInfo?["error"] as? String
-        // Clear error after 5 seconds
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-            self?.errorMessage = nil
-        }
     }
 
     func toggleListening() {

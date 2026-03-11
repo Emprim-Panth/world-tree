@@ -24,6 +24,10 @@ struct DocumentEditorView: View {
     @State private var showSearch = false
     @State private var searchQuery = ""
 
+    // Error alert
+    @State private var showErrorAlert = false
+    @State private var errorAlertMessage = ""
+
     let branchId: String
     let sessionId: String
     var parentBranchLayout: BranchLayoutViewModel?
@@ -52,8 +56,15 @@ struct DocumentEditorView: View {
                 ScrollViewReader { proxy in
                     if !viewModel.initialLoadDone && viewModel.document.sections.isEmpty {
                         // Loading state — brief, before GRDB delivers messages
-                        Color(nsColor: .textBackgroundColor)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .controlSize(.regular)
+                            Text("Loading conversation…")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(nsColor: .textBackgroundColor))
                     } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
@@ -130,6 +141,8 @@ struct DocumentEditorView: View {
                 .animation(.easeInOut(duration: 0.2), value: showSearch)
                 .background(Color(nsColor: .textBackgroundColor))
                 .onDisappear {
+                    // Cancel any in-flight stream — prevents orphaned tasks after window close
+                    viewModel.cancelStream()
                     // Auto-submit any pending draft — navigating away commits the message.
                     // Matches iMessage behavior: leaving a chat sends what you typed.
                     if !viewModel.currentInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -306,6 +319,19 @@ struct DocumentEditorView: View {
                     .allowsHitTesting(false)
             }
         }
+        .alert("Error", isPresented: $showErrorAlert) {
+            Button("OK", role: .cancel) {
+                viewModel.errorMessage = nil
+            }
+        } message: {
+            Text(errorAlertMessage)
+        }
+        .onChange(of: viewModel.errorMessage) { _, newError in
+            if let msg = newError, !msg.isEmpty {
+                errorAlertMessage = msg
+                showErrorAlert = true
+            }
+        }
     }
     }
     // MARK: - Search Helpers
@@ -415,6 +441,8 @@ class DocumentEditorViewModel: ObservableObject {
         }
     }
     private var sleepAssertion: NSObjectProtocol?
+    /// Guard against rapid double-sends — true while processUserInput is executing.
+    private var isSending = false
     @Published var branchOpportunity: BranchOpportunity?
     /// Live token stream content — backed by StreamingState so updates at 10fps
     /// don't trigger full document re-renders via viewModel.objectWillChange.
@@ -428,6 +456,7 @@ class DocumentEditorViewModel: ObservableObject {
         set { streaming.currentTool = newValue }
     }
 
+    @Published var errorMessage: String?
     @Published var pendingForkMessage: Message?
 
     /// Message IDs from external sources (e.g. Telegram) — shown with 📱 indicator
@@ -581,6 +610,8 @@ class DocumentEditorViewModel: ObservableObject {
     weak var parentBranchLayout: BranchLayoutViewModel?
 
     deinit {
+        streamTask?.cancel()
+        streamTask = nil
         streamFlushTimer?.invalidate()
         refreshTimer?.invalidate()
         if let observer = externalSourceObserver {
@@ -610,6 +641,12 @@ class DocumentEditorViewModel: ObservableObject {
         // then re-fires any time the messages table changes for this session.
         // No timer, no polling, no accumulation.
         guard messageObservation == nil else { return }
+
+        // Remove old notification observers before re-registering to prevent
+        // accumulation during rapid branch navigation or error-retry paths.
+        if let obs = externalSourceObserver { NotificationCenter.default.removeObserver(obs); externalSourceObserver = nil }
+        if let obs = mobileStreamTokenObserver { NotificationCenter.default.removeObserver(obs); mobileStreamTokenObserver = nil }
+        if let obs = mobileStreamCompleteObserver { NotificationCenter.default.removeObserver(obs); mobileStreamCompleteObserver = nil }
         // Restore any in-progress draft from before this branch was last left
         if let saved = UserDefaults.standard.string(forKey: "draft.\(branchId)"), !saved.isEmpty {
             currentInput = saved
@@ -619,6 +656,7 @@ class DocumentEditorViewModel: ObservableObject {
             // WorldTreeApp.onAppear calls setupDatabase). Retry shortly.
             guard loadRetryCount < 10 else {
                 wtLog("[DocumentEditor] DB not ready after 10 retries — giving up")
+                errorMessage = "Database connection failed. Try restarting the app."
                 return
             }
             loadRetryCount += 1
@@ -692,72 +730,64 @@ class DocumentEditorViewModel: ObservableObject {
         }
 
         // Listen for external message sources (e.g. Telegram → 📱 indicator)
-        if externalSourceObserver == nil {
-            let sid = sessionId
-            externalSourceObserver = NotificationCenter.default.addObserver(
-                forName: .canvasServerExternalMessage,
-                object: nil,
-                queue: .main
-            ) { [weak self] note in
-                MainActor.assumeIsolated {
-                    guard let self,
-                          let info = note.userInfo,
-                          let source = info["source"] as? String,
-                          let noteSessionId = info["sessionId"] as? String,
-                          noteSessionId == sid,
-                          source == "telegram"
-                    else { return }
+        externalSourceObserver = NotificationCenter.default.addObserver(
+            forName: .canvasServerExternalMessage,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let info = note.userInfo,
+                      let source = info["source"] as? String,
+                      let noteSessionId = info["sessionId"] as? String,
+                      noteSessionId == sid,
+                      source == "telegram"
+                else { return }
 
-                    // Mark the last user section as telegram-sourced
-                    if let idx = self.document.sections.lastIndex(where: {
-                        if case .user = $0.author { return true }
-                        return false
-                    }) {
-                        self.document.sections[idx].source = "telegram"
-                    }
+                // Mark the last user section as telegram-sourced
+                if let idx = self.document.sections.lastIndex(where: {
+                    if case .user = $0.author { return true }
+                    return false
+                }) {
+                    self.document.sections[idx].source = "telegram"
                 }
             }
         }
 
         // Live token stream from mobile send_message — mirrors the same streaming UI
         // as locally-typed messages when a response is triggered from the iOS app.
-        if mobileStreamTokenObserver == nil {
-            let bid = branchId
-            mobileStreamTokenObserver = NotificationCenter.default.addObserver(
-                forName: .mobileStreamToken,
-                object: nil,
-                queue: .main
-            ) { [weak self] note in
-                MainActor.assumeIsolated {
-                    guard let self,
-                          let noteBranchId = note.userInfo?["branchId"] as? String,
-                          noteBranchId == bid,
-                          let token = note.userInfo?["token"] as? String else { return }
-                    self.pendingTokenBuffer += token
-                    if !self.isProcessing {
-                        self.isProcessing = true
-                        self.streamingContent = ""
-                        self.startStreamBatching()
-                    }
+        let bid = branchId
+        mobileStreamTokenObserver = NotificationCenter.default.addObserver(
+            forName: .mobileStreamToken,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let noteBranchId = note.userInfo?["branchId"] as? String,
+                      noteBranchId == bid,
+                      let token = note.userInfo?["token"] as? String else { return }
+                self.pendingTokenBuffer += token
+                if !self.isProcessing {
+                    self.isProcessing = true
+                    self.streamingContent = ""
+                    self.startStreamBatching()
                 }
             }
         }
-        if mobileStreamCompleteObserver == nil {
-            let bid = branchId
-            mobileStreamCompleteObserver = NotificationCenter.default.addObserver(
-                forName: .mobileStreamComplete,
-                object: nil,
-                queue: .main
-            ) { [weak self] note in
-                MainActor.assumeIsolated {
-                    guard let self,
-                          let noteBranchId = note.userInfo?["branchId"] as? String,
-                          noteBranchId == bid else { return }
-                    self.flushPendingTokens()
-                    self.isProcessing = false
-                    self.streamingContent = nil
-                    GlobalStreamRegistry.shared.endStream(branchId: self.branchId)
-                }
+        mobileStreamCompleteObserver = NotificationCenter.default.addObserver(
+            forName: .mobileStreamComplete,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let noteBranchId = note.userInfo?["branchId"] as? String,
+                      noteBranchId == bid else { return }
+                self.flushPendingTokens()
+                self.isProcessing = false
+                self.streamingContent = nil
+                GlobalStreamRegistry.shared.endStream(branchId: self.branchId)
             }
         }
 
@@ -765,24 +795,28 @@ class DocumentEditorViewModel: ObservableObject {
         // Runs in background — doesn't block the UI.
         Task { [weak self] in
             guard let self else { return }
-            if let branch = try? TreeStore.shared.getBranchBySessionId(self.sessionId) {
-                self.treeId = branch.treeId
-                self.parentBranchId = branch.parentBranchId
-                self.currentBranch = branch
-                let project = (try? TreeStore.shared.getTree(branch.treeId))?.project
-                self.cachedProject = project
-                // Cache parent session ID for --fork-session / context inheritance.
-                // Done once at document open — eliminates DB reads on every send.
-                if let parentBranchId = branch.parentBranchId,
-                   let parentBranch = try? TreeStore.shared.getBranch(parentBranchId) {
-                    self.cachedParentSessionId = parentBranch.sessionId
+            do {
+                if let branch = try TreeStore.shared.getBranchBySessionId(self.sessionId) {
+                    self.treeId = branch.treeId
+                    self.parentBranchId = branch.parentBranchId
+                    self.currentBranch = branch
+                    let project = (try? TreeStore.shared.getTree(branch.treeId))?.project // fire-and-forget: project name is non-critical enrichment
+                    self.cachedProject = project
+                    // Cache parent session ID for --fork-session / context inheritance.
+                    // Done once at document open — eliminates DB reads on every send.
+                    if let parentBranchId = branch.parentBranchId,
+                       let parentBranch = try TreeStore.shared.getBranch(parentBranchId) {
+                        self.cachedParentSessionId = parentBranch.sessionId
+                    }
+                    await ProviderManager.shared.activeProvider?.warmUp(
+                        sessionId: self.sessionId,
+                        branchId: self.branchId,
+                        project: project,
+                        workingDirectory: self.workingDirectory
+                    )
                 }
-                await ProviderManager.shared.activeProvider?.warmUp(
-                    sessionId: self.sessionId,
-                    branchId: self.branchId,
-                    project: project,
-                    workingDirectory: self.workingDirectory
-                )
+            } catch {
+                wtLog("[DocumentEditor] Failed to load branch context for session \(self.sessionId): \(error)")
             }
             // Restore the most recent rotation checkpoint so the first send after
             // a restart or session reload picks up where the last session left off.
@@ -824,8 +858,14 @@ class DocumentEditorViewModel: ObservableObject {
 
         // Case 2: last DB message is from the user with no assistant reply —
         // app was closed between the user sending and the assistant responding.
-        guard let messages = try? MessageStore.shared.getMessages(sessionId: sessionId),
-              let lastMsg = messages.last,
+        let messages: [Message]
+        do {
+            messages = try MessageStore.shared.getMessages(sessionId: sessionId)
+        } catch {
+            wtLog("[DocumentEditor] autoResumeIfNeeded: failed to load messages for \(sessionId): \(error)")
+            return
+        }
+        guard let lastMsg = messages.last,
               lastMsg.role == .user,
               checkpointContext != nil || messages.count > 1 else { return }
 
@@ -987,9 +1027,15 @@ class DocumentEditorViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self, self.usePollingFallback else { return }
                 guard let dbPool = DatabaseManager.shared.dbPool else { return }
-                guard let messages = try? await dbPool.read({ db in
-                    try Message.fetchAll(db, sql: sql, arguments: [sid])
-                }) else { return }
+                let messages: [Message]
+                do {
+                    messages = try await dbPool.read({ db in
+                        try Message.fetchAll(db, sql: sql, arguments: [sid])
+                    })
+                } catch {
+                    wtLog("[DocumentEditor] Polling fallback read failed: \(error)")
+                    return
+                }
                 self.applyMessages(messages)
             }
         }
@@ -1001,11 +1047,19 @@ class DocumentEditorViewModel: ObservableObject {
     func loadOlderMessages() async {
         guard let oldestMessageId = document.sections.first(where: { $0.messageId != nil })?.messageId else { return }
 
-        guard let older = try? MessageStore.shared.getMessagesBefore(
-            sessionId: sessionId,
-            beforeMessageId: oldestMessageId,
-            limit: pageSize
-        ), !older.isEmpty else {
+        let older: [Message]
+        do {
+            older = try MessageStore.shared.getMessagesBefore(
+                sessionId: sessionId,
+                beforeMessageId: oldestMessageId,
+                limit: pageSize
+            )
+        } catch {
+            wtLog("[DocumentEditor] loadOlderMessages failed: \(error)")
+            hasMoreMessages = false
+            return
+        }
+        guard !older.isEmpty else {
             hasMoreMessages = false
             return
         }
@@ -1195,6 +1249,8 @@ class DocumentEditorViewModel: ObservableObject {
     }
 
     func submitInput() {
+        // Prevent rapid double-sends while a previous send is still being processed
+        guard !isSending else { return }
         let inputText = currentInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachmentSnapshot = pendingAttachments
         guard !inputText.isEmpty || !attachmentSnapshot.isEmpty else { return }
@@ -1225,6 +1281,7 @@ class DocumentEditorViewModel: ObservableObject {
     }
 
     private func processUserInput(_ section: DocumentSection, sectionUUID: UUID? = nil, messageText: String? = nil, attachments: [Attachment] = []) {
+        isSending = true
         // If we're mid-stream, persist the partial response before starting the new one.
         // This prevents the streaming text from vanishing when the user interrupts.
         if let partialContent = streamingContent, !partialContent.isEmpty {
@@ -1282,9 +1339,14 @@ class DocumentEditorViewModel: ObservableObject {
         )
         let content = messageText ?? String(section.content.characters)
 
+        isSending = false
         streamTask = Task {
             // 0. Ensure session row exists — guards against FK failures on orphaned branches
-            try? MessageStore.shared.ensureSession(sessionId: sessionId, workingDirectory: workingDirectory)
+            do {
+                try MessageStore.shared.ensureSession(sessionId: sessionId, workingDirectory: workingDirectory)
+            } catch {
+                wtLog("[DocumentEditor] ensureSession failed for \(sessionId): \(error)")
+            }
 
             // 1. Persist user message to DB
             // Evaluate isNew BEFORE inserting — it must reflect whether the session had
@@ -1301,6 +1363,7 @@ class DocumentEditorViewModel: ObservableObject {
                 seenMessageIds.insert(msg.id)
             } catch {
                 wtLog("[DocumentEditor] Failed to persist user message: \(error)")
+                errorMessage = "Failed to save message: \(error.localizedDescription)"
             }
 
             // 2. Route through ClaudeCodeProvider
@@ -1456,6 +1519,7 @@ class DocumentEditorViewModel: ObservableObject {
                     hadExplicitError = true
                     wtLog("[DocumentEditor] Provider error: \(msg)")
                     mirrorToTerminal("\r\n\u{1B}[1;31m  ⚠ Error: \(msg)\u{1B}[0m\r\n")
+                    errorMessage = msg
                     if fullResponse.isEmpty {
                         fullResponse = "⚠️ \(msg)"
                     }
@@ -1521,7 +1585,13 @@ class DocumentEditorViewModel: ObservableObject {
             // Check if context rotation is needed after this exchange.
             // rotateSession() is a protocol method with a no-op default — works for any provider.
             if let activeProvider = ProviderManager.shared.activeProvider {
-                let allMessages = (try? MessageStore.shared.getMessages(sessionId: sessionId)) ?? []
+                let allMessages: [Message]
+                do {
+                    allMessages = try MessageStore.shared.getMessages(sessionId: sessionId)
+                } catch {
+                    wtLog("[DocumentEditor] Failed to load messages for rotation check: \(error)")
+                    allMessages = []
+                }
                 let toolCount = EventStore.shared.activityCount(branchId: branchId, minutes: 60)
                 if let checkpoint = await SessionRotator.rotateIfNeeded(
                     sessionId: sessionId,

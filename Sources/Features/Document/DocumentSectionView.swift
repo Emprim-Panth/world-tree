@@ -142,6 +142,7 @@ struct DocumentSectionView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Branch from here")
+                    .accessibilityLabel("Branch from here")
 
                     if showInferButton {
                         Button(action: { onInfer?() }) {
@@ -153,6 +154,7 @@ struct DocumentSectionView: View {
                         }
                         .buttonStyle(.plain)
                         .help("Infer finding to parent branch")
+                        .accessibilityLabel("Infer finding to parent branch")
                     }
                 }
                 .padding(.top, 8)

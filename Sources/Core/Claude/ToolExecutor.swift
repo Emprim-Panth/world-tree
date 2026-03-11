@@ -435,6 +435,20 @@ actor ToolExecutor {
             if FileManager.default.fileExists(atPath: exitPath) { break }
         }
 
+        // If we timed out (no exit file), send Ctrl-C to kill the running script
+        // so it doesn't keep executing in the tmux session after we return.
+        if !FileManager.default.fileExists(atPath: exitPath) {
+            wtLog("[ToolExecutor] bashViaTmux: command timed out after \(timeoutSecs)s — sending SIGINT to tmux session")
+            let killProc = Process()
+            killProc.executableURL = URL(fileURLWithPath: tmuxExecutable)
+            // C-c sends Ctrl-C (SIGINT) to the foreground process in the pane
+            killProc.arguments = ["send-keys", "-t", sessionName, "C-c", ""]
+            killProc.standardOutput = FileHandle.nullDevice
+            killProc.standardError = FileHandle.nullDevice
+            try? killProc.run()
+            killProc.waitUntilExit()
+        }
+
         // Read results
         var output = (try? String(contentsOfFile: outputPath, encoding: .utf8)) ?? ""
         let exitStr = (try? String(contentsOfFile: exitPath, encoding: .utf8))?

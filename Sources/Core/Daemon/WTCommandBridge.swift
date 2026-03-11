@@ -122,12 +122,14 @@ final class WTCommandBridge: ObservableObject {
         // Validate file ownership and permissions before processing commands
         guard validateFilePermissions() else { return }
 
+        // Hold lock for entire fileHandle + bytesRead access to prevent data races
+        // between this nonisolated method and @MainActor property access (TASK-127)
         ioLock.lock()
         guard let fh = fileHandle else { ioLock.unlock(); return }
         fh.seek(toFileOffset: bytesRead)
         let data = fh.readDataToEndOfFile()
         if !data.isEmpty { bytesRead += UInt64(data.count) }
-        ioLock.unlock()
+        ioLock.unlock()  // Safe: data is a local copy, no more shared state access
 
         guard !data.isEmpty else { return }
         let raw = String(data: data, encoding: .utf8) ?? ""

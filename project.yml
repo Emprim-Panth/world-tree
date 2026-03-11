@@ -78,6 +78,18 @@ targets:
       - sdk: Carbon.framework
     postBuildScripts:
       - script: |
+          # Guard: skip for test builds and non-build actions (clean, analyze).
+          # codesign --deep fails on .xctest bundles with "bundle format unrecognized",
+          # and the /Applications install is unnecessary for test runs. (TASK-094)
+          if [ "${ACTION}" != "build" ]; then
+            echo "note: Skipping install — action is '${ACTION}', not 'build'"
+            exit 0
+          fi
+          if [ "${WRAPPER_EXTENSION}" = "xctest" ]; then
+            echo "note: Skipping install — building test bundle, not app"
+            exit 0
+          fi
+
           # Auto-install to /Applications so TCC grants (Screen Recording, etc.) persist.
           # Without this, Xcode Run launches from DerivedData — a volatile path that
           # loses TCC permissions on every rebuild.
@@ -97,7 +109,6 @@ targets:
               --entitlements "${CODE_SIGN_ENTITLEMENTS}" \
               --options runtime \
               --timestamp=none \
-              --deep \
               "$APP_DST"
           fi
         name: "Install to /Applications"

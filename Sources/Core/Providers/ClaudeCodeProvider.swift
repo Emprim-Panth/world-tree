@@ -62,6 +62,12 @@ final class ClaudeCodeProvider: LLMProvider {
 
     deinit {
         periodicSaveTimer?.invalidate()
+        // Terminate any active CLI process so it doesn't outlive the provider
+        stateLock.lock()
+        let proc = _currentProcess
+        _currentProcess = nil
+        stateLock.unlock()
+        proc?.terminate()
     }
 
     /// Start a repeating timer that persists the session map every 60 seconds.

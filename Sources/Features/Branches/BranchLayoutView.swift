@@ -6,6 +6,13 @@ struct BranchLayoutView: View {
     @State private var selectedBranchId: String?
     @State private var showSynthesisSheet = false
 
+    // Delete confirmation
+    @State private var branchToDelete: Branch?
+    @State private var showDeleteConfirm = false
+
+    // Error alert
+    @State private var showErrorAlert = false
+
     init(treeId: String) {
         _viewModel = StateObject(wrappedValue: BranchLayoutViewModel(treeId: treeId))
     }
@@ -73,7 +80,8 @@ struct BranchLayoutView: View {
                                     viewModel.archiveBranch(branch.id)
                                 },
                                 onDelete: {
-                                    viewModel.deleteBranch(branch.id)
+                                    branchToDelete = branch
+                                    showDeleteConfirm = true
                                 }
                             )
                             .frame(width: 600)
@@ -87,12 +95,37 @@ struct BranchLayoutView: View {
         .onAppear {
             viewModel.loadBranches()
         }
+        .confirmationDialog(
+            "Delete \"\(branchToDelete?.displayTitle ?? "Branch")\"?",
+            isPresented: $showDeleteConfirm,
+            presenting: branchToDelete
+        ) { branch in
+            Button("Delete", role: .destructive) {
+                viewModel.deleteBranch(branch.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { branch in
+            Text("This permanently deletes \"\(branch.displayTitle)\" and all its messages. This cannot be undone.")
+        }
+        .alert("Error", isPresented: $showErrorAlert) {
+            Button("OK", role: .cancel) {
+                viewModel.errorMessage = nil
+            }
+        } message: {
+            Text(viewModel.errorMessage ?? "An unknown error occurred.")
+        }
+        .onChange(of: viewModel.errorMessage) { _, newError in
+            if newError != nil {
+                showErrorAlert = true
+            }
+        }
     }
 }
 
 @MainActor
 class BranchLayoutViewModel: ObservableObject {
     @Published var visibleBranches: [Branch] = []
+    @Published var errorMessage: String?
 
     let treeId: String
 
@@ -123,6 +156,7 @@ class BranchLayoutViewModel: ObservableObject {
             }
         } catch {
             wtLog("[BranchLayout] Failed to create branch: \(error)")
+            errorMessage = "Failed to create branch: \(error.localizedDescription)"
         }
     }
 
@@ -142,6 +176,7 @@ class BranchLayoutViewModel: ObservableObject {
             visibleBranches.append(newBranch)
         } catch {
             wtLog("[BranchLayout] Failed to create root branch: \(error)")
+            errorMessage = "Failed to create branch: \(error.localizedDescription)"
         }
     }
 
@@ -153,6 +188,7 @@ class BranchLayoutViewModel: ObservableObject {
             }
         } catch {
             wtLog("[BranchLayout] Failed to rename branch \(id): \(error)")
+            errorMessage = "Failed to rename branch: \(error.localizedDescription)"
         }
     }
 
@@ -162,6 +198,7 @@ class BranchLayoutViewModel: ObservableObject {
             visibleBranches.removeAll { $0.id == id }
         } catch {
             wtLog("[BranchLayout] Failed to complete branch \(id): \(error)")
+            errorMessage = "Failed to complete branch: \(error.localizedDescription)"
         }
     }
 
@@ -171,6 +208,7 @@ class BranchLayoutViewModel: ObservableObject {
             visibleBranches.removeAll { $0.id == id }
         } catch {
             wtLog("[BranchLayout] Failed to archive branch \(id): \(error)")
+            errorMessage = "Failed to archive branch: \(error.localizedDescription)"
         }
     }
 
@@ -180,6 +218,7 @@ class BranchLayoutViewModel: ObservableObject {
             visibleBranches.removeAll { $0.id == id }
         } catch {
             wtLog("[BranchLayout] Failed to delete branch \(id): \(error)")
+            errorMessage = "Failed to delete branch: \(error.localizedDescription)"
         }
     }
 
@@ -198,11 +237,13 @@ class BranchLayoutViewModel: ObservableObject {
             wtLog("[BranchLayout] Created branch: \(suggestion.title)")
         } catch {
             wtLog("[BranchLayout] Failed to create branch from suggestion: \(error)")
+            errorMessage = "Failed to create branch: \(error.localizedDescription)"
         }
     }
 
     func spawnParallelBranches(_ suggestions: [BranchSuggestion], userInput: String) {
         let parentId = visibleBranches.first?.id
+        var failures: [String] = []
         for suggestion in suggestions {
             do {
                 let newBranch = try TreeStore.shared.createBranch(
@@ -215,7 +256,11 @@ class BranchLayoutViewModel: ObservableObject {
                 visibleBranches.append(newBranch)
             } catch {
                 wtLog("[BranchLayout] Failed to spawn branch '\(suggestion.title)': \(error)")
+                failures.append(suggestion.title)
             }
+        }
+        if !failures.isEmpty {
+            errorMessage = "Failed to create \(failures.count) branch(es): \(failures.joined(separator: ", "))"
         }
         wtLog("[BranchLayout] Spawned \(suggestions.count) parallel branches")
     }

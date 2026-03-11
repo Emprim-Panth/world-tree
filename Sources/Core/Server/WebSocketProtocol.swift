@@ -43,6 +43,7 @@ struct WSPayload: Codable {
 // MARK: - Client → Server Message Types
 
 enum WSClientMessageType: String, Codable {
+    case auth
     case subscribe
     case unsubscribe
     case sendMessage = "send_message"
@@ -56,6 +57,10 @@ enum WSClientMessageType: String, Codable {
     case deleteTree = "delete_tree"
     case renameBranch = "rename_branch"
     case deleteBranch = "delete_branch"
+}
+
+struct WSAuthPayload: Codable {
+    let token: String
 }
 
 struct WSSubscribePayload: Codable {
