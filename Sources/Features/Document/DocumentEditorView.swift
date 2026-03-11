@@ -1172,6 +1172,7 @@ class DocumentEditorViewModel: ObservableObject {
             streamTask?.cancel()
             streamTask = nil
             stopStreamBatching()
+            GlobalStreamRegistry.shared.endStream(branchId: branchId)
             streamingContent = nil
             currentTool = nil
             isProcessing = false
