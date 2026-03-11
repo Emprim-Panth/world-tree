@@ -221,9 +221,14 @@ struct DocumentEditorView: View {
                 }  // closes else (ScrollView branch)
             }  // closes ScrollViewReader
             .onAppear {
-                isFocused = true
                 viewModel.loadDocument()
                 viewModel.parentBranchLayout = parentBranchLayout
+                // Delay focus so the view is fully in the responder chain before we request it.
+                // Without this, the focus request races with SwiftUI's layout pass and gets dropped.
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(150))
+                    isFocused = true
+                }
                 let synthKey = "pending_synthesis_\(sessionId)"
                 if let prompt = UserDefaults.standard.string(forKey: synthKey) {
                     UserDefaults.standard.removeObject(forKey: synthKey)
@@ -486,13 +491,23 @@ class DocumentEditorViewModel: ObservableObject {
 
     /// Drain accumulated tokens to streamingContent — called at 10fps.
     private func flushPendingTokens() {
-        guard !pendingTokenBuffer.isEmpty else { return }
-        let chunk = pendingTokenBuffer
-        pendingTokenBuffer = ""
-        streamingContent = (streamingContent ?? "") + chunk
-        if !isScrolledToBottom { hasNewStreamContent = true }
-        // Mirror to global registry so Command Center and navigate-back can see in-progress content
-        GlobalStreamRegistry.shared.appendContent(branchId: branchId, content: streamingContent ?? "")
+        if !pendingTokenBuffer.isEmpty {
+            let chunk = pendingTokenBuffer
+            pendingTokenBuffer = ""
+            streamingContent = (streamingContent ?? "") + chunk
+            if !isScrolledToBottom { hasNewStreamContent = true }
+            // Mirror to global registry so Command Center and navigate-back can see in-progress content
+            GlobalStreamRegistry.shared.appendContent(branchId: branchId, content: streamingContent ?? "")
+        } else if isProcessing {
+            // Navigate-back case: this ViewModel was recreated while another instance is still
+            // streaming. We have no local tokens, but GlobalStreamRegistry has live content
+            // being updated by the original ViewModel's still-running Task.
+            // Pull it here each tick so the typing indicator shows real progress.
+            if let latest = GlobalStreamRegistry.shared.currentContent(for: branchId),
+               !latest.isEmpty, latest != streamingContent {
+                streamingContent = latest
+            }
+        }
     }
 
     private let sessionId: String

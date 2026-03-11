@@ -5,7 +5,6 @@ struct SingleDocumentView: View {
     let treeId: String
     @StateObject private var viewModel: SingleDocumentViewModel
     @Environment(AppState.self) private var appState
-    @State private var showTerminal = false
     @State private var showTreeMap = false
 
     /// branchId: if provided, loads that specific branch as the main document.
@@ -88,7 +87,7 @@ struct SingleDocumentView: View {
             .frame(minHeight: 200)
 
             // ── Terminal panel (project-bound when available, else branch-bound) ──
-            if showTerminal {
+            if appState.terminalVisible {
                 if let project = viewModel.projectName {
                     // Project terminal — persists across branch switches
                     TerminalPanelView(
@@ -96,7 +95,7 @@ struct SingleDocumentView: View {
                         workingDirectory: viewModel.workingDirectory,
                         onClose: {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                showTerminal = false
+                                appState.terminalVisible = false
                             }
                         }
                     )
@@ -110,7 +109,7 @@ struct SingleDocumentView: View {
                         workingDirectory: viewModel.workingDirectory,
                         onClose: {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                showTerminal = false
+                                appState.terminalVisible = false
                             }
                         }
                     )
@@ -141,10 +140,10 @@ struct SingleDocumentView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        showTerminal.toggle()
+                        appState.terminalVisible.toggle()
                     }
                 } label: {
-                    Label("Claude", systemImage: showTerminal ? "terminal.fill" : "terminal")
+                    Label("Claude", systemImage: appState.terminalVisible ? "terminal.fill" : "terminal")
                 }
                 .keyboardShortcut("`", modifiers: .command)
                 .help("Open Claude terminal (⌘`)")
@@ -180,7 +179,7 @@ struct SingleDocumentView: View {
             // Only respond if the notification targets this tree's main branch
             if branchId == viewModel.mainBranchId || branchId == activeTerminalBranchId {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    showTerminal = true
+                    appState.terminalVisible = true
                 }
             }
         }

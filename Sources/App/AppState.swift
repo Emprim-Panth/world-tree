@@ -35,6 +35,10 @@ final class AppState {
     var dbSetupError: Error? = nil
     /// Number of active tasks across all projects (dispatches + jobs)
     var activeTaskCount: Int = 0
+    /// Whether the terminal panel is visible — persisted so branch switches don't hide it.
+    var terminalVisible: Bool = false {
+        didSet { UserDefaults.standard.set(terminalVisible, forKey: "terminalVisible") }
+    }
 
     /// Navigation history for branch back/forward.
     /// Each entry stores both treeId and branchId so both are restored on navigate.
@@ -54,6 +58,7 @@ final class AppState {
         }
 
         simpleMode = UserDefaults.standard.bool(forKey: AppConstants.simpleModeKey)
+        terminalVisible = UserDefaults.standard.bool(forKey: "terminalVisible")
 
         // Restore last selected conversation from previous session
         selectedTreeId = UserDefaults.standard.string(forKey: AppConstants.lastSelectedTreeIdKey)
