@@ -368,6 +368,12 @@ final class StreamingState: ObservableObject {
 
 @MainActor
 class DocumentEditorViewModel: ObservableObject {
+
+    /// Session IDs that had an interrupted stream recovered on this launch.
+    /// WorldTreeApp populates this set; loadDocument() consumes it to auto-send a
+    /// continuation prompt so the user doesn't have to type anything.
+    @MainActor static var pendingAutoResume: Set<String> = []
+
     @Published var document: ConversationDocument
     private var branchAnalysisTask: Task<Void, Never>?
     @Published var currentInput = "" {
@@ -761,7 +767,59 @@ class DocumentEditorViewModel: ObservableObject {
                 self.checkpointContext = summary
                 wtLog("[DocumentEditor] Restored rotation checkpoint from DB (\(summary.count) chars, age \(Int(Date().timeIntervalSince(createdAt)))s)")
             }
+            // Schedule auto-resume check: fires after UI settles.
+            // Handles two cases without any user input:
+            // 1. Session had an interrupted stream recovered this launch (stream cache)
+            // 2. Last DB message is from the user with no assistant reply (app quit mid-exchange)
+            Task { [weak self] in
+                guard let self else { return }
+                try? await Task.sleep(for: .seconds(2.0))
+                await self.autoResumeIfNeeded()
+            }
         }
+    }
+
+    /// Automatically continue a conversation that was interrupted (crash, force-quit, or
+    /// mid-exchange app close) without requiring the user to type anything.
+    @MainActor
+    private func autoResumeIfNeeded() async {
+        // Don't auto-resume if the user is already typing or a stream is live
+        guard streamingContent == nil, currentInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        // Case 1: stream was interrupted on a previous launch — WorldTreeApp already saved
+        // the partial content to DB and registered this session for auto-resume.
+        let wasInterrupted = DocumentEditorViewModel.pendingAutoResume.contains(sessionId)
+        if wasInterrupted {
+            DocumentEditorViewModel.pendingAutoResume.remove(sessionId)
+            wtLog("[DocumentEditor] Auto-resuming interrupted stream for session \(sessionId.prefix(8))")
+            sendAutoResumeMessage("[Session recovered after interruption — please continue your previous response from where it left off]")
+            return
+        }
+
+        // Case 2: last DB message is from the user with no assistant reply —
+        // app was closed between the user sending and the assistant responding.
+        guard let messages = try? MessageStore.shared.getMessages(sessionId: sessionId),
+              let lastMsg = messages.last,
+              lastMsg.role == .user,
+              checkpointContext != nil || messages.count > 1 else { return }
+
+        wtLog("[DocumentEditor] Last message is unanswered user turn — auto-resuming session \(sessionId.prefix(8))")
+        sendAutoResumeMessage("[Continuing session — please respond to the message above]")
+    }
+
+    /// Inject a system-level resume prompt and fire the LLM call.
+    /// The section is marked as system author so it renders as a subtle status line,
+    /// not a user message bubble.
+    private func sendAutoResumeMessage(_ text: String) {
+        let resumeSection = DocumentSection(
+            content: AttributedString("▶ Session resumed automatically"),
+            author: .system,
+            timestamp: Date(),
+            branchPoint: false,
+            isEditable: false
+        )
+        document.sections.append(resumeSection)
+        processUserInput(resumeSection, messageText: text)
     }
 
     /// Returns a stable UUID for a given message ID string.

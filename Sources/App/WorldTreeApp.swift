@@ -76,12 +76,17 @@ struct WorldTreeApp: App {
                     // VoiceService configures lazily on first use — no startup call needed
                     Task {
                         do {
-                            // Recover any responses that were interrupted by a crash or SIGTERM
+                            // Recover any responses that were interrupted by a crash or SIGTERM.
+                            // Mark those sessions for auto-resume so the document view fires a
+                            // continuation prompt automatically — no user input required.
                             let recovered = await StreamCacheManager.shared.recoverOrphanedStreams()
                             for (sessionId, content) in recovered where !content.isEmpty {
                                 wtLog("[StreamCache] Recovering interrupted response for session \(sessionId)")
                                 let msg = "[Recovered — response was interrupted]\n\n\(content)"
                                 _ = try? MessageStore.shared.sendMessage(sessionId: sessionId, role: .assistant, content: msg)
+                                await MainActor.run {
+                                    DocumentEditorViewModel.pendingAutoResume.insert(sessionId)
+                                }
                             }
                         } catch {
                             wtLog("[WorldTree] Stream recovery failed: \(error)")
@@ -167,6 +172,8 @@ struct WorldTreeApp: App {
 
     /// Validate that the restored tree/branch still exist in the DB.
     /// Clears the selection if either has been deleted since last session.
+    /// Also pre-warms the terminal for the restored branch so it's live when the
+    /// user's view appears — no waiting, no black screen, no manual trigger needed.
     private func validateRestoredSelection() {
         guard let treeId = appState.selectedTreeId else { return }
         Task { @MainActor in
@@ -174,6 +181,20 @@ struct WorldTreeApp: App {
             if !treeExists {
                 appState.selectedTreeId = nil
                 appState.selectedBranchId = nil
+                return
+            }
+            // Pre-warm terminal for the restored branch.
+            // workingDirectory lives on the tree, tmuxSessionName on the branch.
+            if let branchId = appState.selectedBranchId,
+               let branch = try? TreeStore.shared.getBranch(branchId),
+               let tree = try? TreeStore.shared.getTree(branch.treeId) {
+                let workDir = tree.workingDirectory ?? NSHomeDirectory()
+                BranchTerminalManager.shared.warmUp(
+                    branchId: branchId,
+                    workingDirectory: workDir,
+                    knownTmuxSession: branch.tmuxSessionName
+                )
+                wtLog("[WorldTree] Pre-warmed terminal for restored branch \(branchId.prefix(8))")
             }
         }
     }
