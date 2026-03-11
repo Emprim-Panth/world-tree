@@ -130,6 +130,12 @@ struct DocumentEditorView: View {
                 .animation(.easeInOut(duration: 0.2), value: showSearch)
                 .background(Color(nsColor: .textBackgroundColor))
                 .onDisappear {
+                    // Auto-submit any pending draft — navigating away commits the message.
+                    // Matches iMessage behavior: leaving a chat sends what you typed.
+                    if !viewModel.currentInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        && !viewModel.isProcessing {
+                        viewModel.submitInput()
+                    }
                     viewModel.writeSnapshotCheckpoint()
                 }
                 .sheet(item: $viewModel.pendingForkMessage) { message in
@@ -644,6 +650,15 @@ class DocumentEditorViewModel: ObservableObject {
         // so GRDB's ValueObservation (which only fires for writes through this pool)
         // can't see those changes. A 2s timer bridges the gap.
         startExternalRefreshTimer()
+
+        // Restore typing indicator when navigating back to a branch that still has an
+        // active stream in another ViewModel (user switched chats mid-response).
+        // ProcessingRegistry persists across ViewModel lifecycle — check it here so the
+        // typing indicator shows immediately instead of looking stagnant.
+        if ProcessingRegistry.shared.isProcessing(branchId) && !isProcessing {
+            isProcessing = true
+            streamingContent = ""
+        }
 
         // Listen for external message sources (e.g. Telegram → 📱 indicator)
         if externalSourceObserver == nil {
