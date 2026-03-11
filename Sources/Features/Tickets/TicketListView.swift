@@ -6,12 +6,14 @@ struct TicketListView: View {
     let project: String
     @ObservedObject private var store = TicketStore.shared
     @State private var selectedTicket: Ticket?
+    @State private var showCompleted = false
+    @State private var completedTickets: [Ticket] = []
 
     private var tickets: [Ticket] { store.tickets(for: project) }
 
     var body: some View {
         Group {
-            if tickets.isEmpty {
+            if tickets.isEmpty && completedTickets.isEmpty {
                 emptyState
             } else {
                 ticketList
@@ -19,6 +21,7 @@ struct TicketListView: View {
         }
         .onAppear {
             store.refresh()
+            completedTickets = store.completedTickets(for: project)
         }
         .sheet(item: $selectedTicket) { ticket in
             TicketDetailView(ticket: ticket)
@@ -49,6 +52,49 @@ struct TicketListView: View {
                     statusSection(status: status, tickets: group)
                 }
             }
+
+            // Completed section (collapsible)
+            if !completedTickets.isEmpty {
+                Divider()
+                    .padding(.vertical, 2)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showCompleted.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: showCompleted ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.green.opacity(0.7))
+                        Text("COMPLETED")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text("(\(completedTickets.count))")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                    }
+                }
+                .buttonStyle(.plain)
+
+                if showCompleted {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(completedTickets) { ticket in
+                            TicketRowView(ticket: ticket) {
+                                selectedTicket = ticket
+                            } onStatusChange: { newStatus in
+                                store.updateStatus(ticket: ticket, newStatus: newStatus)
+                                completedTickets = store.completedTickets(for: project)
+                            }
+                            .opacity(0.6)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -73,6 +119,7 @@ struct TicketListView: View {
                     selectedTicket = ticket
                 } onStatusChange: { newStatus in
                     store.updateStatus(ticket: ticket, newStatus: newStatus)
+                    completedTickets = store.completedTickets(for: project)
                 }
             }
         }

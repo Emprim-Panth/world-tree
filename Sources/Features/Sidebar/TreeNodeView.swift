@@ -28,11 +28,31 @@ struct TreeNodeView: View {
         }
     }
 
-    private var streamingPreview: String? {
+    private var activeStreamEntry: GlobalStreamRegistry.StreamEntry? {
         guard ProcessingRegistry.shared.isProcessing(branch.id) else { return nil }
-        let content = GlobalStreamRegistry.shared.currentContent(for: branch.id) ?? ""
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Thinking…" : String(trimmed.suffix(80))
+        return GlobalStreamRegistry.shared.streamEntry(for: branch.id)
+    }
+
+    /// Build the sidebar preview label given a stream entry and current time.
+    /// - Shows active tool name + elapsed time when a tool is running.
+    /// - Shows last text content when idle between tool calls.
+    /// - Falls back to "Working · Xs" so long tool chains are always visible.
+    private func streamingLabel(entry: GlobalStreamRegistry.StreamEntry, at date: Date) -> String {
+        let elapsed = Int(date.timeIntervalSince(entry.startedAt))
+        let elapsedStr = elapsed < 60
+            ? "\(elapsed)s"
+            : "\(elapsed / 60)m \(elapsed % 60)s"
+
+        if let tool = entry.currentTool {
+            // Strip trailing "…" suffix the ToolActivity description may add, then re-add own suffix
+            let clean = tool.hasSuffix("…") ? String(tool.dropLast()) : tool
+            return "⚙ \(clean) · \(elapsedStr)"
+        }
+        let content = entry.latestContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        if content.isEmpty {
+            return "Working · \(elapsedStr)"
+        }
+        return String(content.suffix(80))
     }
 
     private var branchRow: some View {
@@ -60,15 +80,21 @@ struct TreeNodeView: View {
                 statusIndicator
             }
 
-            if let preview = streamingPreview {
-                Text(preview)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .italic()
-                    .padding(.leading, 16)
-                    .accessibilityLabel("Streaming: \(preview)")
+            // Streaming preview — updates every 5s via TimelineView so elapsed time
+            // stays live even during long tool executions (cargo build, etc.) where
+            // no text tokens are flowing and the sidebar would otherwise look frozen.
+            if let entry = activeStreamEntry {
+                TimelineView(.periodic(from: .now, by: 5.0)) { context in
+                    let label = streamingLabel(entry: entry, at: context.date)
+                    Text(label)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                        .italic()
+                        .padding(.leading, 16)
+                        .accessibilityLabel("Working: \(label)")
+                }
             }
         }
         .padding(.vertical, 2)

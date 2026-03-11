@@ -158,6 +158,18 @@ final class TicketStore: ObservableObject {
         tickets[project]?.filter(\.isBlocked).count ?? 0
     }
 
+    /// Fetch completed (done + cancelled) tickets for a project directly from DB
+    func completedTickets(for project: String) -> [Ticket] {
+        guard let dbPool = DatabaseManager.shared.dbPool else { return [] }
+        return (try? dbPool.read { db in
+            try Ticket.fetchAll(db, sql: """
+                SELECT * FROM canvas_tickets
+                WHERE project = ? AND status IN ('done', 'cancelled')
+                ORDER BY updated_at DESC
+                """, arguments: [project])
+        }) ?? []
+    }
+
     // MARK: - Scanning
 
     /// Scan all projects for TASK-*.md files and upsert into canvas_tickets
