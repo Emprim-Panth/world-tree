@@ -1550,11 +1550,17 @@ class DocumentEditorViewModel: ObservableObject {
             streamingContent = nil  // Clear AFTER section is in place — no blank gap
             currentTool = nil
 
-            // Notify if app is backgrounded so the user knows the response arrived
-            if !fullResponse.hasPrefix("⚠️"), !NSApp.isActive {
+            // Notify when response is ready and the user isn't watching this branch:
+            // - app is in the background, OR
+            // - user has navigated to a different branch / the Command Center
+            let userIsWatching = NSApp.isActive && AppState.shared.selectedBranchId == branchId
+            if !fullResponse.hasPrefix("⚠️"), !userIsWatching {
                 let preview = String(fullResponse.prefix(120))
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                Task { await NotificationManager.shared.notify(title: LocalAgentIdentity.name, body: preview) }
+                Task { await NotificationManager.shared.notify(
+                    title: "\(LocalAgentIdentity.name) is ready",
+                    body: preview
+                ) }
             }
 
             // Auto-speak the response if enabled

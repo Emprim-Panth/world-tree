@@ -28,28 +28,48 @@ struct TreeNodeView: View {
         }
     }
 
+    private var streamingPreview: String? {
+        guard ProcessingRegistry.shared.isProcessing(branch.id) else { return nil }
+        let content = GlobalStreamRegistry.shared.currentContent(for: branch.id) ?? ""
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Thinking…" : String(trimmed.suffix(80))
+    }
+
     private var branchRow: some View {
-        HStack(spacing: 6) {
-            branchIcon
-                .font(.caption)
-                .foregroundStyle(iconColor)
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                branchIcon
+                    .font(.caption)
+                    .foregroundStyle(iconColor)
 
-            Text(branch.displayTitle)
-                .lineLimit(1)
-                .truncationMode(.tail)
+                Text(branch.displayTitle)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
-            Spacer()
+                Spacer()
 
-            // Green dot when this branch has a live terminal process
-            if BranchTerminalManager.shared.isActive(branchId: branch.id) {
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 6, height: 6)
-                    .help("Terminal active")
-                    .accessibilityLabel("Terminal active")
+                // Green dot when this branch has a live terminal process
+                if BranchTerminalManager.shared.isActive(branchId: branch.id) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 6, height: 6)
+                        .help("Terminal active")
+                        .accessibilityLabel("Terminal active")
+                }
+
+                statusIndicator
             }
 
-            statusIndicator
+            if let preview = streamingPreview {
+                Text(preview)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .italic()
+                    .padding(.leading, 16)
+                    .accessibilityLabel("Streaming: \(preview)")
+            }
         }
         .padding(.vertical, 2)
         .padding(.horizontal, 4)
