@@ -491,6 +491,8 @@ class DocumentEditorViewModel: ObservableObject {
         pendingTokenBuffer = ""
         streamingContent = (streamingContent ?? "") + chunk
         if !isScrolledToBottom { hasNewStreamContent = true }
+        // Mirror to global registry so Command Center and navigate-back can see in-progress content
+        GlobalStreamRegistry.shared.appendContent(branchId: branchId, content: streamingContent ?? "")
     }
 
     private let sessionId: String
@@ -666,9 +668,12 @@ class DocumentEditorViewModel: ObservableObject {
         // active stream in another ViewModel (user switched chats mid-response).
         // ProcessingRegistry persists across ViewModel lifecycle — check it here so the
         // typing indicator shows immediately instead of looking stagnant.
+        // GlobalStreamRegistry provides the accumulated content so the user sees what
+        // has been written so far, not a blank bubble.
         if ProcessingRegistry.shared.isProcessing(branchId) && !isProcessing {
             isProcessing = true
-            streamingContent = ""
+            streamingContent = GlobalStreamRegistry.shared.currentContent(for: branchId) ?? ""
+            startStreamBatching()  // re-arm flush timer so future tokens from the running Task display
         }
 
         // Listen for external message sources (e.g. Telegram → 📱 indicator)
@@ -736,6 +741,7 @@ class DocumentEditorViewModel: ObservableObject {
                     self.flushPendingTokens()
                     self.isProcessing = false
                     self.streamingContent = nil
+                    GlobalStreamRegistry.shared.endStream(branchId: self.branchId)
                 }
             }
         }
@@ -936,6 +942,7 @@ class DocumentEditorViewModel: ObservableObject {
         // Stop processing indicator when an assistant message arrives
         if newMessages.contains(where: { $0.role == .assistant }) {
             isProcessing = false
+            GlobalStreamRegistry.shared.endStream(branchId: branchId)
         }
 
         // On first load, check if there might be older messages to paginate
@@ -1135,6 +1142,7 @@ class DocumentEditorViewModel: ObservableObject {
             streamingContent = nil
             currentTool = nil
             isProcessing = false
+            GlobalStreamRegistry.shared.endStream(branchId: branchId)
             do {
                 let msg = try MessageStore.shared.sendMessage(
                     sessionId: sessionId, role: .assistant, content: partial)
@@ -1248,9 +1256,14 @@ class DocumentEditorViewModel: ObservableObject {
             streamTask = nil
             streamingContent = nil
             currentTool = nil
+            GlobalStreamRegistry.shared.endStream(branchId: branchId)
         }
 
         isProcessing = true
+        GlobalStreamRegistry.shared.beginStream(
+            branchId: branchId, sessionId: sessionId,
+            treeId: treeId, projectName: cachedProject
+        )
         let content = messageText ?? String(section.content.characters)
 
         streamTask = Task {
@@ -1343,6 +1356,7 @@ class DocumentEditorViewModel: ObservableObject {
                 case .toolStart(let name, let input):
                     let activity = ToolActivity(name: name, input: input, status: .running)
                     currentTool = activity.displayDescription
+                    GlobalStreamRegistry.shared.updateTool(branchId: branchId, tool: currentTool)
                     let ts = Self.terminalTimestamp()
                     // ── Tool header with separator, timestamp, and rich context ──
                     var header = "\r\n\u{1B}[2m\u{1B}[90m─── \(ts) "
@@ -1382,6 +1396,7 @@ class DocumentEditorViewModel: ObservableObject {
 
                 case .toolEnd(let name, let result, let isError):
                     currentTool = nil
+                    GlobalStreamRegistry.shared.updateTool(branchId: branchId, tool: nil)
                     if !result.isEmpty {
                         let lines = result.components(separatedBy: .newlines)
                         // Indent every line of output for visual nesting under the tool header
@@ -1426,6 +1441,7 @@ class DocumentEditorViewModel: ObservableObject {
                 }
             }
             stopStreamBatching()       // flush remaining tokens, stop timer
+            GlobalStreamRegistry.shared.endStream(branchId: branchId)
             streamingContent = nil     // Stream complete — persisted section takes over
             hasNewStreamContent = false
 

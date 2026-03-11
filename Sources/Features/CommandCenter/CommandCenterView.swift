@@ -11,6 +11,7 @@ struct CommandCenterView: View {
         ScrollView {
             VStack(spacing: 20) {
                 header
+                LiveStreamsSection()
                 projectGrid
                 StarfleetActivitySection()
                 if UserDefaults.standard.bool(forKey: "pencil.feature.enabled") {
