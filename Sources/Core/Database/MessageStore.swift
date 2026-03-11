@@ -255,7 +255,7 @@ final class MessageStore {
                     let content: String = row["content"] ?? ""
                     let wd: String = row["working_directory"] ?? ""
                     results.append(GlobalSearchResult(
-                        id: "msg-\(row["id"] as String)",
+                        id: "msg-\(row["id"] as Int64)",
                         source: .message,
                         title: row["role"] as String? ?? "message",
                         snippet: String(content.prefix(200)),
