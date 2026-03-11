@@ -170,6 +170,23 @@ final class TicketStore: ObservableObject {
         }) ?? []
     }
 
+    /// Fetch all completed tickets across all projects, grouped by project
+    func allCompletedTickets() -> [String: [Ticket]] {
+        guard let dbPool = DatabaseManager.shared.dbPool else { return [:] }
+        let all = (try? dbPool.read { db in
+            try Ticket.fetchAll(db, sql: """
+                SELECT * FROM canvas_tickets
+                WHERE status IN ('done', 'cancelled')
+                ORDER BY updated_at DESC
+                """)
+        }) ?? []
+        var grouped: [String: [Ticket]] = [:]
+        for ticket in all {
+            grouped[ticket.project, default: []].append(ticket)
+        }
+        return grouped
+    }
+
     // MARK: - Scanning
 
     /// Scan all projects for TASK-*.md files and upsert into canvas_tickets

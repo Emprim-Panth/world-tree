@@ -5,6 +5,8 @@ import SwiftUI
 struct AllTicketsView: View {
     @ObservedObject private var store = TicketStore.shared
     @State private var selectedTicket: Ticket?
+    @State private var showCompleted = false
+    @State private var completedByProject: [(String, [Ticket])] = []
 
     private var projectsWithTickets: [(String, [Ticket])] {
         store.tickets
@@ -20,6 +22,13 @@ struct AllTicketsView: View {
 
     private var totalCount: Int { store.tickets.values.flatMap { $0 }.count }
     private var blockedCount: Int { store.tickets.values.flatMap { $0 }.filter(\.isBlocked).count }
+    private var completedCount: Int { completedByProject.flatMap { $0.1 }.count }
+
+    private func loadCompleted() {
+        completedByProject = store.allCompletedTickets()
+            .map { ($0.key, $0.value) }
+            .sorted { $0.0 < $1.0 }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,6 +65,7 @@ struct AllTicketsView: View {
                 Button {
                     store.scanAll()
                     store.refresh()
+                    loadCompleted()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 12))
@@ -67,17 +77,49 @@ struct AllTicketsView: View {
 
             Divider()
 
-            if projectsWithTickets.isEmpty {
+            if projectsWithTickets.isEmpty && completedByProject.isEmpty {
                 ContentUnavailableView(
-                    "No Open Tickets",
+                    "No Tickets",
                     systemImage: "checkmark.circle",
-                    description: Text("All clear — no open tickets across any project.")
+                    description: Text("No tickets across any project.")
                 )
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
                         ForEach(projectsWithTickets, id: \.0) { project, tickets in
                             projectSection(project: project, tickets: tickets)
+                        }
+
+                        // Completed section
+                        if !completedByProject.isEmpty {
+                            VStack(spacing: 0) {
+                                Button {
+                                    showCompleted.toggle()
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: showCompleted ? "chevron.down" : "chevron.right")
+                                            .font(.system(size: 10, weight: .semibold))
+                                        Text("Completed")
+                                            .font(.system(size: 12, weight: .semibold))
+                                        Text("(\(completedCount))")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                    }
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 6)
+                                }
+                                .buttonStyle(.plain)
+
+                                if showCompleted {
+                                    LazyVStack(alignment: .leading, spacing: 8) {
+                                        ForEach(completedByProject, id: \.0) { project, tickets in
+                                            completedProjectSection(project: project, tickets: tickets)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     .padding(20)
@@ -87,10 +129,37 @@ struct AllTicketsView: View {
         .onAppear {
             store.scanAll()
             store.refresh()
+            loadCompleted()
         }
         .sheet(item: $selectedTicket) { ticket in
             TicketDetailView(ticket: ticket)
         }
+    }
+
+    private func completedProjectSection(project: String, tickets: [Ticket]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(project)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(tickets.count)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            ForEach(tickets) { ticket in
+                TicketRowView(ticket: ticket) {
+                    selectedTicket = ticket
+                } onStatusChange: { newStatus in
+                    store.updateStatus(ticket: ticket, newStatus: newStatus)
+                    loadCompleted()
+                }
+                .opacity(0.6)
+            }
+        }
+        .padding(10)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func projectSection(project: String, tickets: [Ticket]) -> some View {
