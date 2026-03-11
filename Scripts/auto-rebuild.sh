@@ -8,7 +8,30 @@ PROJECT_DIR="/Users/evanprimeau/Development/WorldTree"
 LOG="$HOME/.cortana/logs/wt-rebuild.log"
 LOCKFILE="/tmp/wt-rebuild.lock"
 
+DEBOUNCE_FILE="/tmp/wt-rebuild-last"
+DEBOUNCE_SECS=300   # minimum 5 minutes between rebuilds
+
 mkdir -p "$(dirname "$LOG")"
+
+# Only rebuild if Swift source, project config, or scripts actually changed.
+# Skips rebuilds from doc-only commits, memory updates, etc.
+CHANGED=$(git diff-tree --no-commit-id -r --name-only HEAD 2>/dev/null)
+if ! echo "$CHANGED" | grep -qE '\.(swift|yml|yaml|entitlements)$|^Scripts/'; then
+    echo "=== $(date) Skipping — no source files changed ===" >> "$LOG"
+    exit 0
+fi
+
+# Debounce — skip if a rebuild ran within the last 5 minutes.
+if [ -f "$DEBOUNCE_FILE" ]; then
+    LAST=$(cat "$DEBOUNCE_FILE" 2>/dev/null)
+    NOW=$(date +%s)
+    ELAPSED=$(( NOW - LAST ))
+    if [ "$ELAPSED" -lt "$DEBOUNCE_SECS" ]; then
+        echo "=== $(date) Skipping — last rebuild was ${ELAPSED}s ago (debounce ${DEBOUNCE_SECS}s) ===" >> "$LOG"
+        exit 0
+    fi
+fi
+date +%s > "$DEBOUNCE_FILE"
 
 # Serialize concurrent builds — multiple rapid commits would otherwise spawn N builds
 # that each killall+relaunch World Tree in rapid succession (the crash-loop bug).
