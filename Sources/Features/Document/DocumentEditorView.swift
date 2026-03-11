@@ -1157,7 +1157,7 @@ class DocumentEditorViewModel: ObservableObject {
             streamingContent = nil
             currentTool = nil
             isProcessing = false
-            GlobalStreamRegistry.shared.endStream(branchId: branchId)
+            GlobalStreamRegistry.shared.endStream(branchId: branchId, notify: false)
             do {
                 let msg = try MessageStore.shared.sendMessage(
                     sessionId: sessionId, role: .assistant, content: partial)
@@ -1187,7 +1187,7 @@ class DocumentEditorViewModel: ObservableObject {
             streamTask?.cancel()
             streamTask = nil
             stopStreamBatching()
-            GlobalStreamRegistry.shared.endStream(branchId: branchId)
+            GlobalStreamRegistry.shared.endStream(branchId: branchId, notify: false)
             streamingContent = nil
             currentTool = nil
             isProcessing = false
@@ -1272,7 +1272,7 @@ class DocumentEditorViewModel: ObservableObject {
             streamTask = nil
             streamingContent = nil
             currentTool = nil
-            GlobalStreamRegistry.shared.endStream(branchId: branchId)
+            GlobalStreamRegistry.shared.endStream(branchId: branchId, notify: false)
         }
 
         isProcessing = true
@@ -1457,7 +1457,7 @@ class DocumentEditorViewModel: ObservableObject {
                 }
             }
             stopStreamBatching()       // flush remaining tokens, stop timer
-            GlobalStreamRegistry.shared.endStream(branchId: branchId)
+            GlobalStreamRegistry.shared.endStream(branchId: branchId, notify: !Task.isCancelled)
             streamingContent = nil     // Stream complete — persisted section takes over
             hasNewStreamContent = false
 

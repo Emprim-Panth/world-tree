@@ -73,14 +73,29 @@ final class GlobalStreamRegistry {
     }
 
     /// Called when the stream completes or is cancelled. Removes the entry.
+    /// Pass `notify: false` when cancelling — only send a notification for natural completions.
     /// Idempotent — safe to call multiple times for the same branch.
-    func endStream(branchId: String) {
-        streams.removeValue(forKey: branchId)
+    func endStream(branchId: String, notify: Bool = true) {
+        guard let entry = streams.removeValue(forKey: branchId) else { return }
+        guard notify else { return }
+        let projectName = entry.projectName
+        Task {
+            await NotificationManager.shared.notify(
+                title: "Cortana finished responding",
+                body: projectName.map { "Ready for your input in \($0)." } ?? "Ready for your input."
+            )
+        }
     }
 
     /// Returns the current accumulated content for a branch — used by a new ViewModel
     /// to restore the in-progress stream display immediately on navigate-back.
     func currentContent(for branchId: String) -> String? {
         streams[branchId]?.latestContent
+    }
+
+    /// Returns the full stream entry for a branch, or nil if not streaming.
+    /// Used by sidebar to show live thinking previews.
+    func streamEntry(for branchId: String) -> StreamEntry? {
+        streams[branchId]
     }
 }
