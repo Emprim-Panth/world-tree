@@ -197,6 +197,12 @@ final class CLIStreamParser {
                 hasEmittedText = true
                 return [.text(text)]
             }
+        case "thinking_delta":
+            // Extended thinking tokens — surfaced as .thinking events so the
+            // terminal can mirror them without cluttering the chat bubble.
+            if let thinking = delta["thinking"] as? String, !thinking.isEmpty {
+                return [.thinking(thinking)]
+            }
         case "input_json_delta":
             // Accumulate partial input JSON — emitted as toolStart at content_block_stop
             if let partial = delta["partial_json"] as? String {

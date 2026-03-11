@@ -227,6 +227,9 @@ final class TokenBroadcaster {
                 tokenCount: tokenCount
             )
 
+        case .thinking:
+            return nil  // Thinking tokens are not broadcast over WebSocket
+
         case .error(let msg):
             return .error(code: "llm_error", message: msg)
         }

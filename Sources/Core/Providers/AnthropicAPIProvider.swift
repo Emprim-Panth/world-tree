@@ -175,10 +175,8 @@ final class AnthropicAPIProvider: LLMProvider {
                                     continuation.yield(.text(text))
                                 case .inputJsonDelta(let json):
                                     currentToolInputJSON += json
-                                case .thinkingDelta:
-                                    // Extended thinking content — model reasoning internally.
-                                    // Currently consumed silently; could surface as a "thinking" UI indicator.
-                                    break
+                                case .thinkingDelta(let thinking):
+                                    continuation.yield(.thinking(thinking))
                                 case .signatureDelta:
                                     // Response signature for verification — consumed silently.
                                     break

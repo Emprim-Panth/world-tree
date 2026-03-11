@@ -685,6 +685,9 @@ final class WorldTreeServer: ObservableObject {
 
             case .toolEnd(let name, _, let isError):
                 sendSSEChunk(connection, #"{"tool_end":"\#(esc(name))","error":\#(isError)}"#)
+
+            case .thinking:
+                break  // Thinking tokens are not forwarded over SSE
             }
         }
 

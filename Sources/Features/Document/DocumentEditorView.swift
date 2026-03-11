@@ -1369,6 +1369,11 @@ class DocumentEditorViewModel: ObservableObject {
                     // Fire-and-forget — actor serialises writes, never blocks the stream
                     Task { await StreamCacheManager.shared.appendToStream(sessionId: self.sessionId, chunk: token) }
 
+                case .thinking(let chunk):
+                    // Extended thinking tokens — surfaced in the terminal only (dimmed italic)
+                    // so reasoning is visible without cluttering the chat bubble.
+                    mirrorToTerminal("\u{1B}[2;3m\(chunk)\u{1B}[0m")
+
                 case .toolStart(let name, let input):
                     let activity = ToolActivity(name: name, input: input, status: .running)
                     currentTool = activity.displayDescription
@@ -1720,6 +1725,10 @@ struct ConversationSearchBar: View {
 struct ThinkingIndicatorView: View {
     var toolDescription: String? = nil
 
+    /// Captured at view creation so elapsed time is always relative to when
+    /// this particular thinking phase started — not relative to app launch.
+    @State private var startedAt = Date()
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Circle()
@@ -1732,8 +1741,11 @@ struct ThinkingIndicatorView: View {
                 }
 
             VStack(alignment: .leading, spacing: 2) {
+                // Unified TimelineView: drives both the dot animation AND the elapsed counter.
+                // Updates every 0.4s — fast enough for smooth dots, slow enough to be cheap.
                 TimelineView(.periodic(from: Date(), by: 0.4)) { context in
                     let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.4) % 3
+                    let elapsed = Int(context.date.timeIntervalSince(startedAt))
                     HStack(spacing: 5) {
                         ForEach(0..<3, id: \.self) { i in
                             Circle()
@@ -1742,6 +1754,13 @@ struct ThinkingIndicatorView: View {
                                 .opacity(phase == i ? 1.0 : 0.3)
                                 .scaleEffect(phase == i ? 1.2 : 0.8)
                                 .animation(.easeInOut(duration: 0.25), value: phase)
+                        }
+                        // Show elapsed time after 3s so brief responses don't flicker a counter
+                        if elapsed >= 3 {
+                            Text(elapsed < 60 ? "\(elapsed)s" : "\(elapsed / 60)m \(elapsed % 60)s")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color.teal.opacity(0.4))
+                                .transition(.opacity)
                         }
                     }
                     .padding(.top, 12)
@@ -1813,8 +1832,10 @@ struct StreamingSectionView: View {
         let fenceCountChanged = newContent.components(separatedBy: "```").count
             != cachedRaw.components(separatedBy: "```").count
 
-        // Re-parse on: first content, fence boundary change, or 80+ chars of new content
-        guard cachedRaw.isEmpty || fenceCountChanged || delta >= 80 else { return }
+        // Re-parse on: first content, fence boundary change, or 10+ chars of new content.
+        // 10 chars at 10fps flush = ~100ms between visible updates — fast enough to feel
+        // token-by-token without saturating AttributedString on long responses.
+        guard cachedRaw.isEmpty || fenceCountChanged || delta >= 10 else { return }
 
         cachedRaw = newContent
         cachedRendered = (try? AttributedString(

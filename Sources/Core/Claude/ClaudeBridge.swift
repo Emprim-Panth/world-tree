@@ -4,6 +4,9 @@ import SwiftUI
 /// Events yielded during a conversation turn — text streaming, tool activity, completion.
 enum BridgeEvent {
     case text(String)
+    /// Internal reasoning tokens from extended thinking. Not shown in the chat bubble —
+    /// mirrored to the terminal in a dimmed style so they're visible but not intrusive.
+    case thinking(String)
     case toolStart(name: String, input: String)
     case toolEnd(name: String, result: String, isError: Bool)
     case done(usage: SessionTokenUsage)
