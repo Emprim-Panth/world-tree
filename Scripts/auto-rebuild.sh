@@ -26,7 +26,7 @@ fi
 #   killall "World Tree", ditto to /Applications/, codesign
 echo "Building..."
 /usr/bin/xcodebuild \
-    -project "World Tree.xcodeproj" \
+    -project "WorldTree.xcodeproj" \
     -scheme "WorldTree" \
     -configuration Debug \
     -destination "platform=macOS,arch=arm64" \
