@@ -32,8 +32,9 @@ final class WakeLock {
 
             // Prevent App Nap — keeps timers, network, and streaming running at full speed
             // even when World Tree is behind other windows.
+            // .latencyCritical prevents ALL power throttling (main RunLoop, GCD queues, timers).
             activityToken = ProcessInfo.processInfo.beginActivity(
-                options: [.userInitiated, .idleSystemSleepDisabled],
+                options: [.userInitiated, .idleSystemSleepDisabled, .latencyCritical],
                 reason: "AI streaming response in progress"
             )
 

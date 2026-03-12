@@ -141,14 +141,10 @@ struct DocumentEditorView: View {
                 .animation(.easeInOut(duration: 0.2), value: showSearch)
                 .background(Color(nsColor: .textBackgroundColor))
                 .onDisappear {
-                    // Cancel any in-flight stream — prevents orphaned tasks after window close
-                    viewModel.cancelStream()
-                    // Auto-submit any pending draft — navigating away commits the message.
-                    // Matches iMessage behavior: leaving a chat sends what you typed.
-                    if !viewModel.currentInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        && !viewModel.isProcessing {
-                        viewModel.submitInput()
-                    }
+                    // Do NOT cancel in-flight streams on disappear — the user may have just
+                    // switched to another window or branch. Cancelling here cuts off responses
+                    // mid-generation. The stream keeps running in the background; the user gets
+                    // a notification when done. Only deinit (true deallocation) performs cleanup.
                     viewModel.writeSnapshotCheckpoint()
                 }
                 .sheet(item: $viewModel.pendingForkMessage) { message in
@@ -427,9 +423,13 @@ class DocumentEditorViewModel: ObservableObject {
         didSet {
             streaming.isProcessing = isProcessing
             if isProcessing {
-                // Prevent sleep while Cortana is working — dropped connection mid-stream is a bad time
+                // Prevent App Nap + idle sleep while Cortana is working.
+                // .latencyCritical prevents ALL power throttling (including main RunLoop
+                // slowdown when behind other windows) — without it, the daemon-path stream
+                // pauses when World Tree is occluded and only resumes on user interaction.
                 sleepAssertion = ProcessInfo.processInfo.beginActivity(
-                    options: .userInitiated, reason: "Cortana is working")
+                    options: [.userInitiated, .idleSystemSleepDisabled, .latencyCritical],
+                    reason: "Cortana is working")
                 ProcessingRegistry.shared.register(branchId)
             } else {
                 if let a = sleepAssertion {
@@ -610,6 +610,14 @@ class DocumentEditorViewModel: ObservableObject {
     weak var parentBranchLayout: BranchLayoutViewModel?
 
     deinit {
+        // Persist any partial streaming content before deallocation — view was navigated away
+        // from while a response was in progress. The stream task is about to be cancelled;
+        // save what arrived so the user can see it when they return.
+        if let partial = streamingContent, !partial.isEmpty {
+            let sid = sessionId
+            // MessageStore uses synchronous GRDB writes — safe from deinit.
+            _ = try? MessageStore.shared.sendMessage(sessionId: sid, role: .assistant, content: partial)
+        }
         streamTask?.cancel()
         streamTask = nil
         streamFlushTimer?.invalidate()
@@ -1361,6 +1369,11 @@ class DocumentEditorViewModel: ObservableObject {
                     stableSectionIds[msg.id] = uuid
                 }
                 seenMessageIds.insert(msg.id)
+
+                // Auto-name the branch from the first user message
+                if isNew {
+                    BranchAutoNamer.shared.autoNameIfNeeded(branchId: branchId)
+                }
             } catch {
                 wtLog("[DocumentEditor] Failed to persist user message: \(error)")
                 errorMessage = "Failed to save message: \(error.localizedDescription)"
@@ -1582,6 +1595,28 @@ class DocumentEditorViewModel: ObservableObject {
             // the next onDisappear fires — no API call, just persists recent turns.
             writeSnapshotCheckpoint()
 
+            // Auto-detect decisions in the assistant response (TASK-122).
+            // Runs detection on the full response text, saves any findings as
+            // pending review items. Non-blocking — detection is fast (~1ms).
+            if !fullResponse.isEmpty {
+                let detected = DecisionDetector.shared.detect(in: fullResponse)
+                if !detected.isEmpty {
+                    // Filter out decisions already seen in this session
+                    let novel = detected.filter {
+                        !AutoDecisionStore.shared.isDuplicate(summary: $0.summary, sessionId: sessionId)
+                    }
+                    if !novel.isEmpty {
+                        AutoDecisionStore.shared.savePending(
+                            decisions: novel,
+                            sessionId: sessionId,
+                            branchId: branchId,
+                            project: cachedProject
+                        )
+                        wtLog("[DocumentEditor] Auto-detected \(novel.count) decision(s) in response")
+                    }
+                }
+            }
+
             // Check if context rotation is needed after this exchange.
             // rotateSession() is a protocol method with a no-op default — works for any provider.
             if let activeProvider = ProviderManager.shared.activeProvider {
@@ -1661,6 +1696,9 @@ class DocumentEditorViewModel: ObservableObject {
 
             isProcessing = false
             streamTask = nil
+
+            // Check for topic drift and suggest rename if auto-generated title
+            BranchAutoNamer.shared.suggestRename(forBranchId: branchId)
         }
     }
 
