@@ -1,7 +1,7 @@
 # TASK-120: iOS simulator tools (build/run/inspect)
 
 **Priority**: medium
-**Status**: ready
+**Status**: done
 **Category**: feature
 **Source**: QA Audit Wave 4 — Feature Gap Analysis
 

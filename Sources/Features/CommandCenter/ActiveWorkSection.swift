@@ -6,6 +6,8 @@ struct ActiveWorkSection: View {
     let dispatches: [WorldTreeDispatch]
     let jobs: [WorldTreeJob]
     let onCancel: (String) -> Void
+    var onInspectDispatch: ((String) -> Void)?
+    var onInspectJob: ((String) -> Void)?
 
     var body: some View {
         if dispatches.isEmpty && jobs.isEmpty {
@@ -16,11 +18,23 @@ struct ActiveWorkSection: View {
 
                 VStack(spacing: 4) {
                     ForEach(dispatches) { dispatch in
-                        dispatchRow(dispatch)
+                        Button {
+                            onInspectDispatch?(dispatch.id)
+                        } label: {
+                            dispatchRow(dispatch)
+                        }
+                        .buttonStyle(.plain)
+                        .help("View live dispatch output")
                     }
 
                     ForEach(jobs) { job in
-                        jobRow(job)
+                        Button {
+                            onInspectJob?(job.id)
+                        } label: {
+                            jobRow(job)
+                        }
+                        .buttonStyle(.plain)
+                        .help("View live job output")
                     }
                 }
             }

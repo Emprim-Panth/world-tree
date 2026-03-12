@@ -132,6 +132,26 @@ struct BranchHeader: View {
                     Button("Rename", action: { isEditing = true })
                     Button("Complete", action: onComplete)
                     Button("Archive", action: onArchive)
+
+                    Divider()
+
+                    Menu("Export") {
+                        Menu("Copy to Clipboard") {
+                            ForEach(BranchExportFormat.allCases, id: \.self) { format in
+                                Button(format.displayName) {
+                                    BranchExportService.shared.copyToClipboard(branchId: branch.id, format: format)
+                                }
+                            }
+                        }
+                        Menu("Save to File") {
+                            ForEach(BranchExportFormat.allCases, id: \.self) { format in
+                                Button(format.displayName) {
+                                    BranchExportService.shared.saveToFile(branchId: branch.id, format: format)
+                                }
+                            }
+                        }
+                    }
+
                     Divider()
                     Button("Delete", role: .destructive, action: onDelete)
                 } label: {

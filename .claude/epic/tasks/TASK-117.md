@@ -1,7 +1,7 @@
 # TASK-117: Stress test plan
 
 **Priority**: medium
-**Status**: ready
+**Status**: done
 **Category**: testing
 **Source**: QA Audit Wave 3
 

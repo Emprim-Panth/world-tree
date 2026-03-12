@@ -114,6 +114,24 @@ struct TreeNodeView: View {
                 .animation(.easeInOut(duration: 0.12), value: isHovering)
         }
         .cornerRadius(4)
+        .contextMenu {
+            Menu("Export") {
+                Menu("Copy to Clipboard") {
+                    ForEach(BranchExportFormat.allCases, id: \.self) { format in
+                        Button(format.displayName) {
+                            BranchExportService.shared.copyToClipboard(branchId: branch.id, format: format)
+                        }
+                    }
+                }
+                Menu("Save to File") {
+                    ForEach(BranchExportFormat.allCases, id: \.self) { format in
+                        Button(format.displayName) {
+                            BranchExportService.shared.saveToFile(branchId: branch.id, format: format)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var branchIcon: some View {

@@ -17,6 +17,7 @@ final class DaemonService: ObservableObject {
     private let socket = DaemonSocket()
     private var healthTimer: Timer?
     /// Tasks spawned by the health timer — cancelled on stopMonitoring().
+    /// Only accessed from @MainActor (append + cancel + removeAll all happen on MainActor).
     private var pendingTasks: [Task<Void, Never>] = []
 
     /// Counter for health ticks — tmux discovery only runs every 3rd tick (30s).
@@ -52,19 +53,23 @@ final class DaemonService: ObservableObject {
             refreshTmuxSessions()
         }
         healthTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            let task = Task { @MainActor in
-                guard let self else { return }
-                self.checkHealth()
-                await self.refreshSessions()
-                self.healthTickCount += 1
-                if self.healthTickCount % 3 == 0 {
-                    self.refreshTmuxSessions()
-                }
-            }
             Task { @MainActor [weak self] in
-                self?.pendingTasks.append(task)
+                guard let self else { return }
+                // Create and track the task in the same @MainActor block to
+                // serialize access to pendingTasks — avoids the race where a
+                // separate @MainActor hop could interleave with another timer fire.
+                let task = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.checkHealth()
+                    await self.refreshSessions()
+                    self.healthTickCount += 1
+                    if self.healthTickCount % 3 == 0 {
+                        self.refreshTmuxSessions()
+                    }
+                }
+                self.pendingTasks.append(task)
                 // Prune completed tasks to prevent unbounded growth
-                self?.pendingTasks.removeAll { $0.isCancelled }
+                self.pendingTasks.removeAll { $0.isCancelled }
             }
         }
     }

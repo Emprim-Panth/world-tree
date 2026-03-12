@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Enhanced project card powered by Compass state.
 /// Shows goal, phase, git status, tickets, blockers, and recent decisions.
+/// Supports inline editing of goal, phase, blockers, and decisions.
 /// Falls back gracefully when Compass data isn't available.
 struct CompassProjectCard: View {
     let activity: ProjectActivity
@@ -11,6 +12,13 @@ struct CompassProjectCard: View {
     var onSelect: (() -> Void)?
 
     @State private var isExpanded = false
+    @State private var isEditing = false
+    @State private var editGoal = ""
+    @State private var editPhase = ""
+    @State private var newBlocker = ""
+    @State private var newDecision = ""
+
+    @ObservedObject private var store = CompassStore.shared
 
     private var project: CachedProject { activity.project }
 
@@ -40,6 +48,44 @@ struct CompassProjectCard: View {
             if let onSelect {
                 Button("Open Project") { onSelect() }
             }
+            if compassState != nil {
+                Divider()
+                Button("Edit Project") {
+                    beginEditing()
+                }
+            }
+        }
+    }
+
+    // MARK: - Edit Mode
+
+    private func beginEditing() {
+        editGoal = compassState?.currentGoal ?? ""
+        editPhase = compassState?.currentPhase ?? "unknown"
+        newBlocker = ""
+        newDecision = ""
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isExpanded = true
+            isEditing = true
+        }
+    }
+
+    private func saveEdits() {
+        let projectName = project.name
+
+        // Save goal if changed
+        let trimmedGoal = editGoal.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedGoal != (compassState?.currentGoal ?? "") {
+            store.updateGoal(trimmedGoal, for: projectName)
+        }
+
+        // Save phase if changed
+        if editPhase != (compassState?.currentPhase ?? "unknown") {
+            store.updatePhase(editPhase, for: projectName)
+        }
+
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isEditing = false
         }
     }
 
@@ -63,26 +109,42 @@ struct CompassProjectCard: View {
 
             Spacer()
 
-            // Phase badge
-            if let phase = compassState?.currentPhase, phase != "unknown" {
-                Text(phase)
+            if isEditing {
+                Button("Save") { saveEdits() }
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(phaseColor(phase))
-                    .clipShape(Capsule())
-            }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
 
-            // Active task count
-            if activity.totalActiveTasks > 0 {
-                Text("\(activity.totalActiveTasks)")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Color.green)
-                    .clipShape(Capsule())
+                Button("Cancel") {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isEditing = false
+                    }
+                }
+                .font(.system(size: 9, weight: .medium))
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+            } else {
+                // Phase badge
+                if let phase = compassState?.currentPhase, phase != "unknown" {
+                    Text(phase)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(phaseColor(phase))
+                        .clipShape(Capsule())
+                }
+
+                // Active task count
+                if activity.totalActiveTasks > 0 {
+                    Text("\(activity.totalActiveTasks)")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.green)
+                        .clipShape(Capsule())
+                }
             }
         }
     }
@@ -91,7 +153,36 @@ struct CompassProjectCard: View {
 
     @ViewBuilder
     private var phaseAndGoal: some View {
-        if let goal = compassState?.currentGoal {
+        if isEditing {
+            VStack(alignment: .leading, spacing: 4) {
+                // Phase picker
+                HStack(spacing: 4) {
+                    Text("Phase:")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Picker("", selection: $editPhase) {
+                        ForEach(CompassStore.phases, id: \.self) { phase in
+                            Text(phase).tag(phase)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .controlSize(.mini)
+                }
+
+                // Goal editor
+                HStack(spacing: 4) {
+                    Text("Goal:")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    TextField("Project goal...", text: $editGoal)
+                        .font(.system(size: 10))
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.mini)
+                        .onSubmit { saveEdits() }
+                }
+            }
+        } else if let goal = compassState?.currentGoal {
             Text(goal)
                 .font(.system(size: 10))
                 .foregroundStyle(.primary.opacity(0.8))
@@ -175,14 +266,31 @@ struct CompassProjectCard: View {
     @ViewBuilder
     private var blockerRow: some View {
         if let state = compassState, !state.blockers.isEmpty {
-            HStack(spacing: 4) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 8))
-                    .foregroundStyle(.red)
-                Text(state.blockers.joined(separator: ", "))
-                    .font(.system(size: 9))
-                    .foregroundStyle(.red.opacity(0.8))
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(state.blockers, id: \.self) { blocker in
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.red)
+                        Text(blocker)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.red.opacity(0.8))
+                            .lineLimit(1)
+
+                        if isEditing {
+                            Spacer()
+                            Button {
+                                store.removeBlocker(blocker, for: project.name)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.red.opacity(0.6))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Remove blocker: \(blocker)")
+                        }
+                    }
+                }
             }
         }
     }
@@ -193,6 +301,54 @@ struct CompassProjectCard: View {
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 6) {
             Divider()
+
+            // Blocker input (editing mode)
+            if isEditing {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.red.opacity(0.6))
+                    TextField("Add blocker...", text: $newBlocker)
+                        .font(.system(size: 9))
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.mini)
+                        .onSubmit {
+                            store.addBlocker(newBlocker, for: project.name)
+                            newBlocker = ""
+                        }
+                    Button("Add") {
+                        store.addBlocker(newBlocker, for: project.name)
+                        newBlocker = ""
+                    }
+                    .font(.system(size: 9))
+                    .controlSize(.mini)
+                    .disabled(newBlocker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+
+            // Decision input (editing mode)
+            if isEditing {
+                HStack(spacing: 4) {
+                    Image(systemName: "lightbulb")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.yellow.opacity(0.8))
+                    TextField("Log decision...", text: $newDecision)
+                        .font(.system(size: 9))
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.mini)
+                        .onSubmit {
+                            store.logDecision(newDecision, for: project.name)
+                            newDecision = ""
+                        }
+                    Button("Log") {
+                        store.logDecision(newDecision, for: project.name)
+                        newDecision = ""
+                    }
+                    .font(.system(size: 9))
+                    .controlSize(.mini)
+                    .disabled(newDecision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
 
             // Last session
             if let summary = compassState?.lastSessionSummary {
@@ -215,7 +371,7 @@ struct CompassProjectCard: View {
                         .foregroundStyle(.secondary)
                     ForEach(state.decisions.prefix(3), id: \.self) { decision in
                         HStack(alignment: .top, spacing: 4) {
-                            Text("•")
+                            Text("\u{2022}")
                                 .font(.system(size: 9))
                                 .foregroundStyle(.tertiary)
                             Text(decision)

@@ -92,6 +92,18 @@ actor JobQueue {
         mutableJob.status = .running
         dbWrite { db in try mutableJob.update(db) }
 
+        // Register with output stream store for live tailing
+        let jobId = job.id
+        let jobCommand = job.command
+        await MainActor.run {
+            JobOutputStreamStore.shared.beginStream(
+                id: jobId,
+                kind: .job,
+                command: jobCommand,
+                project: nil
+            )
+        }
+
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/bin/bash")
         proc.arguments = ["-c", job.command]
@@ -109,6 +121,7 @@ actor JobQueue {
         proc.standardError = stderrPipe
 
         // Drain pipes incrementally to prevent 64KB pipe buffer deadlock
+        // Also publish chunks to JobOutputStreamStore for live tailing
         let stdoutAccum = PipeAccumulator()
         let stderrAccum = PipeAccumulator()
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
@@ -117,6 +130,11 @@ actor JobQueue {
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
             } else {
                 stdoutAccum.append(data)
+                if let chunk = String(data: data, encoding: .utf8) {
+                    Task { @MainActor in
+                        JobOutputStreamStore.shared.appendOutput(id: jobId, chunk: chunk)
+                    }
+                }
             }
         }
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
@@ -125,6 +143,11 @@ actor JobQueue {
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
             } else {
                 stderrAccum.append(data)
+                if let chunk = String(data: data, encoding: .utf8) {
+                    Task { @MainActor in
+                        JobOutputStreamStore.shared.appendOutput(id: jobId, chunk: "\n[stderr] \(chunk)")
+                    }
+                }
             }
         }
 
@@ -194,6 +217,13 @@ actor JobQueue {
         }
 
         dbWrite { db in try mutableJob.update(db) }
+
+        // End the live stream
+        let finalStatus = mutableJob.status.rawValue
+        let finalError = mutableJob.error
+        await MainActor.run {
+            JobOutputStreamStore.shared.endStream(id: jobId, status: finalStatus, error: finalError)
+        }
 
         await NotificationManager.shared.notifyJobComplete(mutableJob)
     }

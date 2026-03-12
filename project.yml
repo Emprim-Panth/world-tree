@@ -89,6 +89,21 @@ targets:
             echo "note: Skipping install — building test bundle, not app"
             exit 0
           fi
+          # Staged builds: the rebuild watcher handles kill+copy+sign after build
+          # succeeds. Skipping here prevents killing World Tree mid-build.
+          if [ "${WT_STAGED_BUILD}" = "1" ]; then
+            echo "note: Staged build — watcher will handle install"
+            exit 0
+          fi
+          # Non-standard DerivedData means a build check (e.g., -derivedDataPath /tmp/...).
+          # Never install to /Applications from a build check — it corrupts the CDHash.
+          STANDARD_DD="${HOME}/Library/Developer/Xcode/DerivedData"
+          SYMLINKED_DD=$(readlink "${STANDARD_DD}" 2>/dev/null || echo "${STANDARD_DD}")
+          case "${BUILD_DIR}" in
+            "${STANDARD_DD}"*|"${SYMLINKED_DD}"*) ;; # Normal build — continue
+            *) echo "note: Non-standard DerivedData — skipping install to /Applications"
+               exit 0 ;;
+          esac
 
           # Auto-install to /Applications so TCC grants (Screen Recording, etc.) persist.
           # Without this, Xcode Run launches from DerivedData — a volatile path that

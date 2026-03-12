@@ -38,6 +38,35 @@ update: install
 open:
 	open "$(INSTALL_PATH)"
 
+## Trigger a staged rebuild (batched, zero-downtime)
+rebuild:
+	@mkdir -p ~/.cortana/worldtree
+	@touch ~/.cortana/worldtree/rebuild.dirty
+	@echo "Rebuild queued. Watcher will build after 2-min quiet window."
+	@echo "Use 'make rebuild-now' to skip the quiet window."
+
+## Rebuild immediately (skip quiet window, still staged)
+rebuild-now:
+	@echo "→ Building staged..."
+	@WT_STAGED_BUILD=1 xcodebuild \
+		-project WorldTree.xcodeproj \
+		-scheme $(SCHEME) \
+		-configuration Debug \
+		-destination 'platform=macOS' \
+		-derivedDataPath /tmp/worldtree-staged-build \
+		-quiet \
+		build
+	@echo "→ Swapping..."
+	@killall "$(APP_NAME)" 2>/dev/null; sleep 1; true
+	@ditto "/tmp/worldtree-staged-build/Build/Products/Debug/$(APP_NAME).app" "$(INSTALL_PATH)"
+	@codesign --force --sign "Apple Development" \
+		--entitlements WorldTree.entitlements \
+		--options runtime \
+		--timestamp=none \
+		"$(INSTALL_PATH)"
+	@rm -f ~/.cortana/worldtree/rebuild.dirty
+	@echo "✓ $(APP_NAME) rebuilt and restarting (launchd)"
+
 ## Clean build artifacts
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) /tmp/worldtree-staged-build

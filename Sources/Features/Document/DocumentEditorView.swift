@@ -721,7 +721,7 @@ class DocumentEditorViewModel: ObservableObject {
             startStreamBatching()
             let id = ActiveStreamRegistry.shared.subscribe(branchId: branchId) { [weak self] event in
                 Task { @MainActor [weak self] in
-                    self?.handleStreamEvent(event)
+                    await self?.handleStreamEvent(event)
                 }
             }
             activeSubscriptionId = id
@@ -1397,7 +1397,7 @@ class DocumentEditorViewModel: ObservableObject {
 
         let subscriptionId = ActiveStreamRegistry.shared.subscribe(branchId: branchId) { [weak self] event in
             Task { @MainActor [weak self] in
-                self?.handleStreamEvent(event)
+                await self?.handleStreamEvent(event)
             }
         }
         activeSubscriptionId = subscriptionId
@@ -1521,7 +1521,7 @@ class DocumentEditorViewModel: ObservableObject {
                 do {
                     // Fetch the last assistant message from DB (just persisted by registry)
                     let msgs = try MessageStore.shared.getMessages(sessionId: sessionId)
-                    if let lastAssistant = msgs.last(where: { $0.role == "assistant" }) {
+                    if let lastAssistant = msgs.last(where: { $0.role == .assistant }) {
                         seenMessageIds.insert(lastAssistant.id)
                         pendingAssistantContent = lastAssistant.content
                         let assistantSection = DocumentSection(

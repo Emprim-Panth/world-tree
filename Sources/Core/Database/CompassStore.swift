@@ -114,9 +114,9 @@ struct CompassEvent: Codable, FetchableRecord, Identifiable {
 
 // MARK: - Compass Store
 
-/// Read-only store that connects to ~/.cortana/compass.db.
-/// All state is written by cortana-core's CompassService via MCP tools.
-/// World Tree only reads — never writes to compass.db.
+/// Store that connects to ~/.cortana/compass.db.
+/// Supports both reads and writes — goal, phase, blockers, and decisions
+/// can be edited from the Command Center UI.
 @MainActor
 final class CompassStore: ObservableObject {
     static let shared = CompassStore()
@@ -125,6 +125,9 @@ final class CompassStore: ObservableObject {
     @Published private(set) var lastRefresh: Date?
 
     private var dbPool: DatabasePool?
+
+    /// Valid phases for project lifecycle
+    static let phases = ["exploring", "planning", "implementing", "debugging", "testing", "shipping"]
 
     private init() {
         openDatabase()
@@ -143,14 +146,146 @@ final class CompassStore: ObservableObject {
 
         do {
             var config = Configuration()
-            config.readonly = true
             config.prepareDatabase { db in
-                try db.execute(sql: "PRAGMA busy_timeout = 3000")
+                try db.execute(sql: "PRAGMA busy_timeout = 5000")
             }
             dbPool = try DatabasePool(path: path, configuration: config)
-            wtLog("[CompassStore] Connected to compass.db")
+            wtLog("[CompassStore] Connected to compass.db (read-write)")
         } catch {
             wtLog("[CompassStore] Failed to open compass.db: \(error)")
+        }
+    }
+
+    // MARK: - Write Operations
+
+    /// Update the current goal for a project
+    func updateGoal(_ goal: String, for project: String) {
+        guard let dbPool else { return }
+        do {
+            try dbPool.write { db in
+                try db.execute(
+                    sql: "UPDATE compass_state SET current_goal = ?, updated_at = datetime('now') WHERE project = ?",
+                    arguments: [goal.isEmpty ? nil : goal, project]
+                )
+            }
+            logEvent(project: project, type: "goal_update", summary: "Goal updated: \(goal)")
+            refresh()
+            wtLog("[CompassStore] Updated goal for \(project)")
+        } catch {
+            wtLog("[CompassStore] Failed to update goal for \(project): \(error)")
+        }
+    }
+
+    /// Update the current phase for a project
+    func updatePhase(_ phase: String, for project: String) {
+        guard let dbPool else { return }
+        do {
+            try dbPool.write { db in
+                try db.execute(
+                    sql: "UPDATE compass_state SET current_phase = ?, updated_at = datetime('now') WHERE project = ?",
+                    arguments: [phase, project]
+                )
+            }
+            logEvent(project: project, type: "phase_change", summary: "Phase changed to \(phase)")
+            refresh()
+            wtLog("[CompassStore] Updated phase for \(project) to \(phase)")
+        } catch {
+            wtLog("[CompassStore] Failed to update phase for \(project): \(error)")
+        }
+    }
+
+    /// Add a blocker to a project
+    func addBlocker(_ blocker: String, for project: String) {
+        guard let dbPool else { return }
+        let trimmed = blocker.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        do {
+            let current = state(for: project)?.blockers ?? []
+            guard !current.contains(trimmed) else { return }
+
+            var updated = current
+            updated.append(trimmed)
+            let json = try JSONEncoder().encode(updated)
+            let jsonStr = String(data: json, encoding: .utf8) ?? "[]"
+
+            try dbPool.write { db in
+                try db.execute(
+                    sql: "UPDATE compass_state SET open_blockers = ?, updated_at = datetime('now') WHERE project = ?",
+                    arguments: [jsonStr, project]
+                )
+            }
+            logEvent(project: project, type: "blocker_added", summary: "Blocker added: \(trimmed)")
+            refresh()
+            wtLog("[CompassStore] Added blocker for \(project): \(trimmed)")
+        } catch {
+            wtLog("[CompassStore] Failed to add blocker for \(project): \(error)")
+        }
+    }
+
+    /// Remove a blocker from a project
+    func removeBlocker(_ blocker: String, for project: String) {
+        guard let dbPool else { return }
+        do {
+            var current = state(for: project)?.blockers ?? []
+            current.removeAll { $0 == blocker }
+            let json = try JSONEncoder().encode(current)
+            let jsonStr = String(data: json, encoding: .utf8) ?? "[]"
+
+            try dbPool.write { db in
+                try db.execute(
+                    sql: "UPDATE compass_state SET open_blockers = ?, updated_at = datetime('now') WHERE project = ?",
+                    arguments: [jsonStr, project]
+                )
+            }
+            logEvent(project: project, type: "blocker_resolved", summary: "Blocker resolved: \(blocker)")
+            refresh()
+            wtLog("[CompassStore] Removed blocker for \(project): \(blocker)")
+        } catch {
+            wtLog("[CompassStore] Failed to remove blocker for \(project): \(error)")
+        }
+    }
+
+    /// Log a decision with rationale for a project
+    func logDecision(_ decision: String, for project: String) {
+        guard let dbPool else { return }
+        let trimmed = decision.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        do {
+            var current = state(for: project)?.decisions ?? []
+            current.insert(trimmed, at: 0)
+            // Keep last 10 decisions
+            if current.count > 10 { current = Array(current.prefix(10)) }
+            let json = try JSONEncoder().encode(current)
+            let jsonStr = String(data: json, encoding: .utf8) ?? "[]"
+
+            try dbPool.write { db in
+                try db.execute(
+                    sql: "UPDATE compass_state SET recent_decisions = ?, updated_at = datetime('now') WHERE project = ?",
+                    arguments: [jsonStr, project]
+                )
+            }
+            logEvent(project: project, type: "decision", summary: trimmed)
+            refresh()
+            wtLog("[CompassStore] Logged decision for \(project): \(trimmed)")
+        } catch {
+            wtLog("[CompassStore] Failed to log decision for \(project): \(error)")
+        }
+    }
+
+    /// Write an event to compass_log
+    private func logEvent(project: String, type: String, summary: String) {
+        guard let dbPool else { return }
+        do {
+            try dbPool.write { db in
+                try db.execute(
+                    sql: "INSERT INTO compass_log (project, event_type, summary, details, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+                    arguments: [project, type, summary, "via World Tree"]
+                )
+            }
+        } catch {
+            wtLog("[CompassStore] Failed to log event: \(error)")
         }
     }
 

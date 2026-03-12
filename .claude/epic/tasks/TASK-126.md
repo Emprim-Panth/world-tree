@@ -1,7 +1,7 @@
 # TASK-126: Auto-naming branches
 
 **Priority**: low
-**Status**: ready
+**Status**: done
 **Category**: feature
 **Source**: QA Audit Wave 4 — Feature Gap Analysis
 
@@ -9,7 +9,7 @@
 Branches are currently unnamed or manually named. Add automatic branch naming based on conversation content (first user message summary or detected intent).
 
 ## Acceptance Criteria
-- [ ] Auto-generate branch name from first user message
-- [ ] Name updates if conversation topic shifts significantly
-- [ ] Names are concise (< 50 chars)
-- [ ] User can override auto-name at any time
+- [x] Auto-generate branch name from first user message
+- [x] Name updates if conversation topic shifts significantly
+- [x] Names are concise (< 50 chars)
+- [x] User can override auto-name at any time

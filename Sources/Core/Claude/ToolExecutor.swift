@@ -81,6 +81,15 @@ actor ToolExecutor {
         case "terminal_output": return await terminalOutput(input)
         case "capture_screenshot": return await captureScreenshot(input)
         case "search_conversation": return await executeSearchConversation(input)
+        case "git_status": return await gitStatus(input)
+        case "git_log": return await gitLog(input)
+        case "git_diff": return await gitDiff(input)
+        case "find_unused_code": return await findUnusedCode(input)
+        case "lint_check": return await lintCheck(input)
+        case "simulator_list": return await simulatorList(input)
+        case "simulator_build_run": return await simulatorBuildRun(input)
+        case "simulator_app_manage": return await simulatorAppManage(input)
+        case "simulator_screenshot": return await simulatorScreenshot(input)
         default: return ToolResult(content: "Unknown tool: \(name)", isError: true)
         }
     }
@@ -394,7 +403,10 @@ actor ToolExecutor {
             try? FileManager.default.removeItem(atPath: exitPath)
         }
 
-        // Write a self-contained script that captures output and exit code
+        // Write a self-contained script that captures output and exit code.
+        // Uses `tmux wait-for -S` to signal completion — the Swift side blocks on
+        // `tmux wait-for` instead of polling the filesystem every 200ms.
+        let waitChannel = "done-\(uuid)"
         let script = """
             #!/bin/bash
             export PATH="\(home)/.local/bin:\(home)/.cortana/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
@@ -402,6 +414,7 @@ actor ToolExecutor {
             cd '\(workingDirectory.path.replacingOccurrences(of: "'", with: "'\\''"))'
             (\(command)) > '\(outputPath)' 2>&1
             echo $? > '\(exitPath)'
+            \(tmuxExecutable) wait-for -S '\(waitChannel)'
             """
         do {
             try script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
@@ -428,25 +441,58 @@ actor ToolExecutor {
             wtLog("[ToolExecutor] bashViaTmux: failed to send keys — \(error)")
         }
 
-        // Poll for completion (200ms intervals, up to timeout)
-        let deadline = Date().addingTimeInterval(Double(timeoutSecs))
-        while Date() < deadline {
-            try? await Task.sleep(nanoseconds: 200_000_000)
-            if FileManager.default.fileExists(atPath: exitPath) { break }
+        // Event-driven completion: `tmux wait-for` blocks until the script
+        // signals the channel via `tmux wait-for -S`. No polling, instant detection.
+        // Falls back to timeout if the command hangs or tmux wait-for fails.
+        let waitCompleted = await withTaskGroup(of: Bool.self) { group in
+            // Task 1: wait-for channel signal (blocks until script completes)
+            group.addTask {
+                let waitProc = Process()
+                waitProc.executableURL = URL(fileURLWithPath: tmuxExecutable)
+                waitProc.arguments = ["wait-for", waitChannel]
+                waitProc.standardOutput = FileHandle.nullDevice
+                waitProc.standardError = FileHandle.nullDevice
+                do {
+                    try waitProc.run()
+                    return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+                        waitProc.terminationHandler = { proc in
+                            cont.resume(returning: proc.terminationStatus == 0)
+                        }
+                    }
+                } catch {
+                    return false
+                }
+            }
+
+            // Task 2: timeout guard
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(timeoutSecs) * 1_000_000_000)
+                return false
+            }
+
+            // First result wins — if timeout fires first, we cancel the wait-for
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
         }
 
-        // If we timed out (no exit file), send Ctrl-C to kill the running script
-        // so it doesn't keep executing in the tmux session after we return.
-        if !FileManager.default.fileExists(atPath: exitPath) {
+        if !waitCompleted || !FileManager.default.fileExists(atPath: exitPath) {
             wtLog("[ToolExecutor] bashViaTmux: command timed out after \(timeoutSecs)s — sending SIGINT to tmux session")
+            // Kill the running script in tmux
             let killProc = Process()
             killProc.executableURL = URL(fileURLWithPath: tmuxExecutable)
-            // C-c sends Ctrl-C (SIGINT) to the foreground process in the pane
             killProc.arguments = ["send-keys", "-t", sessionName, "C-c", ""]
             killProc.standardOutput = FileHandle.nullDevice
             killProc.standardError = FileHandle.nullDevice
             try? killProc.run()
             killProc.waitUntilExit()
+            // Also unblock any lingering wait-for listener
+            let unblockProc = Process()
+            unblockProc.executableURL = URL(fileURLWithPath: tmuxExecutable)
+            unblockProc.arguments = ["wait-for", "-S", waitChannel]
+            unblockProc.standardOutput = FileHandle.nullDevice
+            unblockProc.standardError = FileHandle.nullDevice
+            try? unblockProc.run()
         }
 
         // Read results
@@ -1157,6 +1203,898 @@ actor ToolExecutor {
                 content: "Search failed: \(error.localizedDescription)",
                 isError: true
             )
+        }
+    }
+
+    // MARK: - git_status
+
+    private func gitStatus(_ input: [String: AnyCodable]) async -> ToolResult {
+        let dir = resolveDirectory(input["path"]?.value as? String)
+
+        let branchResult = await runGit(["rev-parse", "--abbrev-ref", "HEAD"], in: dir)
+        let branch = branchResult.success ? branchResult.output.trimmingCharacters(in: .whitespacesAndNewlines) : "unknown"
+
+        let statusResult = await runGit(["status", "--porcelain=v1", "-uall"], in: dir)
+        guard statusResult.success else {
+            return ToolResult(content: "Not a git repository or git error: \(statusResult.output)", isError: true)
+        }
+
+        let lines = statusResult.output.components(separatedBy: "\n").filter { !$0.isEmpty }
+
+        var staged: [[String: String]] = []
+        var unstaged: [[String: String]] = []
+        var untracked: [[String: String]] = []
+
+        for line in lines {
+            guard line.count >= 3 else { continue }
+            let indexStatus = line[line.startIndex]
+            let worktreeStatus = line[line.index(after: line.startIndex)]
+            let filePath = String(line.dropFirst(3))
+
+            if indexStatus == "?" {
+                untracked.append(["file": filePath])
+            } else {
+                if indexStatus != " " {
+                    staged.append(["status": describeGitStatus(indexStatus), "file": filePath])
+                }
+                if worktreeStatus != " " {
+                    unstaged.append(["status": describeGitStatus(worktreeStatus), "file": filePath])
+                }
+            }
+        }
+
+        let result: [String: Any] = [
+            "branch": branch,
+            "clean": lines.isEmpty,
+            "staged": staged,
+            "unstaged": unstaged,
+            "untracked": untracked,
+            "summary": "\(staged.count) staged, \(unstaged.count) unstaged, \(untracked.count) untracked"
+        ]
+
+        guard let json = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]),
+              let jsonStr = String(data: json, encoding: .utf8) else {
+            return ToolResult(content: "Failed to serialize git status", isError: true)
+        }
+        return ToolResult(content: jsonStr, isError: false)
+    }
+
+    // MARK: - git_log
+
+    private func gitLog(_ input: [String: AnyCodable]) async -> ToolResult {
+        let dir = resolveDirectory(input["path"]?.value as? String)
+        let limit = min((input["limit"]?.value as? Int) ?? 20, 100)
+
+        var args = ["log", "--format=%H%n%an%n%aI%n%s", "-n", "\(limit)"]
+        if let file = input["file"]?.value as? String {
+            args.append("--")
+            args.append(file)
+        }
+
+        let result = await runGit(args, in: dir)
+        guard result.success else {
+            return ToolResult(content: "Git log failed: \(result.output)", isError: true)
+        }
+
+        let raw = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else {
+            return ToolResult(content: "[]", isError: false)
+        }
+
+        let logLines = raw.components(separatedBy: "\n")
+        var commits: [[String: String]] = []
+        var i = 0
+        while i + 3 < logLines.count {
+            commits.append([
+                "hash": String(logLines[i].prefix(12)),
+                "author": logLines[i + 1],
+                "date": logLines[i + 2],
+                "message": logLines[i + 3]
+            ])
+            i += 4
+        }
+
+        guard let json = try? JSONSerialization.data(withJSONObject: commits, options: [.prettyPrinted]),
+              let jsonStr = String(data: json, encoding: .utf8) else {
+            return ToolResult(content: "Failed to serialize git log", isError: true)
+        }
+        return ToolResult(content: jsonStr, isError: false)
+    }
+
+    // MARK: - git_diff
+
+    private func gitDiff(_ input: [String: AnyCodable]) async -> ToolResult {
+        let dir = resolveDirectory(input["path"]?.value as? String)
+        let staged = (input["staged"]?.value as? Bool) ?? false
+
+        var args = ["diff"]
+        if staged {
+            args.append("--cached")
+        }
+        if let ref = input["ref"]?.value as? String {
+            args.append(ref)
+        }
+        args.append("--stat")
+        args.append("--patch")
+        if let file = input["file"]?.value as? String {
+            args.append("--")
+            args.append(file)
+        }
+
+        let result = await runGit(args, in: dir)
+        guard result.success else {
+            return ToolResult(content: "Git diff failed: \(result.output)", isError: true)
+        }
+
+        let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if output.isEmpty {
+            return ToolResult(content: "No differences found.", isError: false)
+        }
+
+        if output.count > maxOutputSize {
+            let truncated = String(output.prefix(maxOutputSize))
+            return ToolResult(content: truncated + "\n\n[Output truncated at \(maxOutputSize / 1000)KB]", isError: false)
+        }
+        return ToolResult(content: output, isError: false)
+    }
+
+    // MARK: - Git Helpers
+
+    private struct GitResult {
+        let output: String
+        let success: Bool
+    }
+
+    private func runGit(_ arguments: [String], in directory: URL) async -> GitResult {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        proc.arguments = arguments
+        proc.currentDirectoryURL = directory
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        proc.standardOutput = stdoutPipe
+        proc.standardError = stderrPipe
+
+        let stdoutAccum = PipeAccumulator()
+        let stderrAccum = PipeAccumulator()
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                stdoutAccum.append(data)
+            }
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                stderrAccum.append(data)
+            }
+        }
+
+        do {
+            try proc.run()
+        } catch {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            return GitResult(output: "Failed to run git: \(error.localizedDescription)", success: false)
+        }
+
+        let exitCode: Int32 = await withCheckedContinuation { continuation in
+            let timeoutTask = DispatchWorkItem {
+                if proc.isRunning { proc.terminate() }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(30), execute: timeoutTask)
+            proc.terminationHandler = { process in
+                timeoutTask.cancel()
+                continuation.resume(returning: process.terminationStatus)
+            }
+        }
+
+        let stdout = String(data: stdoutAccum.data, encoding: .utf8) ?? ""
+        let stderr = String(data: stderrAccum.data, encoding: .utf8) ?? ""
+
+        if exitCode == 0 {
+            return GitResult(output: stdout, success: true)
+        } else {
+            return GitResult(output: stderr.isEmpty ? stdout : stderr, success: false)
+        }
+    }
+
+    private func resolveDirectory(_ path: String?) -> URL {
+        guard let path else { return workingDirectory }
+        return URL(fileURLWithPath: resolvePath(path))
+    }
+
+    // MARK: - find_unused_code
+
+    private func findUnusedCode(_ input: [String: AnyCodable]) async -> ToolResult {
+        let dir = resolveDirectory(input["path"]?.value as? String)
+        let kindFilter = (input["kind"]?.value as? String) ?? "all"
+
+        // Gather all Swift files
+        let findResult = await runShellCommand(
+            "/usr/bin/find", arguments: [dir.path, "-name", "*.swift", "-not", "-path", "*/.*", "-not", "-path", "*/DerivedData/*", "-not", "-path", "*/.build/*"],
+            in: dir, timeout: 30
+        )
+        guard findResult.success else {
+            return ToolResult(content: "Failed to scan project: \(findResult.output)", isError: true)
+        }
+
+        let files = findResult.output.components(separatedBy: "\n").filter { !$0.isEmpty }
+        guard !files.isEmpty else {
+            return ToolResult(content: "No Swift files found in \(dir.path)", isError: true)
+        }
+
+        // Regex patterns for declarations
+        let typePattern = try! NSRegularExpression(
+            pattern: #"^(?:\s*(?:public|internal|private|fileprivate|open)\s+)?(?:final\s+)?(?:class|struct|enum|protocol|actor)\s+(\w+)"#,
+            options: .anchorsMatchLines
+        )
+        let funcPattern = try! NSRegularExpression(
+            pattern: #"^(?:\s*(?:public|internal|private|fileprivate|open|override)\s+)*func\s+(\w+)"#,
+            options: .anchorsMatchLines
+        )
+        let propPattern = try! NSRegularExpression(
+            pattern: #"^\s*(?:public|internal|private|fileprivate|open|lazy|static|class)?\s*(?:var|let)\s+(\w+)"#,
+            options: .anchorsMatchLines
+        )
+
+        struct Declaration {
+            let symbol: String
+            let kind: String
+            let file: String
+            let line: Int
+        }
+
+        var declarations: [Declaration] = []
+        var allContent = ""
+
+        // Pass 1: collect declarations and concatenate all content for reference searching
+        for filePath in files {
+            guard let content = try? String(contentsOfFile: filePath, encoding: .utf8) else { continue }
+            allContent += content + "\n"
+            let lines = content.components(separatedBy: "\n")
+            let nsContent = content as NSString
+            let range = NSRange(location: 0, length: nsContent.length)
+
+            if kindFilter == "all" || kindFilter == "type" {
+                for match in typePattern.matches(in: content, range: range) {
+                    let symbol = nsContent.substring(with: match.range(at: 1))
+                    let lineNum = content.prefix(match.range.location).components(separatedBy: "\n").count
+                    declarations.append(Declaration(symbol: symbol, kind: "type", file: filePath, line: lineNum))
+                }
+            }
+
+            if kindFilter == "all" || kindFilter == "function" {
+                for match in funcPattern.matches(in: content, range: range) {
+                    let symbol = nsContent.substring(with: match.range(at: 1))
+                    // Skip common overrides and protocol requirements
+                    guard !["viewDidLoad", "viewWillAppear", "viewDidAppear", "body", "init",
+                             "deinit", "hash", "encode", "decode", "main", "setUp", "tearDown",
+                             "setUpWithError", "tearDownWithError"].contains(symbol) else { continue }
+                    let lineNum = content.prefix(match.range.location).components(separatedBy: "\n").count
+                    declarations.append(Declaration(symbol: symbol, kind: "function", file: filePath, line: lineNum))
+                }
+            }
+
+            if kindFilter == "all" || kindFilter == "property" {
+                for match in propPattern.matches(in: content, range: range) {
+                    let symbol = nsContent.substring(with: match.range(at: 1))
+                    // Skip common properties
+                    guard !["_", "body", "id", "self", "some"].contains(symbol) else { continue }
+                    // Check if line is inside a function scope (indentation heuristic: skip deeply indented)
+                    let matchLine = lines[min(content.prefix(match.range.location).components(separatedBy: "\n").count - 1, lines.count - 1)]
+                    let leadingSpaces = matchLine.prefix(while: { $0 == " " || $0 == "\t" }).count
+                    guard leadingSpaces <= 8 else { continue } // Skip local variables
+                    let lineNum = content.prefix(match.range.location).components(separatedBy: "\n").count
+                    declarations.append(Declaration(symbol: symbol, kind: "property", file: filePath, line: lineNum))
+                }
+            }
+        }
+
+        // Pass 2: count references for each symbol across all content
+        let nsAll = allContent as NSString
+        var results: [[String: Any]] = []
+
+        for decl in declarations {
+            // Count occurrences using word boundary matching
+            let refPattern = try? NSRegularExpression(pattern: "\\b\(NSRegularExpression.escapedPattern(for: decl.symbol))\\b")
+            let count = refPattern?.numberOfMatches(in: allContent, range: NSRange(location: 0, length: nsAll.length)) ?? 0
+
+            // 1 match = only the declaration itself
+            if count <= 1 {
+                let relativePath = decl.file.hasPrefix(dir.path)
+                    ? String(decl.file.dropFirst(dir.path.count + 1))
+                    : decl.file
+                results.append([
+                    "symbol": decl.symbol,
+                    "kind": decl.kind,
+                    "file": relativePath,
+                    "line": decl.line,
+                    "confidence": decl.kind == "type" ? "high" : "medium",
+                    "references": count
+                ])
+            }
+        }
+
+        // Sort by confidence (high first) then file
+        results.sort {
+            let c0 = $0["confidence"] as? String ?? ""
+            let c1 = $1["confidence"] as? String ?? ""
+            if c0 != c1 { return c0 > c1 }
+            return ($0["file"] as? String ?? "") < ($1["file"] as? String ?? "")
+        }
+
+        // Cap results
+        if results.count > 200 {
+            results = Array(results.prefix(200))
+        }
+
+        guard let json = try? JSONSerialization.data(withJSONObject: results, options: [.prettyPrinted]),
+              let jsonStr = String(data: json, encoding: .utf8) else {
+            return ToolResult(content: "Failed to serialize results", isError: true)
+        }
+
+        let summary = "Found \(results.count) potentially unused symbols (\(results.filter { ($0["confidence"] as? String) == "high" }.count) high confidence)"
+        return ToolResult(content: "\(summary)\n\n\(jsonStr)", isError: false)
+    }
+
+    // MARK: - lint_check
+
+    private func lintCheck(_ input: [String: AnyCodable]) async -> ToolResult {
+        let dir = resolveDirectory(input["path"]?.value as? String)
+        let fix = (input["fix"]?.value as? Bool) ?? false
+
+        // Check if SwiftLint is available
+        let whichResult = await runShellCommand(
+            "/usr/bin/which", arguments: ["swiftlint"],
+            in: dir, timeout: 5
+        )
+
+        if whichResult.success {
+            // Use SwiftLint
+            let swiftlintPath = whichResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            var args = ["lint", "--reporter", "json", "--quiet"]
+            if fix { args = ["lint", "--fix", "--reporter", "json", "--quiet"] }
+            args.append("--path")
+            args.append(dir.path)
+
+            let lintResult = await runShellCommand(
+                swiftlintPath, arguments: args,
+                in: dir, timeout: 120
+            )
+
+            // SwiftLint returns exit code 0 for warnings-only, non-zero for errors
+            let output = lintResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Parse SwiftLint JSON output into our standard format
+            if let data = output.data(using: .utf8),
+               let rawResults = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                var formatted: [[String: Any]] = []
+                for item in rawResults {
+                    var entry: [String: Any] = [:]
+                    entry["file"] = (item["file"] as? String).map { path in
+                        path.hasPrefix(dir.path) ? String(path.dropFirst(dir.path.count + 1)) : path
+                    } ?? "unknown"
+                    entry["line"] = item["line"] ?? 0
+                    entry["column"] = item["character"] ?? 0
+                    entry["severity"] = (item["severity"] as? String)?.lowercased() ?? "warning"
+                    entry["rule"] = item["rule_id"] ?? "unknown"
+                    entry["message"] = item["reason"] ?? ""
+                    formatted.append(entry)
+                }
+
+                guard let json = try? JSONSerialization.data(withJSONObject: formatted, options: [.prettyPrinted]),
+                      let jsonStr = String(data: json, encoding: .utf8) else {
+                    return ToolResult(content: output, isError: false)
+                }
+
+                let errors = formatted.filter { ($0["severity"] as? String) == "error" }.count
+                let warnings = formatted.filter { ($0["severity"] as? String) == "warning" }.count
+                let summary = "SwiftLint: \(errors) errors, \(warnings) warnings\(fix ? " (auto-fix applied)" : "")"
+                return ToolResult(content: "\(summary)\n\n\(jsonStr)", isError: false)
+            }
+
+            // Fallback: return raw output if JSON parsing fails
+            return ToolResult(content: output.isEmpty ? "No lint issues found." : output, isError: false)
+        }
+
+        // Fallback: heuristic lint checks when SwiftLint is not installed
+        let findResult = await runShellCommand(
+            "/usr/bin/find", arguments: [dir.path, "-name", "*.swift", "-not", "-path", "*/.*", "-not", "-path", "*/DerivedData/*"],
+            in: dir, timeout: 30
+        )
+        guard findResult.success else {
+            return ToolResult(content: "Failed to scan project: \(findResult.output)", isError: true)
+        }
+
+        let files = findResult.output.components(separatedBy: "\n").filter { !$0.isEmpty }
+        var issues: [[String: Any]] = []
+
+        let checks: [(String, NSRegularExpression, String, String)] = [
+            ("force_unwrap", try! NSRegularExpression(pattern: #"\w+!"#), "warning", "Force unwrap detected — consider using optional binding"),
+            ("force_cast", try! NSRegularExpression(pattern: #"\bas!\s"#), "warning", "Force cast detected — consider using 'as?' with guard"),
+            ("long_line", try! NSRegularExpression(pattern: #"^.{200,}$"#, options: .anchorsMatchLines), "warning", "Line exceeds 200 characters"),
+            ("todo_fixme", try! NSRegularExpression(pattern: #"//\s*(TODO|FIXME|HACK|XXX)"#), "warning", "TODO/FIXME comment found"),
+            ("print_statement", try! NSRegularExpression(pattern: #"^\s*print\("#, options: .anchorsMatchLines), "warning", "Debug print statement found"),
+        ]
+
+        for filePath in files.prefix(500) {
+            guard let content = try? String(contentsOfFile: filePath, encoding: .utf8) else { continue }
+            let nsContent = content as NSString
+            let range = NSRange(location: 0, length: nsContent.length)
+            let relativePath = filePath.hasPrefix(dir.path) ? String(filePath.dropFirst(dir.path.count + 1)) : filePath
+
+            for (rule, pattern, severity, message) in checks {
+                for match in pattern.matches(in: content, range: range) {
+                    let lineNum = content.prefix(match.range.location).components(separatedBy: "\n").count
+                    issues.append([
+                        "file": relativePath,
+                        "line": lineNum,
+                        "column": 0,
+                        "severity": severity,
+                        "rule": rule,
+                        "message": message
+                    ])
+                }
+            }
+        }
+
+        // Cap results
+        if issues.count > 500 {
+            issues = Array(issues.prefix(500))
+        }
+
+        guard let json = try? JSONSerialization.data(withJSONObject: issues, options: [.prettyPrinted]),
+              let jsonStr = String(data: json, encoding: .utf8) else {
+            return ToolResult(content: "Failed to serialize lint results", isError: true)
+        }
+
+        let summary = "Heuristic lint (SwiftLint not found): \(issues.count) issues"
+        return ToolResult(content: "\(summary)\n\n\(jsonStr)", isError: false)
+    }
+
+    // MARK: - simulator_list
+
+    private func simulatorList(_ input: [String: AnyCodable]) async -> ToolResult {
+        let filter = (input["filter"]?.value as? String) ?? "all"
+
+        let result = await runSimctl(["list", "devices", "--json"])
+        guard result.success else {
+            return ToolResult(content: "Failed to list simulators: \(result.output)", isError: true)
+        }
+
+        guard let data = result.output.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let devices = json["devices"] as? [String: [[String: Any]]] else {
+            return ToolResult(content: "Failed to parse simulator list", isError: true)
+        }
+
+        var simulators: [[String: String]] = []
+        for (runtime, deviceList) in devices {
+            // Extract runtime name from key (e.g., "com.apple.CoreSimulator.SimRuntime.iOS-17-5" → "iOS 17.5")
+            let runtimeName = runtime
+                .replacingOccurrences(of: "com.apple.CoreSimulator.SimRuntime.", with: "")
+                .replacingOccurrences(of: "-", with: ".")
+                .replacingOccurrences(of: "..", with: "-")  // Fix double dots from e.g., "iOS-17-5"
+
+            for device in deviceList {
+                guard let name = device["name"] as? String,
+                      let udid = device["udid"] as? String,
+                      let state = device["state"] as? String,
+                      let isAvailable = device["isAvailable"] as? Bool,
+                      isAvailable else { continue }
+
+                let stateLower = state.lowercased()
+                if filter == "booted" && stateLower != "booted" { continue }
+                if filter == "shutdown" && stateLower != "shutdown" { continue }
+
+                simulators.append([
+                    "name": name,
+                    "udid": udid,
+                    "state": stateLower,
+                    "runtime": runtimeName
+                ])
+            }
+        }
+
+        // Sort: booted first, then by name
+        simulators.sort {
+            if $0["state"] != $1["state"] {
+                return $0["state"] == "booted"
+            }
+            return ($0["name"] ?? "") < ($1["name"] ?? "")
+        }
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: simulators, options: [.prettyPrinted]),
+              let jsonStr = String(data: jsonData, encoding: .utf8) else {
+            return ToolResult(content: "Failed to serialize simulator list", isError: true)
+        }
+
+        let booted = simulators.filter { $0["state"] == "booted" }.count
+        let summary = "\(simulators.count) simulators (\(booted) booted)"
+        return ToolResult(content: "\(summary)\n\n\(jsonStr)", isError: false)
+    }
+
+    // MARK: - simulator_build_run
+
+    private func simulatorBuildRun(_ input: [String: AnyCodable]) async -> ToolResult {
+        let dir = resolveDirectory(input["path"]?.value as? String)
+        let install = (input["install"]?.value as? Bool) ?? true
+        let launch = (input["launch"]?.value as? Bool) ?? true
+        let deviceId = input["device_id"]?.value as? String
+
+        // Detect scheme
+        let scheme: String
+        if let s = input["scheme"]?.value as? String {
+            scheme = s
+        } else {
+            let listResult = await runShellCommand(
+                "/usr/bin/xcodebuild",
+                arguments: ["-list", "-json"],
+                in: dir, timeout: 30
+            )
+            if listResult.success,
+               let data = listResult.output.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let project = json["project"] as? [String: Any],
+               let schemes = project["schemes"] as? [String],
+               let first = schemes.first {
+                scheme = first
+            } else {
+                return ToolResult(content: "Could not auto-detect scheme. Specify one explicitly.", isError: true)
+            }
+        }
+
+        // Resolve destination simulator
+        let destination: String
+        if let did = deviceId {
+            destination = "platform=iOS Simulator,id=\(did)"
+        } else {
+            // Find or boot a simulator
+            let bootedResult = await runSimctl(["list", "devices", "booted", "--json"])
+            var bootedId: String?
+            if bootedResult.success,
+               let data = bootedResult.output.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let devices = json["devices"] as? [String: [[String: Any]]] {
+                for (_, deviceList) in devices {
+                    if let first = deviceList.first(where: { ($0["state"] as? String) == "Booted" }) {
+                        bootedId = first["udid"] as? String
+                        break
+                    }
+                }
+            }
+            if let bid = bootedId {
+                destination = "platform=iOS Simulator,id=\(bid)"
+            } else {
+                destination = "platform=iOS Simulator,name=iPhone 16"
+            }
+        }
+
+        // Build
+        let buildArgs = [
+            "-scheme", scheme,
+            "-destination", destination,
+            "-derivedDataPath", dir.appendingPathComponent("DerivedData").path,
+            "build"
+        ]
+
+        let buildResult = await runShellCommand(
+            "/usr/bin/xcodebuild", arguments: buildArgs,
+            in: dir, timeout: 300
+        )
+
+        // Parse build output for errors/warnings
+        let nsOutput = buildResult.output as NSString
+        let range = NSRange(location: 0, length: nsOutput.length)
+        var diagnostics: [[String: Any]] = []
+
+        for match in Self.xcodeDiagnosticPattern.matches(in: buildResult.output, range: range) {
+            let file = nsOutput.substring(with: match.range(at: 1))
+            let line = nsOutput.substring(with: match.range(at: 2))
+            let column = nsOutput.substring(with: match.range(at: 3))
+            let severity = nsOutput.substring(with: match.range(at: 4))
+            let message = nsOutput.substring(with: match.range(at: 5))
+
+            let relativePath = file.hasPrefix(dir.path) ? String(file.dropFirst(dir.path.count + 1)) : file
+            diagnostics.append([
+                "file": relativePath,
+                "line": Int(line) ?? 0,
+                "column": Int(column) ?? 0,
+                "severity": severity,
+                "message": message
+            ])
+        }
+
+        guard buildResult.success else {
+            let result: [String: Any] = [
+                "status": "build_failed",
+                "scheme": scheme,
+                "diagnostics": diagnostics
+            ]
+            guard let json = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted]),
+                  let jsonStr = String(data: json, encoding: .utf8) else {
+                return ToolResult(content: "Build failed:\n\(buildResult.output.suffix(2000))", isError: true)
+            }
+            return ToolResult(content: jsonStr, isError: true)
+        }
+
+        var status: [String: Any] = [
+            "status": "build_succeeded",
+            "scheme": scheme,
+            "diagnostics": diagnostics
+        ]
+
+        // Install & launch if requested
+        if install {
+            // Find the .app bundle in DerivedData
+            let findApp = await runShellCommand(
+                "/usr/bin/find",
+                arguments: [
+                    dir.appendingPathComponent("DerivedData").path,
+                    "-name", "*.app", "-path", "*/Debug-iphonesimulator/*",
+                    "-maxdepth", "6"
+                ],
+                in: dir, timeout: 15
+            )
+
+            let appPaths = findApp.output.components(separatedBy: "\n").filter { !$0.isEmpty }
+            if let appPath = appPaths.first {
+                let targetDevice = deviceId ?? "booted"
+                let installResult = await runSimctl(["install", targetDevice, appPath])
+                if installResult.success {
+                    status["installed"] = true
+
+                    if launch {
+                        // Extract bundle ID from Info.plist
+                        let plistPath = appPath + "/Info.plist"
+                        let bundleResult = await runShellCommand(
+                            "/usr/bin/defaults", arguments: ["read", plistPath, "CFBundleIdentifier"],
+                            in: dir, timeout: 5
+                        )
+                        if bundleResult.success {
+                            let bundleId = bundleResult.output.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                            let launchResult = await runSimctl(["launch", targetDevice, bundleId])
+                            status["launched"] = launchResult.success
+                            status["bundle_id"] = bundleId
+                        }
+                    }
+                } else {
+                    status["installed"] = false
+                    status["install_error"] = installResult.output
+                }
+            } else {
+                status["installed"] = false
+                status["install_error"] = "Could not find .app bundle in DerivedData"
+            }
+        }
+
+        guard let json = try? JSONSerialization.data(withJSONObject: status, options: [.prettyPrinted, .sortedKeys]),
+              let jsonStr = String(data: json, encoding: .utf8) else {
+            return ToolResult(content: "Build succeeded but failed to serialize result", isError: false)
+        }
+        return ToolResult(content: jsonStr, isError: false)
+    }
+
+    // MARK: - simulator_app_manage
+
+    private func simulatorAppManage(_ input: [String: AnyCodable]) async -> ToolResult {
+        guard let action = input["action"]?.value as? String else {
+            return ToolResult(content: "Missing required parameter: action", isError: true)
+        }
+
+        let deviceId = (input["device_id"]?.value as? String) ?? "booted"
+        let bundleId = input["bundle_id"]?.value as? String
+
+        switch action {
+        case "boot":
+            if deviceId == "booted" {
+                return ToolResult(content: "Specify device_id to boot a specific simulator", isError: true)
+            }
+            let result = await runSimctl(["boot", deviceId])
+            if result.success {
+                // Open Simulator.app to show the UI
+                let _ = await runShellCommand("/usr/bin/open", arguments: ["-a", "Simulator"], in: workingDirectory, timeout: 10)
+                return ToolResult(content: "Simulator booted: \(deviceId)", isError: false)
+            }
+            return ToolResult(content: "Failed to boot simulator: \(result.output)", isError: true)
+
+        case "shutdown":
+            let result = await runSimctl(["shutdown", deviceId])
+            return result.success
+                ? ToolResult(content: "Simulator shut down: \(deviceId)", isError: false)
+                : ToolResult(content: "Failed to shut down: \(result.output)", isError: true)
+
+        case "launch":
+            guard let bid = bundleId else {
+                return ToolResult(content: "Missing required parameter: bundle_id", isError: true)
+            }
+            let result = await runSimctl(["launch", deviceId, bid])
+            return result.success
+                ? ToolResult(content: "Launched \(bid) on \(deviceId)", isError: false)
+                : ToolResult(content: "Failed to launch: \(result.output)", isError: true)
+
+        case "terminate":
+            guard let bid = bundleId else {
+                return ToolResult(content: "Missing required parameter: bundle_id", isError: true)
+            }
+            let result = await runSimctl(["terminate", deviceId, bid])
+            return result.success
+                ? ToolResult(content: "Terminated \(bid) on \(deviceId)", isError: false)
+                : ToolResult(content: "Failed to terminate: \(result.output)", isError: true)
+
+        case "uninstall":
+            guard let bid = bundleId else {
+                return ToolResult(content: "Missing required parameter: bundle_id", isError: true)
+            }
+            let result = await runSimctl(["uninstall", deviceId, bid])
+            return result.success
+                ? ToolResult(content: "Uninstalled \(bid) from \(deviceId)", isError: false)
+                : ToolResult(content: "Failed to uninstall: \(result.output)", isError: true)
+
+        case "list_apps":
+            let result = await runSimctl(["listapps", deviceId])
+            guard result.success else {
+                return ToolResult(content: "Failed to list apps: \(result.output)", isError: true)
+            }
+            // Parse the plist-style output to extract bundle IDs
+            if let data = result.output.data(using: .utf8),
+               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: [String: Any]] {
+                var apps: [[String: String]] = []
+                for (bundleId, info) in plist {
+                    apps.append([
+                        "bundle_id": bundleId,
+                        "name": (info["CFBundleDisplayName"] as? String) ?? (info["CFBundleName"] as? String) ?? bundleId,
+                        "version": (info["CFBundleShortVersionString"] as? String) ?? "unknown"
+                    ])
+                }
+                apps.sort { ($0["name"] ?? "") < ($1["name"] ?? "") }
+                guard let json = try? JSONSerialization.data(withJSONObject: apps, options: [.prettyPrinted]),
+                      let jsonStr = String(data: json, encoding: .utf8) else {
+                    return ToolResult(content: result.output, isError: false)
+                }
+                return ToolResult(content: "\(apps.count) apps installed\n\n\(jsonStr)", isError: false)
+            }
+            // Fallback: return raw output
+            return ToolResult(content: result.output, isError: false)
+
+        default:
+            return ToolResult(content: "Unknown action: \(action). Use: launch, terminate, uninstall, list_apps, boot, shutdown", isError: true)
+        }
+    }
+
+    // MARK: - simulator_screenshot
+
+    private func simulatorScreenshot(_ input: [String: AnyCodable]) async -> ToolResult {
+        let deviceId = (input["device_id"]?.value as? String) ?? "booted"
+
+        let outputPath: String
+        if let custom = input["output_path"]?.value as? String {
+            outputPath = resolvePath(custom)
+        } else {
+            let timestamp = ISO8601DateFormatter().string(from: Date())
+                .replacingOccurrences(of: ":", with: "-")
+            outputPath = "/tmp/simulator-screenshot-\(timestamp).png"
+        }
+
+        let result = await runSimctl(["io", deviceId, "screenshot", outputPath])
+        guard result.success else {
+            return ToolResult(content: "Failed to capture screenshot: \(result.output)", isError: true)
+        }
+
+        // Verify file exists
+        guard FileManager.default.fileExists(atPath: outputPath) else {
+            return ToolResult(content: "Screenshot command succeeded but file not found at \(outputPath)", isError: true)
+        }
+
+        let attrs = try? FileManager.default.attributesOfItem(atPath: outputPath)
+        let size = (attrs?[.size] as? Int) ?? 0
+
+        let resultObj: [String: Any] = [
+            "path": outputPath,
+            "size_bytes": size,
+            "device": deviceId
+        ]
+
+        guard let json = try? JSONSerialization.data(withJSONObject: resultObj, options: [.prettyPrinted]),
+              let jsonStr = String(data: json, encoding: .utf8) else {
+            return ToolResult(content: "Screenshot saved to \(outputPath)", isError: false)
+        }
+        return ToolResult(content: jsonStr, isError: false)
+    }
+
+    // MARK: - Simctl Helper
+
+    private struct ShellResult: Sendable {
+        let output: String
+        let success: Bool
+    }
+
+    private func runSimctl(_ arguments: [String]) async -> ShellResult {
+        await runShellCommand("/usr/bin/xcrun", arguments: ["simctl"] + arguments, in: workingDirectory, timeout: 60)
+    }
+
+    private func runShellCommand(_ executable: String, arguments: [String], in directory: URL, timeout: Int) async -> ShellResult {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: executable)
+        proc.arguments = arguments
+        proc.currentDirectoryURL = directory
+
+        // Include homebrew paths for tools like swiftlint
+        var env = ProcessInfo.processInfo.environment
+        let existingPath = env["PATH"] ?? "/usr/bin:/bin"
+        env["PATH"] = "\(home)/.local/bin:\(home)/.cortana/bin:/opt/homebrew/bin:/usr/local/bin:\(existingPath)"
+        env["HOME"] = home
+        proc.environment = env
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        proc.standardOutput = stdoutPipe
+        proc.standardError = stderrPipe
+
+        let stdoutAccum = PipeAccumulator()
+        let stderrAccum = PipeAccumulator()
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                stdoutAccum.append(data)
+            }
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+            } else {
+                stderrAccum.append(data)
+            }
+        }
+
+        do {
+            try proc.run()
+        } catch {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            return ShellResult(output: "Failed to run \(executable): \(error.localizedDescription)", success: false)
+        }
+
+        let exitCode: Int32 = await withCheckedContinuation { continuation in
+            let timeoutTask = DispatchWorkItem {
+                if proc.isRunning { proc.terminate() }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(timeout), execute: timeoutTask)
+            proc.terminationHandler = { process in
+                timeoutTask.cancel()
+                continuation.resume(returning: process.terminationStatus)
+            }
+        }
+
+        let stdout = String(data: stdoutAccum.data, encoding: .utf8) ?? ""
+        let stderr = String(data: stderrAccum.data, encoding: .utf8) ?? ""
+
+        if exitCode == 0 {
+            return ShellResult(output: stdout, success: true)
+        } else {
+            return ShellResult(output: stderr.isEmpty ? stdout : stderr, success: false)
+        }
+    }
+
+    private func describeGitStatus(_ char: Character) -> String {
+        switch char {
+        case "M": return "modified"
+        case "A": return "added"
+        case "D": return "deleted"
+        case "R": return "renamed"
+        case "C": return "copied"
+        case "U": return "unmerged"
+        case "T": return "typechange"
+        default: return String(char)
         }
     }
 

@@ -266,6 +266,14 @@ final class TreeStore {
                 sql: "DELETE FROM canvas_dispatches WHERE branch_id IN (\(branchPlaceholders))",
                 arguments: branchArgs
             )
+            try db.execute(
+                sql: "DELETE FROM canvas_jobs WHERE branch_id IN (\(branchPlaceholders))",
+                arguments: branchArgs
+            )
+            try db.execute(
+                sql: "DELETE FROM canvas_branch_tags WHERE branch_id IN (\(branchPlaceholders))",
+                arguments: branchArgs
+            )
         }
 
         if !sessionIds.isEmpty {
@@ -274,6 +282,10 @@ final class TreeStore {
 
             try db.execute(
                 sql: "DELETE FROM canvas_cli_sessions WHERE canvas_session_id IN (\(sessionPlaceholders))",
+                arguments: sessionArgs
+            )
+            try db.execute(
+                sql: "DELETE FROM canvas_api_state WHERE session_id IN (\(sessionPlaceholders))",
                 arguments: sessionArgs
             )
         }
@@ -288,7 +300,7 @@ final class TreeStore {
         }
 
         // 3. Delete canvas_branches (references sessions and canvas_trees)
-        //    This also fires cascade triggers for canvas_branch_tags and canvas_api_state.
+        //    Cascade triggers also exist as safety net for canvas_branch_tags + canvas_api_state.
         try db.execute(sql: "DELETE FROM canvas_branches WHERE tree_id = ?", arguments: [treeId])
 
         // 4. Delete sessions (now safe — no branches reference them)
@@ -477,9 +489,21 @@ final class TreeStore {
                 sql: "DELETE FROM canvas_dispatches WHERE branch_id = ?",
                 arguments: [id]
             )
+            try db.execute(
+                sql: "DELETE FROM canvas_jobs WHERE branch_id = ?",
+                arguments: [id]
+            )
+            try db.execute(
+                sql: "DELETE FROM canvas_branch_tags WHERE branch_id = ?",
+                arguments: [id]
+            )
             if let sessionId {
                 try db.execute(
                     sql: "DELETE FROM canvas_cli_sessions WHERE canvas_session_id = ?",
+                    arguments: [sessionId]
+                )
+                try db.execute(
+                    sql: "DELETE FROM canvas_api_state WHERE session_id = ?",
                     arguments: [sessionId]
                 )
             }
@@ -492,7 +516,7 @@ final class TreeStore {
                 )
             }
 
-            // Delete the branch (fires cascade triggers for canvas_branch_tags + canvas_api_state)
+            // Delete the branch (cascade triggers also exist as safety net)
             try db.execute(sql: "DELETE FROM canvas_branches WHERE id = ?", arguments: [id])
 
             // Delete the session (now safe — no branches reference it)

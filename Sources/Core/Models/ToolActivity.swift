@@ -30,6 +30,9 @@ struct ToolActivity: Identifiable {
         case "background_run": return "Starting background job..."
         case "list_terminals": return "Discovering terminals..."
         case "terminal_output": return "Capturing terminal output..."
+        case "git_status": return "Checking git status..."
+        case "git_log": return "Browsing git log..."
+        case "git_diff": return "Viewing git diff..."
         default: return "Running \(name)..."
         }
     }

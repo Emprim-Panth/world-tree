@@ -1,7 +1,7 @@
 # TASK-131: Missing FK cascade for branch-dependent tables
 
 **Priority**: medium
-**Status**: ready
+**Status**: Done
 **Category**: data-integrity
 **Source**: QA Audit Wave 6
 

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import GRDB
 
@@ -100,13 +101,16 @@ final class PenAssetStore: ObservableObject {
         let rawJson = String(data: data, encoding: .utf8)
         let now = ISO8601DateFormatter().string(from: Date())
         let allFrames = document.allFrames
-        let assetId = assetID(for: url)
         let filePath = url.path
+        let baseAssetId = fnvHash(for: url)
         let fileName = url.lastPathComponent
         let frameCount = allFrames.count
         let nodeCount = document.totalNodeCount
 
-        try await pool.write { db in
+        let resolvedAssetId = try await pool.write { db -> String in
+            // Collision detection: if a different file already owns this hash, use a fallback ID.
+            let assetId = try Self.resolveAssetID(baseHash: baseAssetId, filePath: filePath, in: db)
+
             // Preserve original createdAt on upsert
             let existingCreatedAt = (try? PenAsset
                 .fetchOne(db, sql: "SELECT * FROM pen_assets WHERE id = ?", arguments: [assetId]))?
@@ -149,10 +153,12 @@ final class PenAssetStore: ObservableObject {
                 )
                 try link.upsert(db)
             }
+
+            return assetId
         }
 
         await loadAssets(project: project)
-        await loadFrameLinks(assetId: assetId)
+        await loadFrameLinks(assetId: resolvedAssetId)
     }
 
     func deleteAsset(id: String, project: String) async throws {
@@ -220,14 +226,46 @@ final class PenAssetStore: ObservableObject {
 
     // MARK: - Helpers
 
-    /// Stable ID for a file — FNV-1a hash of the canonical path
-    private func assetID(for url: URL) -> String {
-        let path = url.standardizedFileURL.path
+    /// FNV-1a 64-bit hash of the canonical file path (hex string).
+    private func fnvHash(for url: URL) -> String {
+        Self.fnvHash(for: url.standardizedFileURL.path)
+    }
+
+    /// FNV-1a 64-bit hash of a string (hex string).
+    static func fnvHash(for string: String) -> String {
         var hash: UInt64 = 14695981039346656037
-        for byte in path.utf8 {
+        for byte in string.utf8 {
             hash ^= UInt64(byte)
             hash = hash &* 1099511628211
         }
         return String(format: "%016llx", hash)
+    }
+
+    /// Resolve the asset ID, detecting hash collisions.
+    ///
+    /// If an existing record has the same FNV hash but a different file_path,
+    /// the hash collided. In that case, fall back to a SHA-256 prefix of the
+    /// path, which is collision-resistant for all practical purposes.
+    nonisolated static func resolveAssetID(baseHash: String, filePath: String, in db: Database) throws -> String {
+        let existing = try Row.fetchOne(
+            db,
+            sql: "SELECT file_path FROM pen_assets WHERE id = ?",
+            arguments: [baseHash]
+        )
+
+        if let existingPath: String = existing?["file_path"],
+           existingPath != filePath {
+            // Collision detected — two different paths produced the same FNV hash.
+            // Fall back to a truncated SHA-256 of the path for a collision-resistant ID.
+            return sha256ID(for: filePath)
+        }
+
+        return baseHash
+    }
+
+    /// SHA-256 based fallback ID (first 16 hex chars) — used only on FNV collision.
+    nonisolated private static func sha256ID(for path: String) -> String {
+        let digest = SHA256.hash(data: Data(path.utf8))
+        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 }

@@ -237,39 +237,126 @@ actor GatewayClient {
         }
     }
 
-    nonisolated func subscribeToTerminal(sessionId: String) -> AsyncStream<String> {
+    /// Subscribe to terminal output with error classification.
+    ///
+    /// - Transient errors (timeouts, 503, network blips) retry with exponential backoff up to 10 times.
+    /// - Permanent errors (401, 404, connection refused) retry up to 3 times then yield `.error` and stop.
+    nonisolated func subscribeToTerminal(sessionId: String) -> AsyncStream<TerminalStreamEvent> {
         AsyncStream { continuation in
             Task {
-                var retries = 0
-                let maxRetries = 10
+                var transientRetries = 0
+                var permanentRetries = 0
+                let maxTransientRetries = 10
+                let maxPermanentRetries = 3
 
-                while retries < maxRetries && !Task.isCancelled {
+                while !Task.isCancelled {
                     let url = baseURL.appendingPathComponent("v1/cortana/terminal/\(sessionId)/stream")
                     var request = URLRequest(url: url)
                     request.setValue(authToken, forHTTPHeaderField: "x-cortana-token")
 
                     do {
-                        let (bytes, _) = try await session.bytes(for: request)
-                        retries = 0  // Reset on successful connection
+                        let (bytes, response) = try await session.bytes(for: request)
+
+                        // Check HTTP status before reading the stream
+                        if let httpResponse = response as? HTTPURLResponse,
+                           !(200...299).contains(httpResponse.statusCode) {
+                            let classified = Self.classifyHTTPError(statusCode: httpResponse.statusCode)
+                            if classified.isPermanent {
+                                permanentRetries += 1
+                                if permanentRetries >= maxPermanentRetries {
+                                    continuation.yield(.error(classified))
+                                    break
+                                }
+                            } else {
+                                transientRetries += 1
+                                if transientRetries >= maxTransientRetries {
+                                    continuation.yield(.error(.subscriptionFailed(underlying: "Max transient retries exceeded")))
+                                    break
+                                }
+                            }
+                            let delay = Self.backoffDelay(retry: transientRetries + permanentRetries)
+                            try? await Task.sleep(nanoseconds: delay)
+                            continue
+                        }
+
+                        // Connected successfully — reset transient counter
+                        transientRetries = 0
+                        permanentRetries = 0
 
                         for try await line in bytes.lines {
-                            continuation.yield(line)
+                            continuation.yield(.output(line))
                         }
                         // Stream ended normally (server closed) — stop reconnecting
                         break
-                    } catch {
-                        retries += 1
-                        if retries < maxRetries {
-                            // Exponential backoff: 1s, 2s, 4s, 8s, 16s, capped at 30s
-                            let delay = min(UInt64(pow(2.0, Double(retries - 1))) * 1_000_000_000, 30_000_000_000)
-                            try? await Task.sleep(nanoseconds: delay)
+                    } catch let urlError as URLError {
+                        let classified = Self.classifyURLError(urlError)
+                        if classified.isPermanent {
+                            permanentRetries += 1
+                            if permanentRetries >= maxPermanentRetries {
+                                continuation.yield(.error(classified))
+                                break
+                            }
+                        } else {
+                            transientRetries += 1
+                            if transientRetries >= maxTransientRetries {
+                                continuation.yield(.error(.subscriptionFailed(underlying: urlError.localizedDescription)))
+                                break
+                            }
                         }
+                        let delay = Self.backoffDelay(retry: transientRetries + permanentRetries)
+                        try? await Task.sleep(nanoseconds: delay)
+                    } catch {
+                        // Unknown error — treat as transient
+                        transientRetries += 1
+                        if transientRetries >= maxTransientRetries {
+                            continuation.yield(.error(.subscriptionFailed(underlying: error.localizedDescription)))
+                            break
+                        }
+                        let delay = Self.backoffDelay(retry: transientRetries)
+                        try? await Task.sleep(nanoseconds: delay)
                     }
                 }
 
                 continuation.finish()
             }
         }
+    }
+
+    // MARK: - Error Classification (Private)
+
+    /// Classify an HTTP status code into a typed gateway error.
+    private static func classifyHTTPError(statusCode: Int) -> GatewayError {
+        switch statusCode {
+        case 401, 403:
+            return .unauthorized
+        case 404:
+            return .terminalNotFound
+        case 400...499:
+            return .permanentHTTPError(statusCode: statusCode)
+        default:
+            // 5xx and anything else — transient
+            return .requestFailed
+        }
+    }
+
+    /// Classify a URLError into a typed gateway error.
+    private static func classifyURLError(_ error: URLError) -> GatewayError {
+        switch error.code {
+        case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+            return .connectionRefused
+        case .userAuthenticationRequired:
+            return .unauthorized
+        case .timedOut, .networkConnectionLost, .notConnectedToInternet:
+            // Transient — network will likely recover
+            return .requestFailed
+        default:
+            return .requestFailed
+        }
+    }
+
+    /// Exponential backoff: 1s, 2s, 4s, 8s… capped at 30s.
+    private static func backoffDelay(retry: Int) -> UInt64 {
+        min(UInt64(pow(2.0, Double(max(0, retry - 1)))) * 1_000_000_000, 30_000_000_000)
     }
 
     func sendTerminalCommand(sessionId: String, command: String) async throws {
@@ -371,9 +458,59 @@ struct HandoffCreateResponse: Codable {
     let id: String
 }
 
-enum GatewayError: Error {
+// MARK: - Terminal Stream Event
+
+/// Events yielded by `subscribeToTerminal` — either output data or a terminal error.
+enum TerminalStreamEvent: Sendable {
+    /// A line of terminal output
+    case output(String)
+    /// A permanent error that stopped the subscription
+    case error(GatewayError)
+}
+
+// MARK: - Gateway Error
+
+enum GatewayError: Error, Sendable {
     case requestFailed
     case invalidResponse
     case unauthorized
+    case connectionRefused
+    case permanentHTTPError(statusCode: Int)
+    case terminalNotFound
+    case subscriptionFailed(underlying: String)
+
+    /// Whether this error is permanent — retrying won't help.
+    var isPermanent: Bool {
+        switch self {
+        case .unauthorized, .connectionRefused, .terminalNotFound:
+            return true
+        case .permanentHTTPError(let code):
+            // 4xx errors (except 408 Request Timeout, 429 Too Many Requests) are permanent
+            return (400...499).contains(code) && code != 408 && code != 429
+        case .requestFailed, .invalidResponse, .subscriptionFailed:
+            return false
+        }
+    }
+}
+
+extension GatewayError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .requestFailed:
+            return "Gateway request failed"
+        case .invalidResponse:
+            return "Invalid response from gateway"
+        case .unauthorized:
+            return "Unauthorized — check gateway auth token"
+        case .connectionRefused:
+            return "Gateway is unreachable"
+        case .permanentHTTPError(let code):
+            return "Gateway returned HTTP \(code)"
+        case .terminalNotFound:
+            return "Terminal session not found"
+        case .subscriptionFailed(let msg):
+            return "Terminal subscription failed: \(msg)"
+        }
+    }
 }
 

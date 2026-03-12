@@ -1,7 +1,7 @@
 # TASK-129: Gateway terminal subscription hangs on permanent failure
 
 **Priority**: medium
-**Status**: ready
+**Status**: Done
 **Category**: error-recovery
 **Source**: QA Audit Wave 6
 
@@ -12,5 +12,5 @@ GatewayClient.subscribeToTerminal() retries on ANY error up to 10 times with exp
 Distinguish transient vs permanent errors. Return error event to UI on permanent failures after 2-3 retries.
 
 ## Acceptance Criteria
-- [ ] UI shows error after gateway is confirmed unreachable
-- [ ] Transient errors still retry with backoff
+- [x] UI shows error after gateway is confirmed unreachable
+- [x] Transient errors still retry with backoff

@@ -46,12 +46,28 @@ actor StreamCacheManager {
     // MARK: - Cached message limit
 
     /// Cached result for contextMessageLimit to avoid scanning the directory on every access.
+    /// Protected by actor isolation — all reads/writes go through the actor's serial executor.
     private var cachedMessageLimit: Int?
     private var limitLastComputed: Date?
 
     // MARK: - Open write handles
 
     private var handles: [String: FileHandle] = [:]
+
+    /// Track chunks written per handle for periodic fsync
+    private var chunkCounts: [String: Int] = [:]
+
+    /// Track last write time per handle for stale cleanup
+    private var lastWriteTime: [String: Date] = [:]
+
+    /// How often (in chunks) to call synchronizeFile()
+    private let fsyncInterval = 20
+
+    /// Handles unused for longer than this are considered stale
+    private let staleHandleTimeout: TimeInterval = 5 * 60  // 5 minutes
+
+    /// Whether the stale-handle cleanup task is running
+    private var cleanupTaskRunning = false
 
     private init() {}
 
@@ -70,25 +86,46 @@ actor StreamCacheManager {
         let url = streamURL(sessionId)
         FileManager.default.createFile(atPath: url.path, contents: nil)
         handles[sessionId] = try? FileHandle(forWritingTo: url)
+        chunkCounts[sessionId] = 0
+        lastWriteTime[sessionId] = Date()
+        startStaleHandleCleanupIfNeeded()
     }
 
     /// Append a token chunk. Fire-and-forget safe — the actor serialises these.
+    /// Calls synchronizeFile() every `fsyncInterval` chunks to ensure data reaches disk.
     func appendToStream(sessionId: String, chunk: String) {
         guard let handle = handles[sessionId],
               let data = chunk.data(using: .utf8) else { return }
         do {
             try handle.write(contentsOf: data)
+            lastWriteTime[sessionId] = Date()
+
+            let count = (chunkCounts[sessionId] ?? 0) + 1
+            chunkCounts[sessionId] = count
+
+            // Periodic fsync so crash doesn't lose buffered writes
+            if count % fsyncInterval == 0 {
+                handle.synchronizeFile()
+            }
         } catch {
             wtLog("[StreamCache] Write failed for \(sessionId): \(error) — closing handle")
             try? handle.close()
             handles[sessionId] = nil
+            chunkCounts[sessionId] = nil
+            lastWriteTime[sessionId] = nil
         }
     }
 
     /// Normal completion — stream finished cleanly, nothing to recover. Delete the file.
     func closeStream(sessionId: String) {
-        handles[sessionId]?.closeFile()
+        if let handle = handles[sessionId] {
+            // Final fsync before close to flush any remaining buffered data
+            handle.synchronizeFile()
+            handle.closeFile()
+        }
         handles[sessionId] = nil
+        chunkCounts[sessionId] = nil
+        lastWriteTime[sessionId] = nil
         try? FileManager.default.removeItem(at: streamURL(sessionId))
     }
 
@@ -108,6 +145,47 @@ actor StreamCacheManager {
             try? FileManager.default.removeItem(at: url)
         }
         return recovered
+    }
+
+    // MARK: - Stale handle cleanup
+
+    /// Launches a repeating background task that scans for stale handles every 60 seconds.
+    /// Runs only while there are open handles; stops automatically when all are closed.
+    private func startStaleHandleCleanupIfNeeded() {
+        guard !cleanupTaskRunning else { return }
+        cleanupTaskRunning = true
+        Task {
+            while true {
+                try? await Task.sleep(for: .seconds(60))
+                await self.reapStaleHandles()
+                if await self.handles.isEmpty {
+                    await self.markCleanupStopped()
+                    break
+                }
+            }
+        }
+    }
+
+    /// Close any handle that hasn't been written to within `staleHandleTimeout`.
+    private func reapStaleHandles() {
+        let now = Date()
+        for (sessionId, lastWrite) in lastWriteTime {
+            if now.timeIntervalSince(lastWrite) > staleHandleTimeout {
+                wtLog("[StreamCache] Reaping stale handle for \(sessionId) — idle \(Int(now.timeIntervalSince(lastWrite)))s")
+                if let handle = handles[sessionId] {
+                    handle.synchronizeFile()
+                    handle.closeFile()
+                }
+                handles[sessionId] = nil
+                chunkCounts[sessionId] = nil
+                lastWriteTime[sessionId] = nil
+                // Leave the .tmp file on disk — recoverOrphanedStreams() will pick it up
+            }
+        }
+    }
+
+    private func markCleanupStopped() {
+        cleanupTaskRunning = false
     }
 
     // MARK: - Context cache

@@ -125,6 +125,18 @@ final class AgentSDKProvider: LLMProvider {
             )
             self.persistDispatch(record)
 
+            // Register with output stream store for live tailing
+            let projectName = context.project
+            let message = context.message
+            Task { @MainActor in
+                JobOutputStreamStore.shared.beginStream(
+                    id: dispatchId,
+                    kind: .dispatch,
+                    command: message,
+                    project: projectName
+                )
+            }
+
             let proc = Process()
             let cliPath = "\(self.home)/.local/bin/claude"
             proc.executableURL = URL(fileURLWithPath: cliPath)
@@ -200,6 +212,10 @@ final class AgentSDKProvider: LLMProvider {
                     for event in events {
                         if case .text(let chunk) = event {
                             accumulatedText += chunk
+                            // Publish to live output stream store
+                            Task { @MainActor in
+                                JobOutputStreamStore.shared.appendOutput(id: dispatchId, chunk: chunk)
+                            }
                         }
                         continuation.yield(event)
                     }
@@ -242,6 +258,9 @@ final class AgentSDKProvider: LLMProvider {
 
                         if wasCancelled {
                             strongSelf.updateDispatchStatus(dispatchId, status: .cancelled)
+                            Task { @MainActor in
+                                JobOutputStreamStore.shared.endStream(id: dispatchId, status: "cancelled")
+                            }
                         } else if process.terminationStatus == 0 {
                             strongSelf.completeDispatch(
                                 dispatchId,
@@ -257,6 +276,9 @@ final class AgentSDKProvider: LLMProvider {
                                 tokensOut: parser.outputTokens,
                                 duration: duration
                             )
+                            Task { @MainActor in
+                                JobOutputStreamStore.shared.endStream(id: dispatchId, status: "completed")
+                            }
                         } else {
                             let errorMsg = !stderrText.isEmpty
                                 ? String(stderrText.prefix(500))
@@ -270,6 +292,9 @@ final class AgentSDKProvider: LLMProvider {
                                 duration: duration
                             )
                             continuation.yield(.error(errorMsg))
+                            Task { @MainActor in
+                                JobOutputStreamStore.shared.endStream(id: dispatchId, status: "failed", error: errorMsg)
+                            }
                         }
 
                         // Remove from active tracking

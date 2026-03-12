@@ -1,7 +1,7 @@
 # TASK-133: MemoryService + DaemonService concurrency fixes
 
 **Priority**: medium
-**Status**: ready
+**Status**: Done
 **Category**: concurrency
 **Source**: QA Audit Wave 6
 
@@ -14,5 +14,5 @@
 2. Move pendingTasks.append into the first @MainActor block
 
 ## Acceptance Criteria
-- [ ] No data races in MemoryService cache access
-- [ ] pendingTasks modifications are serialized
+- [x] No data races in MemoryService cache access
+- [x] pendingTasks modifications are serialized

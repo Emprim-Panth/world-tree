@@ -1,7 +1,7 @@
 # TASK-115: Test coverage — critical data layer
 
 **Priority**: high
-**Status**: ready
+**Status**: done
 **Category**: testing
 **Source**: QA Audit Wave 5
 
@@ -49,7 +49,7 @@ Test coverage audit found 14 completely untested source files. The critical data
 - Date range queries
 
 ## Acceptance Criteria
-- [ ] 5 new test suites created with 25-30 test methods total
-- [ ] All critical data layer tests pass
-- [ ] DatabaseManager path resolution tested with all scenarios
-- [ ] Migration idempotence verified for all versions
+- [x] 5 new test suites created with 25-30 test methods total (79 total: 11+17+10+26+15)
+- [x] All critical data layer tests pass
+- [x] DatabaseManager path resolution tested with all scenarios
+- [x] Migration idempotence verified for all versions

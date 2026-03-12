@@ -31,7 +31,7 @@ enum MigrationManager {
         // Checkpoint WAL to ensure a clean, consistent state before migrating.
         // TRUNCATE mode flushes WAL into the main DB and resets the WAL file.
         try dbPool.writeWithoutTransaction { db in
-            try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+            try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE)")
         }
         migrationLog.info("WAL checkpoint completed before migration")
 
@@ -742,6 +742,121 @@ enum MigrationManager {
                 """)
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_pen_frame_links_asset ON pen_frame_links(asset_id)")
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_pen_frame_links_ticket ON pen_frame_links(ticket_id)")
+        }
+
+        // Migration 23: Auto-detected decisions review queue (TASK-122)
+        migrator.registerMigration("v23_auto_decisions") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_auto_decisions (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    branch_id TEXT,
+                    project TEXT,
+                    summary TEXT NOT NULL,
+                    rationale TEXT NOT NULL DEFAULT '',
+                    context TEXT NOT NULL DEFAULT '',
+                    confidence REAL NOT NULL DEFAULT 0.0,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT DEFAULT (datetime('now')),
+                    reviewed_at TEXT
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_auto_decisions_status ON canvas_auto_decisions(status)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_auto_decisions_session ON canvas_auto_decisions(session_id)")
+        }
+
+        // Migration 24: Agent session model — sessions, file touches, attention events,
+        // event trigger rules, and UI state (TASK-134)
+        migrator.registerMigration("v24_agent_sessions") { db in
+            // Agent sessions — real-time observability for Command Center
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS agent_sessions (
+                    id TEXT PRIMARY KEY,
+                    agent_name TEXT,
+                    project TEXT NOT NULL,
+                    working_directory TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'interactive',
+                    status TEXT NOT NULL DEFAULT 'starting'
+                        CHECK(status IN ('starting','thinking','writing','tool_use','waiting','stuck','idle','completed','failed','interrupted')),
+                    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP,
+                    last_activity_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    current_task TEXT,
+                    current_file TEXT,
+                    current_tool TEXT,
+                    error_count INTEGER DEFAULT 0,
+                    retry_count INTEGER DEFAULT 0,
+                    consecutive_errors INTEGER DEFAULT 0,
+                    tokens_in INTEGER DEFAULT 0,
+                    tokens_out INTEGER DEFAULT 0,
+                    context_used INTEGER DEFAULT 0,
+                    context_max INTEGER DEFAULT 200000,
+                    files_changed TEXT DEFAULT '[]',
+                    exit_reason TEXT,
+                    dispatch_id TEXT
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_agent_sessions_status ON agent_sessions(status)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_agent_sessions_project ON agent_sessions(project)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_agent_sessions_active ON agent_sessions(status) WHERE status NOT IN ('completed', 'failed', 'interrupted')")
+
+            // File touches — conflict detection and activity tracking
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS agent_file_touches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    agent_name TEXT,
+                    file_path TEXT NOT NULL,
+                    project TEXT NOT NULL,
+                    action TEXT NOT NULL DEFAULT 'edit',
+                    touched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_file_touches_file ON agent_file_touches(file_path)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_file_touches_session ON agent_file_touches(session_id)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_file_touches_recent ON agent_file_touches(touched_at)")
+
+            // Attention events — permission prompts, stuck agents, error loops
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS agent_attention_events (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    type TEXT NOT NULL CHECK(type IN ('permission_needed','stuck','error_loop','completed','context_low','conflict','review_ready')),
+                    severity TEXT NOT NULL DEFAULT 'info' CHECK(severity IN ('critical','warning','info')),
+                    message TEXT NOT NULL,
+                    metadata TEXT,
+                    acknowledged INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    acknowledged_at TIMESTAMP
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_attention_unack ON agent_attention_events(acknowledged, severity)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_attention_session ON agent_attention_events(session_id)")
+
+            // Event trigger rules — user-defined automation
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS event_trigger_rules (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    enabled INTEGER DEFAULT 1,
+                    trigger_type TEXT NOT NULL,
+                    trigger_config TEXT NOT NULL,
+                    action_type TEXT NOT NULL,
+                    action_config TEXT NOT NULL,
+                    last_triggered_at TIMESTAMP,
+                    trigger_count INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+
+            // UI state — key-value persistence for view state
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS ui_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
         }
 
         try migrator.migrate(dbPool)

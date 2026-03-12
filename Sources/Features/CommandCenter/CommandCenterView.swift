@@ -6,11 +6,15 @@ struct CommandCenterView: View {
     @State private var viewModel = CommandCenterViewModel()
     @ObservedObject private var daemonService = DaemonService.shared
     @ObservedObject private var heartbeatStore = HeartbeatStore.shared
+    private var outputStore = JobOutputStreamStore.shared
+    @State private var isShowingRoster = false
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 header
+                DecisionReviewSection()
+                AgentStatusBoard()
                 LiveStreamsSection()
                 projectGrid
                 StarfleetActivitySection()
@@ -27,13 +31,27 @@ struct CommandCenterView: View {
         .onAppear {
             viewModel.startObserving()
             daemonService.refreshTmuxSessions()
+            AgentStatusStore.shared.startObserving()
         }
         .onDisappear {
             viewModel.stopObserving()
+            AgentStatusStore.shared.stopObserving()
         }
         .sheet(isPresented: $viewModel.isShowingDispatchSheet) {
             DispatchSheet(projects: viewModel.projects) { message, project, model in
                 viewModel.dispatch(message: message, project: project, model: model)
+            }
+        }
+        .sheet(isPresented: $isShowingRoster) {
+            StarfleetRosterView()
+                .frame(width: 700, height: 500)
+        }
+        .sheet(item: Binding(
+            get: { outputStore.inspectedEntry },
+            set: { _ in outputStore.dismissInspector() }
+        )) { entry in
+            JobOutputInspectorView(entry: entry) {
+                outputStore.dismissInspector()
             }
         }
     }
@@ -77,6 +95,16 @@ struct CommandCenterView: View {
             }
 
             Spacer()
+
+            // Crew Roster button
+            Button {
+                isShowingRoster = true
+            } label: {
+                Label("Crew", systemImage: "person.3.fill")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.bordered)
+            .accessibilityHint("Opens Starfleet crew roster for agent dispatch")
 
             // Dispatch button
             Button {
@@ -158,7 +186,9 @@ struct CommandCenterView: View {
         ActiveWorkSection(
             dispatches: viewModel.activeDispatches,
             jobs: viewModel.activeJobs,
-            onCancel: { id in viewModel.cancelDispatch(id) }
+            onCancel: { id in viewModel.cancelDispatch(id) },
+            onInspectDispatch: { id in outputStore.inspect(id: id, kind: .dispatch) },
+            onInspectJob: { id in outputStore.inspect(id: id, kind: .job) }
         )
     }
 
@@ -180,7 +210,13 @@ struct CommandCenterView: View {
 
                     VStack(spacing: 4) {
                         ForEach(viewModel.recentDispatches.prefix(10)) { dispatch in
-                            recentRow(dispatch)
+                            Button {
+                                outputStore.inspect(id: dispatch.id, kind: .dispatch)
+                            } label: {
+                                recentRow(dispatch)
+                            }
+                            .buttonStyle(.plain)
+                            .help("View dispatch output")
                         }
                     }
                 }

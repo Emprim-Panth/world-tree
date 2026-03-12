@@ -1,7 +1,7 @@
 # TASK-130: Stream cache partial writes + file handle leak
 
 **Priority**: medium
-**Status**: ready
+**Status**: Done
 **Category**: data-integrity
 **Source**: QA Audit Wave 6
 
@@ -13,5 +13,5 @@ StreamCacheManager writes token chunks without fsync (crash loses data). File ha
 2. Add timeout-based cleanup scanning for stale handles (>5 min)
 
 ## Acceptance Criteria
-- [ ] Stream data survives process crash
-- [ ] Stale file handles cleaned up automatically
+- [x] Stream data survives process crash
+- [x] Stale file handles cleaned up automatically

@@ -48,7 +48,7 @@ Sources/
 
 Shared: `~/.cortana/claude-memory/conversations.db`
 Canvas tables: `canvas_trees`, `canvas_branches`, `canvas_tickets`, `canvas_dispatches`, `canvas_jobs`
-Compass (read-only): `~/.cortana/compass.db` — project state written by cortana-core MCP
+Compass (read-write): `~/.cortana/compass.db` — project state read/written by World Tree and cortana-core MCP
 
 ## Tickets
 

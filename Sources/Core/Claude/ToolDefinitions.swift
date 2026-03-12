@@ -10,7 +10,10 @@ enum WorldTreeTools {
     static func definitions() -> [ToolSchema] {
         var tools = [readFile, writeFile, editFile, bash, glob, grep,
                      buildProject, runTests, checkpointCreate, checkpointRevert, checkpointList,
-                     backgroundRun, listTerminals, terminalOutput, searchConversation, captureScreenshot]
+                     backgroundRun, listTerminals, terminalOutput, searchConversation, captureScreenshot,
+                     gitStatus, gitLog, gitDiff,
+                     findUnusedCode, lintCheck,
+                     simulatorList, simulatorBuildRun, simulatorAppManage, simulatorScreenshot]
         // Apply strict mode to all tools — constrained decoding eliminates malformed arguments
         for i in tools.indices {
             tools[i].strict = true
@@ -379,6 +382,240 @@ enum WorldTreeTools {
                 "device_id": PropertySchema(
                     type: "string",
                     description: "Optional simulator device UDID. If omitted, uses the booted simulator."
+                ),
+            ],
+            required: []
+        )
+    )
+
+    // MARK: - Git Workflow Tools
+
+    static let gitStatus = ToolSchema(
+        name: "git_status",
+        description: """
+            Show the git working tree status for the project. Returns structured JSON with \
+            staged, unstaged, and untracked files grouped by category. \
+            Includes the current branch name and whether the tree is clean.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "path": PropertySchema(
+                    type: "string",
+                    description: "Project directory. Defaults to working directory."
+                ),
+            ],
+            required: []
+        )
+    )
+
+    static let gitLog = ToolSchema(
+        name: "git_log",
+        description: """
+            Show the git commit log for the project. Returns structured JSON with commit hash, \
+            author, date, and message for each entry. Defaults to the last 20 commits. \
+            Optionally filter by file path or limit the number of entries.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "limit": PropertySchema(
+                    type: "integer",
+                    description: "Maximum number of commits to return. Default 20, max 100."
+                ),
+                "file": PropertySchema(
+                    type: "string",
+                    description: "Filter log to commits affecting this file path."
+                ),
+                "path": PropertySchema(
+                    type: "string",
+                    description: "Project directory. Defaults to working directory."
+                ),
+            ],
+            required: []
+        )
+    )
+
+    static let gitDiff = ToolSchema(
+        name: "git_diff",
+        description: """
+            Show git diff output for the project. By default shows unstaged changes. \
+            Use staged=true to show staged changes, or provide a commit ref to diff against. \
+            Returns unified diff output with file paths and line numbers.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "staged": PropertySchema(
+                    type: "boolean",
+                    description: "Show staged (cached) changes instead of unstaged. Default false."
+                ),
+                "ref": PropertySchema(
+                    type: "string",
+                    description: "Commit reference to diff against (e.g. 'HEAD~3', 'main', a commit SHA)."
+                ),
+                "file": PropertySchema(
+                    type: "string",
+                    description: "Limit diff to a specific file path."
+                ),
+                "path": PropertySchema(
+                    type: "string",
+                    description: "Project directory. Defaults to working directory."
+                ),
+            ],
+            required: []
+        )
+    )
+
+    // MARK: - Code Analysis Tools
+
+    static let findUnusedCode = ToolSchema(
+        name: "find_unused_code",
+        description: """
+            Detect potentially unused code in a Swift project. Scans for types, functions, \
+            and properties that are declared but never referenced elsewhere. \
+            Returns JSON array of {symbol, kind, file, line, confidence}. \
+            Confidence is 'high' for internal symbols with zero references, 'medium' for \
+            symbols that may be used via protocols or dynamic dispatch.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "path": PropertySchema(
+                    type: "string",
+                    description: "Project directory to scan. Defaults to working directory."
+                ),
+                "kind": PropertySchema(
+                    type: "string",
+                    description: "Filter by symbol kind: 'type', 'function', 'property', or 'all'. Default 'all'."
+                ),
+            ],
+            required: []
+        )
+    )
+
+    static let lintCheck = ToolSchema(
+        name: "lint_check",
+        description: """
+            Run lint checks on a Swift project using SwiftLint (if available) or built-in \
+            heuristic checks. Returns JSON array of {file, line, column, severity, rule, message}. \
+            Severity is 'error' or 'warning'. If SwiftLint is installed, uses it directly; \
+            otherwise falls back to pattern-based checks for common issues.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "path": PropertySchema(
+                    type: "string",
+                    description: "Project directory or specific file to lint. Defaults to working directory."
+                ),
+                "fix": PropertySchema(
+                    type: "boolean",
+                    description: "Auto-fix correctable violations (SwiftLint --fix). Default false."
+                ),
+            ],
+            required: []
+        )
+    )
+
+    // MARK: - iOS Simulator Tools
+
+    static let simulatorList = ToolSchema(
+        name: "simulator_list",
+        description: """
+            List available iOS simulators with their state (booted/shutdown), runtime, \
+            and device UDID. Returns JSON array of {name, udid, state, runtime}. \
+            Use the UDID from this list for other simulator commands.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "filter": PropertySchema(
+                    type: "string",
+                    description: "Filter by state: 'booted', 'shutdown', or 'all'. Default 'all'."
+                ),
+            ],
+            required: []
+        )
+    )
+
+    static let simulatorBuildRun = ToolSchema(
+        name: "simulator_build_run",
+        description: """
+            Build an Xcode project for the iOS Simulator and optionally install/launch it. \
+            Auto-detects scheme and destination. Returns build result with errors/warnings, \
+            and install/launch status if requested. Boots the simulator if needed.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "scheme": PropertySchema(
+                    type: "string",
+                    description: "Xcode scheme name. Auto-detected if not specified."
+                ),
+                "device_id": PropertySchema(
+                    type: "string",
+                    description: "Simulator UDID to target. Uses booted simulator if omitted."
+                ),
+                "install": PropertySchema(
+                    type: "boolean",
+                    description: "Install the built app to the simulator. Default true."
+                ),
+                "launch": PropertySchema(
+                    type: "boolean",
+                    description: "Launch the app after install. Default true."
+                ),
+                "path": PropertySchema(
+                    type: "string",
+                    description: "Project directory. Defaults to working directory."
+                ),
+            ],
+            required: []
+        )
+    )
+
+    static let simulatorAppManage = ToolSchema(
+        name: "simulator_app_manage",
+        description: """
+            Manage apps on the iOS Simulator — launch, terminate, uninstall, or get info. \
+            Requires either a bundle identifier or an action that operates on the simulator itself.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "action": PropertySchema(
+                    type: "string",
+                    description: "Action to perform: 'launch', 'terminate', 'uninstall', 'list_apps', 'boot', 'shutdown'."
+                ),
+                "bundle_id": PropertySchema(
+                    type: "string",
+                    description: "App bundle identifier (e.g. 'com.forgeandcode.BookBuddy'). Required for launch/terminate/uninstall."
+                ),
+                "device_id": PropertySchema(
+                    type: "string",
+                    description: "Simulator UDID. Uses booted simulator if omitted."
+                ),
+            ],
+            required: ["action"]
+        )
+    )
+
+    static let simulatorScreenshot = ToolSchema(
+        name: "simulator_screenshot",
+        description: """
+            Take a screenshot of the iOS Simulator screen. Saves to a temporary file \
+            and returns the file path. Optionally specify a device if multiple simulators are booted.
+            """,
+        inputSchema: JSONSchema(
+            type: "object",
+            properties: [
+                "device_id": PropertySchema(
+                    type: "string",
+                    description: "Simulator UDID. Uses booted simulator if omitted."
+                ),
+                "output_path": PropertySchema(
+                    type: "string",
+                    description: "Custom output file path. Defaults to a timestamped file in /tmp."
                 ),
             ],
             required: []
