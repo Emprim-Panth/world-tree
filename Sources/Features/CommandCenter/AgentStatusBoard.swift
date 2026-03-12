@@ -55,7 +55,7 @@ struct AgentStatusBoard: View {
         if !store.activeSessions.isEmpty {
             LazyVGrid(columns: columns, spacing: 8) {
                 ForEach(store.activeSessions, id: \.id) { session in
-                    AgentStatusCard(session: session)
+                    AgentStatusCard(session: session, health: store.healthScores[session.id])
                 }
             }
         }

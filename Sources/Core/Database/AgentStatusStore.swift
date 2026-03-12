@@ -13,6 +13,7 @@ final class AgentStatusStore: ObservableObject {
     @Published private(set) var activeSessions: [AgentSession] = []
     @Published private(set) var recentCompleted: [AgentSession] = []
     @Published private(set) var totalActiveCount: Int = 0
+    @Published private(set) var healthScores: [String: SessionHealth] = [:]
 
     private var observation: DatabaseCancellable?
     private var watchdogTimer: Timer?
@@ -81,6 +82,11 @@ final class AgentStatusStore: ObservableObject {
                     self.activeSessions = result.active
                     self.recentCompleted = result.completed
                     self.totalActiveCount = result.active.count
+                    self.healthScores = Dictionary(
+                        uniqueKeysWithValues: result.active.map { s in
+                            (s.id, SessionHealth.calculate(from: s))
+                        }
+                    )
                 }
             }
         )
@@ -105,6 +111,11 @@ final class AgentStatusStore: ObservableObject {
             self.activeSessions = result.active
             self.recentCompleted = result.completed
             self.totalActiveCount = result.active.count
+            self.healthScores = Dictionary(
+                uniqueKeysWithValues: result.active.map { s in
+                    (s.id, SessionHealth.calculate(from: s))
+                }
+            )
         } catch {
             wtLog("[AgentStatusStore] Error refreshing async: \(error)")
         }
@@ -132,6 +143,8 @@ final class AgentStatusStore: ObservableObject {
     }
 
     private func runWatchdogCheck() async {
+        // Run conflict detection on every watchdog cycle
+        await ConflictDetector.shared.check()
         let df = Self.dateFormatter
         let cutoff = Date().addingTimeInterval(-Self.stuckThresholdSeconds)
         let cutoffStr = df.string(from: cutoff)

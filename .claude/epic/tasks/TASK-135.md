@@ -1,7 +1,7 @@
 # TASK-135: AgentStatusStore — Reactive Observation Layer
 
 **Priority**: critical
-**Status**: Todo
+**Status**: Done
 **Category**: architecture
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 1

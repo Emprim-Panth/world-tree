@@ -1,7 +1,7 @@
 # TASK-134: Agent Session Model + Database Migration
 
 **Priority**: critical
-**Status**: Todo
+**Status**: Done
 **Category**: architecture
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 1

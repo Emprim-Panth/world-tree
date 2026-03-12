@@ -1,7 +1,7 @@
 # TASK-142: Sprint 1 Integration — Wire Everything Together
 
 **Priority**: high
-**Status**: Todo
+**Status**: Done
 **Category**: integration
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 1

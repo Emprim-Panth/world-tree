@@ -15,6 +15,7 @@ struct CommandCenterView: View {
                 header
                 DecisionReviewSection()
                 AgentStatusBoard()
+                TokenDashboardView()
                 LiveStreamsSection()
                 projectGrid
                 StarfleetActivitySection()

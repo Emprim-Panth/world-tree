@@ -1,7 +1,7 @@
 # TASK-137: AgentStatusCard — Individual Agent Card Component
 
 **Priority**: high
-**Status**: Todo
+**Status**: Done
 **Category**: ui
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 1

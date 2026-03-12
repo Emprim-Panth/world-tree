@@ -1,7 +1,7 @@
 # TASK-140: Attention Panel UI
 
 **Priority**: high
-**Status**: Todo
+**Status**: Done
 **Category**: ui
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 1

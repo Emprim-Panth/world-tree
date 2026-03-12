@@ -4,6 +4,7 @@ import SwiftUI
 /// Designed to sit in a LazyVGrid alongside CompassProjectCard.
 struct AgentStatusCard: View {
     let session: AgentSession
+    var health: SessionHealth?
     var onTap: (() -> Void)?
 
     var body: some View {
@@ -133,6 +134,9 @@ struct AgentStatusCard: View {
 
     private var footerRow: some View {
         HStack(spacing: 10) {
+            // Health badge
+            SessionHealthBadge(health: health, size: 8)
+
             // Tokens
             HStack(spacing: 2) {
                 Image(systemName: "circle.grid.3x3")

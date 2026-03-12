@@ -1,7 +1,7 @@
 # TASK-136: Agent Status Board View
 
 **Priority**: critical
-**Status**: Todo
+**Status**: Done
 **Category**: ui
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 1

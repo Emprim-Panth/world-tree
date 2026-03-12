@@ -1,7 +1,7 @@
 # TASK-141: Diff Review — Git Diff Display Component
 
 **Priority**: high
-**Status**: Todo
+**Status**: Done
 **Category**: ui
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 1

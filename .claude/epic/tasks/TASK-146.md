@@ -1,7 +1,7 @@
 # TASK-146: Token & Cost Dashboard — UI
 
 **Priority**: medium
-**Status**: Todo
+**Status**: Done
 **Category**: ui
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 2

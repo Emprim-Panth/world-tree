@@ -1,7 +1,7 @@
 # TASK-143: Session Health Scoring — Red/Yellow/Green
 
 **Priority**: high
-**Status**: Todo
+**Status**: Done
 **Category**: architecture
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 2

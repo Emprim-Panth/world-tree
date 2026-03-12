@@ -110,6 +110,151 @@ final class TokenStore {
         }
     }
 
+    // MARK: - Dashboard Aggregates
+
+    /// Burn rate per session over the last N minutes.
+    func burnRates(windowMinutes: Int = 30) -> [SessionBurnRate] {
+        do {
+            let rows = try db.read { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT
+                        tu.session_id,
+                        ss.project,
+                        SUM(tu.input_tokens + tu.output_tokens) as total_tokens,
+                        (julianday('now') - julianday(MIN(tu.recorded_at))) * 24 * 60 as minutes_elapsed,
+                        CASE
+                            WHEN (julianday('now') - julianday(MIN(tu.recorded_at))) * 24 * 60 > 0
+                            THEN CAST(SUM(tu.input_tokens + tu.output_tokens) AS REAL)
+                                 / ((julianday('now') - julianday(MIN(tu.recorded_at))) * 24 * 60)
+                            ELSE 0
+                        END as tokens_per_minute,
+                        MIN(tu.recorded_at) as window_start
+                    FROM canvas_token_usage tu
+                    LEFT JOIN session_state ss ON ss.session_id = tu.session_id
+                    WHERE tu.recorded_at > datetime('now', '-\(windowMinutes) minutes')
+                    GROUP BY tu.session_id
+                    ORDER BY tokens_per_minute DESC
+                    """)
+            }
+            return rows.compactMap { row -> SessionBurnRate? in
+                guard let sessionId: String = row["session_id"],
+                      let total: Int = row["total_tokens"],
+                      let rate: Double = row["tokens_per_minute"],
+                      let windowStart: Date = row["window_start"] else { return nil }
+                return SessionBurnRate(
+                    sessionId: sessionId,
+                    project: row["project"],
+                    tokensPerMinute: rate,
+                    totalTokens: total,
+                    windowStart: windowStart
+                )
+            }
+        } catch {
+            wtLog("[TokenStore] burnRates failed: \(error)")
+            return []
+        }
+    }
+
+    /// Daily input+output totals for the last N days.
+    func dailyTotals(days: Int = 7) -> [DailyTokenTotal] {
+        do {
+            let rows = try db.read { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT
+                        date(recorded_at) as day,
+                        SUM(input_tokens) as input_tokens,
+                        SUM(output_tokens) as output_tokens,
+                        model
+                    FROM canvas_token_usage
+                    WHERE recorded_at > datetime('now', '-\(days) days')
+                    GROUP BY date(recorded_at), model
+                    ORDER BY day ASC
+                    """)
+            }
+            return rows.compactMap { row -> DailyTokenTotal? in
+                guard let dayStr: String = row["day"],
+                      let input: Int = row["input_tokens"],
+                      let output: Int = row["output_tokens"] else { return nil }
+                // Parse "yyyy-MM-dd" string to Date
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd"
+                formatter.timeZone = TimeZone(identifier: "UTC")
+                guard let date = formatter.date(from: dayStr) else { return nil }
+                return DailyTokenTotal(date: date, inputTokens: input, outputTokens: output, model: row["model"])
+            }
+        } catch {
+            wtLog("[TokenStore] dailyTotals failed: \(error)")
+            return []
+        }
+    }
+
+    /// Per-project aggregates from canvas_project_metrics.
+    func projectSummaries() -> [ProjectTokenSummary] {
+        do {
+            let rows = try db.read { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT
+                        pm.project,
+                        pm.total_tokens_in,
+                        pm.total_tokens_out,
+                        pm.last_activity_at,
+                        COUNT(CASE WHEN s.status NOT IN ('completed','failed','interrupted') THEN 1 END) as active_sessions
+                    FROM canvas_project_metrics pm
+                    LEFT JOIN agent_sessions s ON s.project = pm.project
+                    GROUP BY pm.project
+                    ORDER BY pm.last_activity_at DESC
+                    """)
+            }
+            return rows.compactMap { row -> ProjectTokenSummary? in
+                guard let project: String = row["project"],
+                      let totalIn: Int = row["total_tokens_in"],
+                      let totalOut: Int = row["total_tokens_out"] else { return nil }
+                return ProjectTokenSummary(
+                    project: project,
+                    totalIn: totalIn,
+                    totalOut: totalOut,
+                    activeSessions: row["active_sessions"] ?? 0,
+                    lastActivityAt: row["last_activity_at"]
+                )
+            }
+        } catch {
+            wtLog("[TokenStore] projectSummaries failed: \(error)")
+            return []
+        }
+    }
+
+    /// Context window usage per active session (reads from agent_sessions).
+    func contextUsage() -> [SessionContextUsage] {
+        do {
+            let rows = try db.read { db in
+                guard try db.tableExists("agent_sessions") else { return [Row]() }
+                return try Row.fetchAll(db, sql: """
+                    SELECT id, project, context_used, context_max
+                    FROM agent_sessions
+                    WHERE status NOT IN ('completed', 'failed', 'interrupted')
+                      AND context_max > 0
+                    ORDER BY CAST(context_used AS REAL) / context_max DESC
+                    """)
+            }
+            return rows.compactMap { row -> SessionContextUsage? in
+                guard let sessionId: String = row["id"],
+                      let used: Int = row["context_used"],
+                      let max: Int = row["context_max"],
+                      max > 0 else { return nil }
+                return SessionContextUsage(
+                    sessionId: sessionId,
+                    project: row["project"],
+                    estimatedUsed: used,
+                    maxContext: max,
+                    percentUsed: Double(used) / Double(max)
+                )
+            }
+        } catch {
+            wtLog("[TokenStore] contextUsage failed: \(error)")
+            return []
+        }
+    }
+
     // MARK: - Project Metrics
 
     /// Update canvas_project_metrics with cumulative token counts.

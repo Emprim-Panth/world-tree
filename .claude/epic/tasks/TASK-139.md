@@ -1,7 +1,7 @@
 # TASK-139: Attention Router — Priority Notification System
 
 **Priority**: critical
-**Status**: Todo
+**Status**: Done
 **Category**: architecture
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 1
