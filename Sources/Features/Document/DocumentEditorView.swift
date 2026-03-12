@@ -422,25 +422,8 @@ class DocumentEditorViewModel: ObservableObject {
     @Published var isProcessing = false {
         didSet {
             streaming.isProcessing = isProcessing
-            if isProcessing {
-                // Prevent App Nap + idle sleep while Cortana is working.
-                // .latencyCritical prevents ALL power throttling (including main RunLoop
-                // slowdown when behind other windows) — without it, the daemon-path stream
-                // pauses when World Tree is occluded and only resumes on user interaction.
-                sleepAssertion = ProcessInfo.processInfo.beginActivity(
-                    options: [.userInitiated, .idleSystemSleepDisabled, .latencyCritical],
-                    reason: "Cortana is working")
-                ProcessingRegistry.shared.register(branchId)
-            } else {
-                if let a = sleepAssertion {
-                    ProcessInfo.processInfo.endActivity(a)
-                    sleepAssertion = nil
-                }
-                ProcessingRegistry.shared.deregister(branchId)
-            }
         }
     }
-    private var sleepAssertion: NSObjectProtocol?
     /// Guard against rapid double-sends — true while processUserInput is executing.
     private var isSending = false
     @Published var branchOpportunity: BranchOpportunity?
@@ -603,23 +586,27 @@ class DocumentEditorViewModel: ObservableObject {
     private var usePollingFallback = true
     /// Retry counter for loadDocument() — prevents infinite recursion when DB is slow to initialize.
     private var loadRetryCount = 0
-    /// Reference to the active streaming task — allows cancellation when user interrupts.
-    private var streamTask: Task<Void, Never>?
+    /// Subscription cookie for the active ActiveStreamRegistry subscription.
+    /// nil when no stream is active for this branch.
+    private var activeSubscriptionId: UUID?
     /// Routes messages through daemon channel when available, falls back to ProviderManager.
     private let claudeBridge = ClaudeBridge()
     weak var parentBranchLayout: BranchLayoutViewModel?
 
     deinit {
-        // Persist any partial streaming content before deallocation — view was navigated away
-        // from while a response was in progress. The stream task is about to be cancelled;
-        // save what arrived so the user can see it when they return.
-        if let partial = streamingContent, !partial.isEmpty {
-            let sid = sessionId
-            // MessageStore uses synchronous GRDB writes — safe from deinit.
-            _ = try? MessageStore.shared.sendMessage(sessionId: sid, role: .assistant, content: partial)
+        // Unsubscribe from the active stream — does NOT cancel it.
+        // The Task continues running in ActiveStreamRegistry and persists the response on completion.
+        //
+        // NOTE: deinit is nonisolated — we access @MainActor properties via
+        // MainActor.assumeIsolated since deinit of a @MainActor class is guaranteed
+        // to run on the main thread in practice.
+        let bid = branchId
+        let subId = MainActor.assumeIsolated { activeSubscriptionId }
+        if let id = subId {
+            MainActor.assumeIsolated {
+                ActiveStreamRegistry.shared.unsubscribe(branchId: bid, id: id)
+            }
         }
-        streamTask?.cancel()
-        streamTask = nil
         streamFlushTimer?.invalidate()
         refreshTimer?.invalidate()
         if let observer = externalSourceObserver {
@@ -725,16 +712,19 @@ class DocumentEditorViewModel: ObservableObject {
         // can't see those changes. A 2s timer bridges the gap.
         startExternalRefreshTimer()
 
-        // Restore typing indicator when navigating back to a branch that still has an
-        // active stream in another ViewModel (user switched chats mid-response).
-        // ProcessingRegistry persists across ViewModel lifecycle — check it here so the
-        // typing indicator shows immediately instead of looking stagnant.
-        // GlobalStreamRegistry provides the accumulated content so the user sees what
-        // has been written so far, not a blank bubble.
-        if ProcessingRegistry.shared.isProcessing(branchId) && !isProcessing {
+        // Restore typing indicator when navigating back to a branch with an active stream.
+        // ActiveStreamRegistry owns the Task independent of any ViewModel lifecycle.
+        // Re-subscribe here so this ViewModel receives future events and shows current content.
+        if ActiveStreamRegistry.shared.isActive(branchId) && !isProcessing {
             isProcessing = true
-            streamingContent = GlobalStreamRegistry.shared.currentContent(for: branchId) ?? ""
-            startStreamBatching()  // re-arm flush timer so future tokens from the running Task display
+            streamingContent = ActiveStreamRegistry.shared.currentContent(for: branchId) ?? ""
+            startStreamBatching()
+            let id = ActiveStreamRegistry.shared.subscribe(branchId: branchId) { [weak self] event in
+                Task { @MainActor [weak self] in
+                    self?.handleStreamEvent(event)
+                }
+            }
+            activeSubscriptionId = id
         }
 
         // Listen for external message sources (e.g. Telegram → 📱 indicator)
@@ -1211,15 +1201,27 @@ class DocumentEditorViewModel: ObservableObject {
     }
 
     func cancelStream() {
-        if let partialContent = streamingContent, !partialContent.isEmpty {
-            streamTask?.cancel()
-            streamTask = nil
-            stopStreamBatching()
-            let partial = partialContent
-            streamingContent = nil
-            currentTool = nil
-            isProcessing = false
-            GlobalStreamRegistry.shared.endStream(branchId: branchId, notify: false)
+        guard ActiveStreamRegistry.shared.isActive(branchId) else { return }
+
+        // Grab content before cancellation so we can build the UI section below.
+        let partial = ActiveStreamRegistry.shared.currentContent(for: branchId) ?? streamingContent ?? ""
+
+        // Unsubscribe first so handleStreamEvent doesn't fire during/after cancel
+        if let id = activeSubscriptionId {
+            ActiveStreamRegistry.shared.unsubscribe(branchId: branchId, id: id)
+            activeSubscriptionId = nil
+        }
+
+        // Registry persists partial and cleans up WakeLock / ProcessingRegistry
+        ActiveStreamRegistry.shared.cancelStream(branchId: branchId)
+
+        stopStreamBatching()
+        streamingContent = nil
+        currentTool = nil
+        isProcessing = false
+
+        // Show partial as a completed section in the UI
+        if !partial.isEmpty {
             do {
                 let msg = try MessageStore.shared.sendMessage(
                     sessionId: sessionId, role: .assistant, content: partial)
@@ -1245,14 +1247,6 @@ class DocumentEditorViewModel: ObservableObject {
                 document.sections.append(section)
             }
             Task { await StreamCacheManager.shared.closeStream(sessionId: sessionId) }
-        } else if streamTask != nil {
-            streamTask?.cancel()
-            streamTask = nil
-            stopStreamBatching()
-            GlobalStreamRegistry.shared.endStream(branchId: branchId, notify: false)
-            streamingContent = nil
-            currentTool = nil
-            isProcessing = false
         }
     }
 
@@ -1290,294 +1284,262 @@ class DocumentEditorViewModel: ObservableObject {
 
     private func processUserInput(_ section: DocumentSection, sectionUUID: UUID? = nil, messageText: String? = nil, attachments: [Attachment] = []) {
         isSending = true
-        // If we're mid-stream, persist the partial response before starting the new one.
-        // This prevents the streaming text from vanishing when the user interrupts.
-        if let partialContent = streamingContent, !partialContent.isEmpty {
-            streamTask?.cancel()
-            streamTask = nil
+        // If we're mid-stream, cancel it (registry persists partial), then proceed.
+        if ActiveStreamRegistry.shared.isActive(branchId) {
+            let partial = ActiveStreamRegistry.shared.currentContent(for: branchId) ?? streamingContent ?? ""
 
-            let partial = partialContent
-            streamingContent = nil
-            currentTool = nil
-
-            // Persist the interrupted response as a completed section
-            do {
-                let msg = try MessageStore.shared.sendMessage(
-                    sessionId: sessionId, role: .assistant, content: partial)
-                seenMessageIds.insert(msg.id)
-                let interruptedSection = DocumentSection(
-                    id: stableId(for: msg.id),
-                    content: AttributedString(partial),
-                    author: .assistant,
-                    timestamp: msg.createdAt,
-                    branchPoint: true,
-                    isEditable: false,
-                    messageId: msg.id
-                )
-                document.sections.append(interruptedSection)
-            } catch {
-                wtLog("[DocumentEditor] Failed to persist interrupted response: \(error)")
-                let interruptedSection = DocumentSection(
-                    content: AttributedString(partial),
-                    author: .assistant,
-                    timestamp: Date(),
-                    branchPoint: true,
-                    isEditable: false
-                )
-                document.sections.append(interruptedSection)
+            // Unsubscribe before cancel so we don't get spurious events
+            if let id = activeSubscriptionId {
+                ActiveStreamRegistry.shared.unsubscribe(branchId: branchId, id: id)
+                activeSubscriptionId = nil
             }
 
-            // Close the crash-recovery stream file for the interrupted response
-            Task { await StreamCacheManager.shared.closeStream(sessionId: sessionId) }
+            // Registry handles persist + WakeLock + ProcessingRegistry cleanup
+            ActiveStreamRegistry.shared.cancelStream(branchId: branchId)
 
-            wtLog("[DocumentEditor] Interrupted mid-stream — preserved partial response (\(partial.count) chars)")
-        } else if streamTask != nil {
-            // Processing but no content yet (thinking state) — just cancel
-            streamTask?.cancel()
-            streamTask = nil
             streamingContent = nil
             currentTool = nil
-            GlobalStreamRegistry.shared.endStream(branchId: branchId, notify: false)
+
+            if !partial.isEmpty {
+                do {
+                    let msg = try MessageStore.shared.sendMessage(
+                        sessionId: sessionId, role: .assistant, content: partial)
+                    seenMessageIds.insert(msg.id)
+                    let interruptedSection = DocumentSection(
+                        id: stableId(for: msg.id),
+                        content: AttributedString(partial),
+                        author: .assistant,
+                        timestamp: msg.createdAt,
+                        branchPoint: true,
+                        isEditable: false,
+                        messageId: msg.id
+                    )
+                    document.sections.append(interruptedSection)
+                } catch {
+                    wtLog("[DocumentEditor] Failed to persist interrupted response: \(error)")
+                    let interruptedSection = DocumentSection(
+                        content: AttributedString(partial),
+                        author: .assistant,
+                        timestamp: Date(),
+                        branchPoint: true,
+                        isEditable: false
+                    )
+                    document.sections.append(interruptedSection)
+                }
+                Task { await StreamCacheManager.shared.closeStream(sessionId: sessionId) }
+                wtLog("[DocumentEditor] Interrupted mid-stream — preserved partial response (\(partial.count) chars)")
+            }
         }
 
-        isProcessing = true
-        GlobalStreamRegistry.shared.beginStream(
-            branchId: branchId, sessionId: sessionId,
-            treeId: treeId, projectName: cachedProject
-        )
         let content = messageText ?? String(section.content.characters)
 
+        // Context state captured before the async Task
+        let model = UserDefaults.standard.string(forKey: AppConstants.defaultModelKey) ?? AppConstants.defaultModel
+        let now = Date()
+        let isSessionStale = lastSendTimestamp.map {
+            now.timeIntervalSince($0) > DocumentEditorViewModel.sessionStaleInterval
+        } ?? true
+        lastSendTimestamp = now
+        let rotationCheckpoint = checkpointContext
+        checkpointContext = nil
+        let resolvedWorkingDir = workingDirectory ?? AppState.shared.selectedProjectPath
+
+        // Persist user message synchronously before streaming begins
+        let isNew = seenMessageIds.isEmpty
+        do {
+            let msg = try MessageStore.shared.sendMessage(
+                sessionId: sessionId, role: .user, content: content)
+            if let uuid = sectionUUID {
+                stableSectionIds[msg.id] = uuid
+            }
+            seenMessageIds.insert(msg.id)
+            if isNew {
+                BranchAutoNamer.shared.autoNameIfNeeded(branchId: branchId)
+            }
+        } catch {
+            wtLog("[DocumentEditor] Failed to persist user message: \(error)")
+            errorMessage = "Failed to save message: \(error.localizedDescription)"
+        }
+
+        do {
+            try MessageStore.shared.ensureSession(sessionId: sessionId, workingDirectory: workingDirectory)
+        } catch {
+            wtLog("[DocumentEditor] ensureSession failed for \(sessionId): \(error)")
+        }
+
+        let ctx = SendContextBuilder.build(
+            message: content,
+            sessionId: sessionId,
+            branchId: branchId,
+            model: model,
+            workingDirectory: resolvedWorkingDir,
+            project: cachedProject,
+            checkpointContext: rotationCheckpoint,
+            sections: document.sections,
+            isSessionStale: isSessionStale,
+            attachments: attachments
+        )
+
+        isProcessing = true
+        streamingContent = ""
+        startStreamBatching()
+        Task { await StreamCacheManager.shared.openStreamFile(sessionId: sessionId) }
+
+        // Start the stream first — this creates the handle synchronously (Task body is deferred).
+        // Then subscribe so the handle exists to accept the subscriber.
+        ActiveStreamRegistry.shared.startStream(
+            branchId: branchId,
+            sessionId: sessionId,
+            treeId: treeId,
+            projectName: cachedProject,
+            stream: claudeBridge.send(context: ctx)
+        )
+
+        let subscriptionId = ActiveStreamRegistry.shared.subscribe(branchId: branchId) { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.handleStreamEvent(event)
+            }
+        }
+        activeSubscriptionId = subscriptionId
+
         isSending = false
-        streamTask = Task {
-            // 0. Ensure session row exists — guards against FK failures on orphaned branches
-            do {
-                try MessageStore.shared.ensureSession(sessionId: sessionId, workingDirectory: workingDirectory)
-            } catch {
-                wtLog("[DocumentEditor] ensureSession failed for \(sessionId): \(error)")
+    }
+
+    // MARK: - Stream Event Handler
+
+    /// Handles BridgeEvents forwarded by ActiveStreamRegistry.
+    /// Called on MainActor via the subscriber callback wrapper.
+    @MainActor
+    private func handleStreamEvent(_ event: BridgeEvent) async {
+        switch event {
+        case .text(let token):
+            pendingTokenBuffer += token
+            mirrorToTerminal("\u{1B}[1;37m\(token)\u{1B}[0m")
+
+        case .thinking(let chunk):
+            mirrorToTerminal("\u{1B}[2;3m\(chunk)\u{1B}[0m")
+
+        case .toolStart(let name, let input):
+            let activity = ToolActivity(name: name, input: input, status: .running)
+            currentTool = activity.displayDescription
+            GlobalStreamRegistry.shared.updateTool(branchId: branchId, tool: currentTool)
+            let ts = Self.terminalTimestamp()
+            var header = "\r\n\u{1B}[2m\u{1B}[90m─── \(ts) "
+            if let parsed = activity.parsedInput {
+                switch name {
+                case "Bash", "bash":
+                    let cmd = parsed["command"] as? String ?? ""
+                    let preview = cmd.components(separatedBy: .newlines).first ?? cmd
+                    let truncated = preview.count > 120 ? String(preview.prefix(120)) + "…" : preview
+                    header += "\u{1B}[0m\r\n\u{1B}[1;36m  ❯ \(truncated)\u{1B}[0m"
+                case "Read", "read_file":
+                    let path = Self.shortenPath(parsed["file_path"] as? String ?? "file")
+                    header += "\u{1B}[0m\r\n\u{1B}[33m  ◆ Read \(path)\u{1B}[0m"
+                case "Edit", "edit_file":
+                    let path = Self.shortenPath(parsed["file_path"] as? String ?? "file")
+                    header += "\u{1B}[0m\r\n\u{1B}[32m  ◆ Edit \(path)\u{1B}[0m"
+                case "Write", "write_file":
+                    let path = Self.shortenPath(parsed["file_path"] as? String ?? "file")
+                    header += "\u{1B}[0m\r\n\u{1B}[32m  ◆ Write \(path)\u{1B}[0m"
+                case "Grep", "grep":
+                    let pattern = parsed["pattern"] as? String ?? ""
+                    let path = Self.shortenPath(parsed["path"] as? String ?? "")
+                    header += "\u{1B}[0m\r\n\u{1B}[35m  ◆ Grep \"\(pattern)\" \(path)\u{1B}[0m"
+                case "Glob", "glob":
+                    let pattern = parsed["pattern"] as? String ?? ""
+                    header += "\u{1B}[0m\r\n\u{1B}[35m  ◆ Glob \"\(pattern)\"\u{1B}[0m"
+                case "Agent", "agent":
+                    let desc = parsed["description"] as? String ?? "subagent"
+                    header += "\u{1B}[0m\r\n\u{1B}[34m  ◆ Agent: \(desc)\u{1B}[0m"
+                default:
+                    header += "\u{1B}[0m\r\n\u{1B}[2m  ◆ \(activity.displayDescription)\u{1B}[0m"
+                }
+            } else {
+                header += "\u{1B}[0m\r\n\u{1B}[2m  ◆ \(activity.displayDescription)\u{1B}[0m"
+            }
+            mirrorToTerminal(header + "\r\n")
+
+        case .toolEnd(let name, let result, let isError):
+            currentTool = nil
+            GlobalStreamRegistry.shared.updateTool(branchId: branchId, tool: nil)
+            if !result.isEmpty {
+                let lines = result.components(separatedBy: .newlines)
+                let maxLines = isError ? 20 : 15
+                let previewLines = lines.prefix(maxLines)
+                let indented = previewLines.map { line -> String in
+                    let trimmed = line.count > 200 ? String(line.prefix(200)) + "…" : line
+                    return "  \u{1B}[90m│\u{1B}[0m \u{1B}[2m\(trimmed)\u{1B}[0m"
+                }.joined(separator: "\r\n")
+                let overflow = lines.count > maxLines
+                    ? "\r\n  \u{1B}[90m│ … \(lines.count - maxLines) more lines\u{1B}[0m" : ""
+                let statusIcon = isError ? "\u{1B}[31m✗\u{1B}[0m" : "\u{1B}[32m✓\u{1B}[0m"
+                mirrorToTerminal("\(indented)\(overflow)\r\n  \u{1B}[90m└─\u{1B}[0m \(statusIcon)\r\n")
+            } else {
+                let statusIcon = isError ? "\u{1B}[31m✗\u{1B}[0m" : "\u{1B}[32m✓\u{1B}[0m"
+                mirrorToTerminal("  \u{1B}[90m└─\u{1B}[0m \(statusIcon)\r\n")
             }
 
-            // 1. Persist user message to DB
-            // Evaluate isNew BEFORE inserting — it must reflect whether the session had
-            // prior messages, not whether the message we're about to insert exists yet.
-            let isNew = seenMessageIds.isEmpty
-            do {
-                let msg = try MessageStore.shared.sendMessage(
-                    sessionId: sessionId, role: .user, content: content)
-                // Pre-register the section UUID under this DB message ID so applyMessages
-                // returns the same UUID and never creates a duplicate view.
-                if let uuid = sectionUUID {
-                    stableSectionIds[msg.id] = uuid
-                }
-                seenMessageIds.insert(msg.id)
-
-                // Auto-name the branch from the first user message
-                if isNew {
-                    BranchAutoNamer.shared.autoNameIfNeeded(branchId: branchId)
-                }
-            } catch {
-                wtLog("[DocumentEditor] Failed to persist user message: \(error)")
-                errorMessage = "Failed to save message: \(error.localizedDescription)"
-            }
-
-            // 2. Route through ClaudeCodeProvider
-            let model = UserDefaults.standard.string(forKey: AppConstants.defaultModelKey) ?? AppConstants.defaultModel
-
-            // Context injection strategy — two tiers to handle both cold starts and
-            // back-to-back --resume failures:
-            //
-            // • Always:  last 2 turns (immediate reminder, ~150 tokens). Covers the case
-            //            where --resume silently fails on a consecutive message — Claude
-            //            always has at minimum the previous exchange.
-            //
-            // • Stale:   last 4 turns injected when first send after launch or >15 min gap.
-            //            Covers session expiry after leaving the app.
-            let now = Date()
-            let isSessionStale = lastSendTimestamp.map {
-                now.timeIntervalSince($0) > DocumentEditorViewModel.sessionStaleInterval
-            } ?? true  // nil = first send this launch
-            lastSendTimestamp = now
-
-            // Consume any rotation checkpoint before building context — cleared here so
-            // it's used exactly once (this request) even if the request fails mid-stream.
-            let rotationCheckpoint = checkpointContext
-            checkpointContext = nil
-
-            // Branch working directory takes priority; fall back to sidebar-selected project.
-            let resolvedWorkingDir = workingDirectory ?? AppState.shared.selectedProjectPath
-
-            let ctx = SendContextBuilder.build(
-                message: content,
-                sessionId: sessionId,
-                branchId: branchId,
-                model: model,
-                workingDirectory: resolvedWorkingDir,
-                project: cachedProject,
-                checkpointContext: rotationCheckpoint,
-                sections: document.sections,
-                isSessionStale: isSessionStale,
-                attachments: attachments
-            )
-
-            // 4. Stream response through ClaudeBridge — routes via daemon channel if available,
-            //    falls back to ProviderManager (ClaudeCodeProvider) automatically.
-            var fullResponse = ""
-            var hadExplicitError = false
-            streamingContent = ""  // Start streaming indicator
-            startStreamBatching()
-
-            // Open SSD crash-recovery file — fire-and-forget, doesn't need to be ready
-            // before the first token. appendToStream() guards on handle presence.
-            Task { await StreamCacheManager.shared.openStreamFile(sessionId: sessionId) }
-
-            for await event in claudeBridge.send(context: ctx) {
-                // Bail out cleanly if this task was cancelled (user interrupted)
-                if Task.isCancelled {
-                    wtLog("[DocumentEditor] Stream task cancelled — stopping token consumption")
-                    break
-                }
-
-                switch event {
-                case .text(let token):
-                    fullResponse += token
-                    pendingTokenBuffer += token  // batched — Timer flushes at 60fps
-                    // Mirror Claude's response text — bold white so it stands out from tool noise
-                    mirrorToTerminal("\u{1B}[1;37m\(token)\u{1B}[0m")
-                    // Fire-and-forget — actor serialises writes, never blocks the stream
-                    Task { await StreamCacheManager.shared.appendToStream(sessionId: self.sessionId, chunk: token) }
-
-                case .thinking(let chunk):
-                    // Extended thinking tokens — surfaced in the terminal only (dimmed italic)
-                    // so reasoning is visible without cluttering the chat bubble.
-                    mirrorToTerminal("\u{1B}[2;3m\(chunk)\u{1B}[0m")
-
-                case .toolStart(let name, let input):
-                    let activity = ToolActivity(name: name, input: input, status: .running)
-                    currentTool = activity.displayDescription
-                    GlobalStreamRegistry.shared.updateTool(branchId: branchId, tool: currentTool)
-                    let ts = Self.terminalTimestamp()
-                    // ── Tool header with separator, timestamp, and rich context ──
-                    var header = "\r\n\u{1B}[2m\u{1B}[90m─── \(ts) "
-                    if let parsed = activity.parsedInput {
-                        switch name {
-                        case "Bash", "bash":
-                            let cmd = parsed["command"] as? String ?? ""
-                            let preview = cmd.components(separatedBy: .newlines).first ?? cmd
-                            let truncated = preview.count > 120 ? String(preview.prefix(120)) + "…" : preview
-                            header += "\u{1B}[0m\r\n\u{1B}[1;36m  ❯ \(truncated)\u{1B}[0m"
-                        case "Read", "read_file":
-                            let path = Self.shortenPath(parsed["file_path"] as? String ?? "file")
-                            header += "\u{1B}[0m\r\n\u{1B}[33m  ◆ Read \(path)\u{1B}[0m"
-                        case "Edit", "edit_file":
-                            let path = Self.shortenPath(parsed["file_path"] as? String ?? "file")
-                            header += "\u{1B}[0m\r\n\u{1B}[32m  ◆ Edit \(path)\u{1B}[0m"
-                        case "Write", "write_file":
-                            let path = Self.shortenPath(parsed["file_path"] as? String ?? "file")
-                            header += "\u{1B}[0m\r\n\u{1B}[32m  ◆ Write \(path)\u{1B}[0m"
-                        case "Grep", "grep":
-                            let pattern = parsed["pattern"] as? String ?? ""
-                            let path = Self.shortenPath(parsed["path"] as? String ?? "")
-                            header += "\u{1B}[0m\r\n\u{1B}[35m  ◆ Grep \"\(pattern)\" \(path)\u{1B}[0m"
-                        case "Glob", "glob":
-                            let pattern = parsed["pattern"] as? String ?? ""
-                            header += "\u{1B}[0m\r\n\u{1B}[35m  ◆ Glob \"\(pattern)\"\u{1B}[0m"
-                        case "Agent", "agent":
-                            let desc = parsed["description"] as? String ?? "subagent"
-                            header += "\u{1B}[0m\r\n\u{1B}[34m  ◆ Agent: \(desc)\u{1B}[0m"
-                        default:
-                            header += "\u{1B}[0m\r\n\u{1B}[2m  ◆ \(activity.displayDescription)\u{1B}[0m"
-                        }
-                    } else {
-                        header += "\u{1B}[0m\r\n\u{1B}[2m  ◆ \(activity.displayDescription)\u{1B}[0m"
-                    }
-                    mirrorToTerminal(header + "\r\n")
-
-                case .toolEnd(let name, let result, let isError):
-                    currentTool = nil
-                    GlobalStreamRegistry.shared.updateTool(branchId: branchId, tool: nil)
-                    if !result.isEmpty {
-                        let lines = result.components(separatedBy: .newlines)
-                        // Indent every line of output for visual nesting under the tool header
-                        let maxLines = isError ? 20 : 15
-                        let previewLines = lines.prefix(maxLines)
-                        let indented = previewLines.map { line -> String in
-                            let trimmed = line.count > 200 ? String(line.prefix(200)) + "…" : line
-                            return "  \u{1B}[90m│\u{1B}[0m \u{1B}[2m\(trimmed)\u{1B}[0m"
-                        }.joined(separator: "\r\n")
-                        let overflow = lines.count > maxLines
-                            ? "\r\n  \u{1B}[90m│ … \(lines.count - maxLines) more lines\u{1B}[0m" : ""
-                        let statusIcon = isError ? "\u{1B}[31m✗\u{1B}[0m" : "\u{1B}[32m✓\u{1B}[0m"
-                        mirrorToTerminal("\(indented)\(overflow)\r\n  \u{1B}[90m└─\u{1B}[0m \(statusIcon)\r\n")
-                    } else {
-                        let statusIcon = isError ? "\u{1B}[31m✗\u{1B}[0m" : "\u{1B}[32m✓\u{1B}[0m"
-                        mirrorToTerminal("  \u{1B}[90m└─\u{1B}[0m \(statusIcon)\r\n")
-                    }
-
-                case .done(let usage):
-                    if usage.totalInputTokens > 0 || usage.totalOutputTokens > 0 {
-                        let inK = String(format: "%.1f", Double(usage.totalInputTokens) / 1000.0)
-                        let outK = String(format: "%.1f", Double(usage.totalOutputTokens) / 1000.0)
-                        mirrorToTerminal("\r\n\u{1B}[90m━━━ \(inK)K in · \(outK)K out ━━━\u{1B}[0m\r\n\r\n")
-
-                        TokenStore.shared.record(
-                            sessionId: sessionId,
-                            branchId: branchId,
-                            inputTokens: usage.totalInputTokens,
-                            outputTokens: usage.totalOutputTokens,
-                            cacheHitTokens: usage.cacheHitTokens,
-                            model: model
-                        )
-                    }
-
-                case .error(let msg):
-                    hadExplicitError = true
-                    wtLog("[DocumentEditor] Provider error: \(msg)")
-                    mirrorToTerminal("\r\n\u{1B}[1;31m  ⚠ Error: \(msg)\u{1B}[0m\r\n")
-                    errorMessage = msg
-                    if fullResponse.isEmpty {
-                        fullResponse = "⚠️ \(msg)"
-                    }
-                }
-            }
-            stopStreamBatching()       // flush remaining tokens, stop timer
-            GlobalStreamRegistry.shared.endStream(branchId: branchId, notify: !Task.isCancelled)
-            streamingContent = nil     // Stream complete — persisted section takes over
+        case .done(let usage):
+            // Flush + stop batching timer before any async work
+            stopStreamBatching()
+            streamingContent = nil
             hasNewStreamContent = false
+            currentTool = nil
 
-            // If cancelled, skip persist — the interruption handler already saved the partial
-            guard !Task.isCancelled else { return }
-            // If stream ended with no output and no explicit error, the CLI silently failed.
-            // Rotate the session so the next attempt starts clean.
-            if fullResponse.isEmpty && !hadExplicitError {
-                fullResponse = "⚠️ No response received — the session may have expired. Send another message to continue."
+            // Token accounting
+            let model = UserDefaults.standard.string(forKey: AppConstants.defaultModelKey) ?? AppConstants.defaultModel
+            if usage.totalInputTokens > 0 || usage.totalOutputTokens > 0 {
+                let inK = String(format: "%.1f", Double(usage.totalInputTokens) / 1000.0)
+                let outK = String(format: "%.1f", Double(usage.totalOutputTokens) / 1000.0)
+                mirrorToTerminal("\r\n\u{1B}[90m━━━ \(inK)K in · \(outK)K out ━━━\u{1B}[0m\r\n\r\n")
+                TokenStore.shared.record(
+                    sessionId: sessionId,
+                    branchId: branchId,
+                    inputTokens: usage.totalInputTokens,
+                    outputTokens: usage.totalOutputTokens,
+                    cacheHitTokens: usage.cacheHitTokens,
+                    model: model
+                )
+            }
+
+            // The registry already persisted the response to DB.
+            // Read the full content from the registry (still valid — fires before removeValue).
+            let fullResponse = ActiveStreamRegistry.shared.currentContent(for: branchId) ?? ""
+
+            // Handle empty response (CLI silent fail)
+            var displayResponse = fullResponse
+            if displayResponse.isEmpty {
+                displayResponse = "⚠️ No response received — the session may have expired. Send another message to continue."
                 wtLog("[DocumentEditor] Stream ended with no output — rotating session for recovery")
                 if let cliProvider = ProviderManager.shared.activeProvider as? ClaudeCodeProvider {
                     cliProvider.rotateSession(for: sessionId)
                 }
             }
 
-            // 5. Persist assistant response, THEN clear streaming so there's never a gap
-            // where neither the stream view nor the persisted section is visible.
-            if !fullResponse.isEmpty {
+            // Reload persisted section from DB — registry already wrote it
+            if !displayResponse.isEmpty {
                 do {
-                    let msg = try MessageStore.shared.sendMessage(
-                        sessionId: sessionId, role: .assistant, content: fullResponse)
-                    seenMessageIds.insert(msg.id)
-                    pendingAssistantContent = fullResponse
-                    let assistantSection = DocumentSection(
-                        id: stableId(for: msg.id),
-                        content: AttributedString(fullResponse),
-                        author: .assistant,
-                        timestamp: msg.createdAt,
-                        branchPoint: true,
-                        isEditable: false,
-                        messageId: msg.id,
-                        hasFindingSignal: !isRootBranch && scanForFindingSignals(fullResponse)
-                    )
-                    document.sections.append(assistantSection)
+                    // Fetch the last assistant message from DB (just persisted by registry)
+                    let msgs = try MessageStore.shared.getMessages(sessionId: sessionId)
+                    if let lastAssistant = msgs.last(where: { $0.role == "assistant" }) {
+                        seenMessageIds.insert(lastAssistant.id)
+                        pendingAssistantContent = lastAssistant.content
+                        let assistantSection = DocumentSection(
+                            id: stableId(for: lastAssistant.id),
+                            content: AttributedString(lastAssistant.content),
+                            author: .assistant,
+                            timestamp: lastAssistant.createdAt,
+                            branchPoint: true,
+                            isEditable: false,
+                            messageId: lastAssistant.id,
+                            hasFindingSignal: !isRootBranch && scanForFindingSignals(lastAssistant.content)
+                        )
+                        document.sections.append(assistantSection)
+                    }
                 } catch {
-                    wtLog("[DocumentEditor] Failed to persist assistant response: \(error)")
+                    wtLog("[DocumentEditor] Failed to load persisted assistant response: \(error)")
                     let assistantSection = DocumentSection(
-                        content: AttributedString(fullResponse),
+                        content: AttributedString(displayResponse),
                         author: .assistant,
                         timestamp: Date(),
                         branchPoint: true,
@@ -1586,22 +1548,13 @@ class DocumentEditorViewModel: ObservableObject {
                     document.sections.append(assistantSection)
                 }
             }
-            // Clean completion — delete the temp file (nothing to recover)
-            // Actor serialises this after any pending appendToStream calls finish
-            await StreamCacheManager.shared.closeStream(sessionId: sessionId)
 
-            // Write a continuity snapshot after every completed exchange.
-            // This guarantees a recent checkpoint even if the app crashes before
-            // the next onDisappear fires — no API call, just persists recent turns.
             writeSnapshotCheckpoint()
 
-            // Auto-detect decisions in the assistant response (TASK-122).
-            // Runs detection on the full response text, saves any findings as
-            // pending review items. Non-blocking — detection is fast (~1ms).
-            if !fullResponse.isEmpty {
-                let detected = DecisionDetector.shared.detect(in: fullResponse)
+            // Auto-detect decisions
+            if !displayResponse.isEmpty && !displayResponse.hasPrefix("⚠️") {
+                let detected = DecisionDetector.shared.detect(in: displayResponse)
                 if !detected.isEmpty {
-                    // Filter out decisions already seen in this session
                     let novel = detected.filter {
                         !AutoDecisionStore.shared.isDuplicate(summary: $0.summary, sessionId: sessionId)
                     }
@@ -1617,8 +1570,7 @@ class DocumentEditorViewModel: ObservableObject {
                 }
             }
 
-            // Check if context rotation is needed after this exchange.
-            // rotateSession() is a protocol method with a no-op default — works for any provider.
+            // Session rotation check
             if let activeProvider = ProviderManager.shared.activeProvider {
                 let allMessages: [Message]
                 do {
@@ -1640,46 +1592,44 @@ class DocumentEditorViewModel: ObservableObject {
                 }
             }
 
-            // Update local context cache so next request builds context from SSD, not Dropbox
+            // Update context cache
             let cacheLimit = await StreamCacheManager.shared.contextMessageLimit
-            let cachedMsgs: [StreamCacheManager.CachedMessage] = document.sections.suffix(cacheLimit).map { section in
+            let cachedMsgs: [StreamCacheManager.CachedMessage] = document.sections.suffix(cacheLimit).map { sec in
                 let role: String
-                switch section.author {
+                switch sec.author {
                 case .user:      role = "user"
                 case .assistant: role = "assistant"
                 case .system:    role = "system"
                 }
                 return StreamCacheManager.CachedMessage(
                     role: role,
-                    content: String(section.content.characters),
-                    timestamp: section.timestamp
+                    content: String(sec.content.characters),
+                    timestamp: sec.timestamp
                 )
             }
             await StreamCacheManager.shared.updateContextCache(sessionId: sessionId, messages: cachedMsgs)
 
-            streamingContent = nil  // Clear AFTER section is in place — no blank gap
-            currentTool = nil
+            isProcessing = false
 
-            // Notify when response is ready and the user isn't watching this branch:
-            // - app is in the background, OR
-            // - user has navigated to a different branch / the Command Center
-            let userIsWatching = NSApp.isActive && AppState.shared.selectedBranchId == branchId
-            if !fullResponse.hasPrefix("⚠️"), !userIsWatching {
-                let preview = String(fullResponse.prefix(120))
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                Task { await NotificationManager.shared.notify(
-                    title: "\(LocalAgentIdentity.name) is ready",
-                    body: preview
-                ) }
+            // User notification when not watching
+            if !displayResponse.hasPrefix("⚠️") {
+                let userIsWatching = NSApp.isActive && AppState.shared.selectedBranchId == branchId
+                if !userIsWatching {
+                    let preview = String(displayResponse.prefix(120))
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    Task { await NotificationManager.shared.notify(
+                        title: "\(LocalAgentIdentity.name) is ready",
+                        body: preview
+                    ) }
+                }
             }
 
-            // Auto-speak the response if enabled
+            // Auto-speak
             if UserDefaults.standard.bool(forKey: AppConstants.voiceAutoSpeakKey),
-               !fullResponse.hasPrefix("⚠️") {
-                let speakText = fullResponse.count > 500
-                    ? String(fullResponse.prefix(500)) + "..."
-                    : fullResponse
-                // Strip markdown for cleaner speech
+               !displayResponse.hasPrefix("⚠️") {
+                let speakText = displayResponse.count > 500
+                    ? String(displayResponse.prefix(500)) + "..."
+                    : displayResponse
                 let cleanText = speakText
                     .replacingOccurrences(of: "```[\\s\\S]*?```", with: " code block ", options: .regularExpression)
                     .replacingOccurrences(of: "`[^`]+`", with: "", options: .regularExpression)
@@ -1694,11 +1644,15 @@ class DocumentEditorViewModel: ObservableObject {
                 Task { try? await VoiceService.shared.speak(cleanText, options: voiceOptions) }
             }
 
-            isProcessing = false
-            streamTask = nil
-
-            // Check for topic drift and suggest rename if auto-generated title
             BranchAutoNamer.shared.suggestRename(forBranchId: branchId)
+
+        case .error(let msg):
+            stopStreamBatching()
+            streamingContent = nil
+            isProcessing = false
+            wtLog("[DocumentEditor] Provider error: \(msg)")
+            mirrorToTerminal("\r\n\u{1B}[1;31m  ⚠ Error: \(msg)\u{1B}[0m\r\n")
+            errorMessage = msg
         }
     }
 

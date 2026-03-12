@@ -11,24 +11,27 @@ final class WakeLock {
     static let shared = WakeLock()
 
     private var assertionID: IOPMAssertionID = 0
-    private var isHeld = false
+    /// Ref-count — multiple simultaneous streams each call acquire/release independently.
+    /// The assertion is only created on 0→1 and released on 1→0.
+    private var refCount = 0
     private var activityToken: NSObjectProtocol?
     private let lock = NSLock()
 
     private init() {}
 
     /// Acquire a no-idle-sleep assertion + App Nap prevention.
-    /// Safe to call multiple times — only acquires once.
+    /// Ref-counted — multiple callers are safe; the assertion is created on the first acquire.
     func acquire() {
         lock.withLock {
-            guard !isHeld else { return }
+            refCount += 1
+            guard refCount == 1 else { return }  // already held by another stream
+
             let result = IOPMAssertionCreateWithName(
                 kIOPMAssertionTypeNoIdleSleep as CFString,
                 IOPMAssertionLevel(kIOPMAssertionLevelOn),
                 "World Tree: AI response in progress" as CFString,
                 &assertionID
             )
-            isHeld = result == kIOReturnSuccess
 
             // Prevent App Nap — keeps timers, network, and streaming running at full speed
             // even when World Tree is behind other windows.
@@ -38,25 +41,28 @@ final class WakeLock {
                 reason: "AI streaming response in progress"
             )
 
-            if isHeld {
-                wtLog("[WakeLock] acquired (assertionID=\(assertionID), appNap=prevented)")
+            if result == kIOReturnSuccess {
+                wtLog("[WakeLock] acquired (assertionID=\(assertionID), appNap=prevented, refCount=\(refCount))")
             } else {
                 wtLog("[WakeLock] IOKit acquire failed (result=\(result)), App Nap still prevented")
             }
         }
     }
 
-    /// Release the sleep assertion + App Nap prevention. Safe to call when not held.
+    /// Release the sleep assertion + App Nap prevention.
+    /// Ref-counted — the assertion is only released when all callers have released.
     func release() {
         lock.withLock {
-            guard isHeld else { return }
+            guard refCount > 0 else { return }
+            refCount -= 1
+            guard refCount == 0 else { return }  // other streams still running
+
             IOPMAssertionRelease(assertionID)
             if let token = activityToken {
                 ProcessInfo.processInfo.endActivity(token)
                 activityToken = nil
             }
-            wtLog("[WakeLock] released")
-            isHeld = false
+            wtLog("[WakeLock] released (refCount=0)")
             assertionID = 0
         }
     }
