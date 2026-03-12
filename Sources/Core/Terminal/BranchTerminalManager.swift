@@ -69,6 +69,11 @@ final class BranchTerminalManager: ObservableObject {
     /// tmux session name per branch — persisted in DB, survives app restarts
     private var tmuxNames: [String: String] = [:]
 
+    /// Published version counter per terminal key (branchId or "project-{name}").
+    /// Incremented by the watchdog when a dead terminal is detected — SwiftUI views
+    /// use this as part of their `.id()` so they recreate the PTY when it changes.
+    @Published private(set) var terminalVersions: [String: Int] = [:]
+
     /// Retained token for the willTerminate observer. Must be stored or the observer
     /// is immediately deregistered (block-based addObserver returns a token that
     /// must be kept alive). Singleton lives for app lifetime so no removeObserver needed.
@@ -87,6 +92,108 @@ final class BranchTerminalManager: ObservableObject {
                 self?.terminateAll()
             }
         }
+        startWatchdog()
+    }
+
+    // MARK: - Watchdog
+
+    /// Starts a background loop that checks every 45s whether all tracked tmux sessions
+    /// are still alive. Detects tmux server crashes (all sessions die simultaneously)
+    /// and individual pane deaths. Increments `terminalVersions` when a dead session is
+    /// detected — SwiftUI terminal views observe this and force a PTY reconnect.
+    private func startWatchdog() {
+        Task.detached(priority: .utility) { [weak self] in
+            while true {
+                try? await Task.sleep(for: .seconds(45))
+                await self?.runWatchdogCycle()
+            }
+        }
+    }
+
+    @MainActor
+    private func runWatchdogCycle() async {
+        // Branch terminals
+        let branchIds = Array(tmuxNames.keys)
+        for branchId in branchIds {
+            let alive = await verifySession(branchId: branchId)
+            if !alive {
+                // Session was dead — bump version so the UI recreates the terminal view
+                terminalVersions[branchId, default: 0] += 1
+                wtLog("[BranchTerminalManager] Watchdog: branch terminal \(branchId.prefix(8)) was dead — signaling UI reconnect")
+            }
+        }
+
+        // Project terminals
+        let projectNames = Array(projectTmuxNames.keys)
+        for project in projectNames {
+            let alive = await verifyProjectTerminal(project: project)
+            if !alive {
+                terminalVersions["project-\(project)", default: 0] += 1
+                wtLog("[BranchTerminalManager] Watchdog: project terminal '\(project)' was dead — signaling UI reconnect")
+            }
+        }
+    }
+
+    /// Verify a project-level tmux session is still alive.
+    /// Mirrors verifySession(branchId:) for project terminals.
+    @discardableResult
+    func verifyProjectTerminal(project: String) async -> Bool {
+        guard let sessionName = projectTmuxNames[project],
+              FileManager.default.fileExists(atPath: tmuxExecutable) else {
+            return false
+        }
+
+        let tmuxPath = tmuxExecutable
+
+        let alive = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: tmuxPath)
+            proc.arguments = ["has-session", "-t", sessionName]
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
+            proc.terminationHandler = { process in
+                continuation.resume(returning: process.terminationStatus == 0)
+            }
+            do { try proc.run() } catch { continuation.resume(returning: false) }
+        }
+
+        if !alive {
+            projectTerminals[project]?.cleanup()
+            projectTerminals.removeValue(forKey: project)
+            projectTmuxNames.removeValue(forKey: project)
+            wtLog("[BranchTerminalManager] Cleaned up stale project tmux session '\(sessionName)' for '\(project)'")
+            return false
+        }
+
+        // Check pane liveness and respawn if dead
+        let paneAlive = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: tmuxPath)
+            proc.arguments = ["list-panes", "-t", sessionName, "-F", "#{pane_dead}"]
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = FileHandle.nullDevice
+            proc.terminationHandler = { _ in
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let output = String(data: data, encoding: .utf8) ?? "1"
+                continuation.resume(returning: output.trimmingCharacters(in: .whitespacesAndNewlines) == "0")
+            }
+            do { try proc.run() } catch { continuation.resume(returning: true) }
+        }
+
+        if !paneAlive {
+            let workDir = FileManager.default.homeDirectoryForCurrentUser.path
+            let respawnProc = Process()
+            respawnProc.executableURL = URL(fileURLWithPath: tmuxPath)
+            respawnProc.arguments = ["respawn-pane", "-t", sessionName, "-k", "-c", workDir]
+            respawnProc.standardOutput = FileHandle.nullDevice
+            respawnProc.standardError = FileHandle.nullDevice
+            try? respawnProc.run()
+            respawnProc.waitUntilExit()
+            wtLog("[BranchTerminalManager] Respawned dead pane in project session '\(sessionName)'")
+        }
+
+        return true
     }
 
     // MARK: - Terminal Lifecycle
@@ -140,12 +247,268 @@ final class BranchTerminalManager: ObservableObject {
         // Persist the session name so the DB knows which tmux session owns this branch
         persistTmuxSessionName(sessionName, for: branchId)
 
+        // Apply tmux enhancements — env vars, pipe-pane, hooks, monitoring.
+        // Runs after session is created so tmux commands target a valid session.
+        if FileManager.default.fileExists(atPath: tmuxExecutable) {
+            enhanceTmuxSession(name: sessionName, branchId: branchId, workingDirectory: workingDirectory)
+        }
+
         return tv
     }
 
     /// Canonical tmux session name for a branch.
     private func tmuxSessionName(for branchId: String) -> String {
         "canvas-\(branchId.prefix(8))"
+    }
+
+    // MARK: - tmux Session Enhancements
+
+    /// Configure a tmux session with enhanced features after creation.
+    /// Called once per session — sets environment, pipe-pane, hooks, monitoring, status line,
+    /// command audit trail, and lifecycle tracking.
+    private func enhanceTmuxSession(name: String, branchId: String, workingDirectory: String) {
+        guard FileManager.default.fileExists(atPath: tmuxExecutable) else { return }
+
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let streamDir = "\(home)/.cortana/streams"
+        let eventDir = "\(home)/.cortana/worldtree/events"
+        let auditDir = "\(home)/.cortana/worldtree/audit"
+
+        // Ensure directories exist
+        for dir in [streamDir, eventDir, auditDir] {
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        }
+
+        // Derive a display label for the status bar
+        let projectName = URL(fileURLWithPath: workingDirectory).lastPathComponent
+        let shortBranch = String(branchId.prefix(8))
+
+        let commands: [(description: String, args: [String])] = [
+            // ── 1. Environment — per-session context for all child processes ──
+            ("set BRANCH_ID", ["set-environment", "-t", name, "BRANCH_ID", shortBranch]),
+            ("set CORTANA_SESSION", ["set-environment", "-t", name, "CORTANA_SESSION", "1"]),
+            ("set PROJECT_DIR", ["set-environment", "-t", name, "PROJECT_DIR", workingDirectory]),
+            ("set SESSION_NAME", ["set-environment", "-t", name, "TMUX_SESSION_NAME", name]),
+
+            // ── 2. Pipe-pane — stream output to log for live monitoring ──
+            ("pipe-pane", ["pipe-pane", "-t", name, "-o",
+                           "cat >> '\(streamDir)/\(name).log'"]),
+
+            // ── 3. Monitor-silence — detect command completion (5s quiet) ──
+            ("monitor-silence", ["set-option", "-t", name, "monitor-silence", "5"]),
+
+            // ── 4. Status line — show project, branch, current command, cwd at a glance ──
+            //    Left: project/branch identity. Right: live command + working directory.
+            ("status on", ["set-option", "-t", name, "status", "on"]),
+            ("status-style", ["set-option", "-t", name, "status-style", "bg=#1a1a2e,fg=#8888aa"]),
+            ("status-left", ["set-option", "-t", name, "status-left",
+                             "#[fg=#64ffda,bold] \(projectName) #[fg=#555]│#[fg=#bb86fc] \(shortBranch) #[fg=#555]│ "]),
+            ("status-right", ["set-option", "-t", name, "status-right",
+                              "#[fg=#888]#{pane_current_command} #[fg=#555]│#[fg=#666] #{pane_current_path} "]),
+            ("status-left-length", ["set-option", "-t", name, "status-left-length", "50"]),
+            ("status-right-length", ["set-option", "-t", name, "status-right-length", "80"]),
+            ("status-interval", ["set-option", "-t", name, "status-interval", "2"]),
+
+            // ── 5. Hooks — event-driven lifecycle + audit ──
+
+            // pane-died: shell process exited (crash, exit, killed)
+            ("hook pane-died", ["set-hook", "-t", name, "pane-died",
+                                "run-shell 'echo pane-died > \(eventDir)/\(name).event'"]),
+
+            // alert-silence: no output for monitor-silence seconds (command finished)
+            ("hook alert-silence", ["set-hook", "-t", name, "alert-silence",
+                                    "run-shell 'echo silence > \(eventDir)/\(name).event'"]),
+
+            // session-closed: session was destroyed (killed externally, user exit, etc.)
+            ("hook session-closed", ["set-hook", "-t", name, "session-closed",
+                                     "run-shell 'echo session-closed > \(eventDir)/\(name).event'"]),
+
+            // after-send-keys: command audit trail — log every keystroke sent to the session.
+            // Writes timestamp + pane command to the audit log for full history.
+            // NOTE: tmux run-shell uses sh, so date format works directly. The %% escaping
+            // is needed because tmux format strings treat % specially.
+            ("hook after-send-keys", ["set-hook", "-t", name, "after-send-keys",
+                                      "run-shell \"date '+%Y-%m-%dT%H:%M:%S #{pane_current_command} #{pane_current_path}' >> \(auditDir)/\(name).audit\""]),
+
+            // ── 6. Pane border labels — identify panes at a glance ──
+            ("pane-border-status", ["set-option", "-t", name, "pane-border-status", "top"]),
+            ("pane-border-format", ["set-option", "-t", name, "pane-border-format",
+                                    "#[fg=#64ffda] #{pane_current_command} #[fg=#555]│ #{pane_current_path}"]),
+        ]
+
+        // Run enhancements off the main thread to avoid blocking UI.
+        // Each command waits for the previous one — tmux can't handle concurrent set-option calls
+        // reliably when they all target the same session.
+        let tmuxPath = tmuxExecutable
+        let sessionName = name
+        Task.detached(priority: .utility) {
+            for (desc, args) in commands {
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: tmuxPath)
+                proc.arguments = args
+                proc.standardOutput = FileHandle.nullDevice
+                proc.standardError = FileHandle.nullDevice
+                do {
+                    try proc.run()
+                    proc.waitUntilExit()
+                } catch {
+                    wtLog("[BranchTerminalManager] Failed to \(desc) for \(sessionName): \(error)")
+                }
+            }
+            wtLog("[BranchTerminalManager] Enhanced tmux session '\(sessionName)' — env, pipe, hooks, status, audit, borders")
+        }
+    }
+
+    // MARK: - tmux Session Queries
+
+    /// Snapshot of a tmux session's real-time state — what's running, where, how long idle.
+    struct SessionState {
+        let sessionName: String
+        let currentCommand: String    // e.g. "zsh", "cargo", "claude", "python"
+        let currentPath: String       // live working directory (tracks cd)
+        let panePid: Int
+        let idleSeconds: Int          // seconds since last output
+        let paneWidth: Int
+        let paneHeight: Int
+
+        /// Whether the session appears idle (shell prompt, not running a command).
+        var isIdle: Bool {
+            ["zsh", "bash", "fish", "sh"].contains(currentCommand.lowercased())
+        }
+
+        /// Whether Claude is actively running in this session.
+        var isClaudeActive: Bool {
+            currentCommand.lowercased().contains("claude")
+        }
+    }
+
+    /// Query the real-time state of a tmux session — what's running, cwd, idle time.
+    /// Uses tmux format variables for instant, accurate answers without parsing output.
+    func querySessionState(sessionName: String) async -> SessionState? {
+        guard FileManager.default.fileExists(atPath: tmuxExecutable) else { return nil }
+
+        let tmuxPath = tmuxExecutable
+        return await withCheckedContinuation { (continuation: CheckedContinuation<SessionState?, Never>) in
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: tmuxPath)
+            // Query multiple format variables in one call — pipe-separated for easy parsing
+            proc.arguments = ["display-message", "-t", sessionName, "-p",
+                              "#{pane_current_command}||#{pane_current_path}||#{pane_pid}||#{pane_idle}||#{pane_width}||#{pane_height}"]
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = FileHandle.nullDevice
+
+            proc.terminationHandler = { _ in
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                guard let output = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines),
+                      !output.isEmpty else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+
+                let fields = output.components(separatedBy: "||")
+                guard fields.count >= 6 else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+
+                continuation.resume(returning: SessionState(
+                    sessionName: sessionName,
+                    currentCommand: fields[0],
+                    currentPath: fields[1],
+                    panePid: Int(fields[2]) ?? 0,
+                    idleSeconds: Int(fields[3]) ?? 0,
+                    paneWidth: Int(fields[4]) ?? 80,
+                    paneHeight: Int(fields[5]) ?? 24
+                ))
+            }
+
+            do {
+                try proc.run()
+            } catch {
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+
+    /// Query all active sessions' states in a single batch.
+    /// Returns a dictionary of sessionName → SessionState.
+    func queryAllSessionStates() async -> [String: SessionState] {
+        let allNames = Array(tmuxNames.values) + Array(projectTmuxNames.values)
+        guard !allNames.isEmpty else { return [:] }
+
+        return await withTaskGroup(of: (String, SessionState?).self) { group in
+            for name in allNames {
+                group.addTask { [weak self] in
+                    let state = await self?.querySessionState(sessionName: name)
+                    return (name, state)
+                }
+            }
+
+            var results: [String: SessionState] = [:]
+            for await (name, state) in group {
+                if let state { results[name] = state }
+            }
+            return results
+        }
+    }
+
+    /// Get the live working directory for a branch's terminal.
+    /// Unlike `workingDirs` (set at creation), this tracks `cd` commands in real time.
+    func liveWorkingDirectory(branchId: String) async -> String? {
+        guard let sessionName = tmuxNames[branchId] else { return nil }
+        return await querySessionState(sessionName: sessionName)?.currentPath
+    }
+
+    /// Get what's currently running in a branch's terminal.
+    func currentCommand(branchId: String) async -> String? {
+        guard let sessionName = tmuxNames[branchId] else { return nil }
+        return await querySessionState(sessionName: sessionName)?.currentCommand
+    }
+
+    /// Read the command audit trail for a session.
+    /// Returns the last N entries from the audit log.
+    func auditTrail(sessionName: String, entries: Int = 50) -> [String] {
+        let auditPath = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.cortana/worldtree/audit/\(sessionName).audit"
+        guard let data = FileManager.default.contents(atPath: auditPath),
+              let content = String(data: data, encoding: .utf8) else { return [] }
+        let lines = content.components(separatedBy: "\n").filter { !$0.isEmpty }
+        return Array(lines.suffix(entries))
+    }
+
+    /// Read live output from a session's pipe-pane log.
+    /// Returns the last N lines from the streaming log file.
+    func liveOutput(sessionName: String, lines: Int = 50) -> String {
+        let logPath = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.cortana/streams/\(sessionName).log"
+        guard let data = FileManager.default.contents(atPath: logPath),
+              let content = String(data: data, encoding: .utf8) else { return "" }
+        let allLines = content.components(separatedBy: "\n")
+        return allLines.suffix(lines).joined(separator: "\n")
+    }
+
+    /// Check and consume the latest event for a session (pane-died, silence, session-closed, etc.)
+    func consumeEvent(sessionName: String) -> String? {
+        let eventPath = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.cortana/worldtree/events/\(sessionName).event"
+        guard let data = FileManager.default.contents(atPath: eventPath),
+              let event = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !event.isEmpty else { return nil }
+        // Consume by removing the file
+        try? FileManager.default.removeItem(atPath: eventPath)
+        return event
+    }
+
+    /// Truncate a session's pipe-pane log to prevent unbounded growth.
+    /// Called periodically (e.g., from heartbeat or on session switch).
+    func rotatePipeLog(sessionName: String, keepLines: Int = 500) {
+        let logPath = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.cortana/streams/\(sessionName).log"
+        guard let data = FileManager.default.contents(atPath: logPath),
+              let content = String(data: data, encoding: .utf8) else { return }
+        let allLines = content.components(separatedBy: "\n")
+        if allLines.count > keepLines {
+            let trimmed = allLines.suffix(keepLines).joined(separator: "\n")
+            try? trimmed.write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
     }
 
     /// Whether a branch has an active terminal process.
@@ -216,6 +579,12 @@ final class BranchTerminalManager: ObservableObject {
         }
 
         projectTerminals[project] = tv
+
+        // Apply tmux enhancements to project terminals too
+        if FileManager.default.fileExists(atPath: tmuxExecutable) {
+            enhanceTmuxSession(name: sessionName, branchId: "project-\(project)", workingDirectory: workingDirectory)
+        }
+
         return tv
     }
 
@@ -288,6 +657,12 @@ final class BranchTerminalManager: ObservableObject {
         }
 
         agentTerminals[jobId] = tv
+
+        // Enhance agent sessions too — env, pipe-pane, monitoring
+        if FileManager.default.fileExists(atPath: tmuxExecutable) {
+            enhanceTmuxSession(name: sessionName, branchId: "agent-\(jobId)", workingDirectory: workingDirectory)
+        }
+
         return tv
     }
 
@@ -419,9 +794,10 @@ final class BranchTerminalManager: ObservableObject {
 
     // MARK: - Session Verification
 
-    /// Verify a tmux session is still alive. If dead, clean up the stale mapping.
-    /// Returns true if the session is valid, false if it was cleaned up.
-    /// Non-blocking — uses async continuation with terminationHandler.
+    /// Verify a tmux session is still alive. If the session exists but the pane's
+    /// shell died, respawn it in-place (preserving the session name and mappings).
+    /// If the session itself is gone, clean up the stale mapping.
+    /// Returns true if the session is valid (or was recovered), false if cleaned up.
     @discardableResult
     func verifySession(branchId: String) async -> Bool {
         guard let sessionName = tmuxNames[branchId],
@@ -430,6 +806,8 @@ final class BranchTerminalManager: ObservableObject {
         }
 
         let tmuxPath = tmuxExecutable
+
+        // Check if session exists
         let alive = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: tmuxPath)
@@ -453,8 +831,54 @@ final class BranchTerminalManager: ObservableObject {
             workingDirs.removeValue(forKey: branchId)
             tmuxNames.removeValue(forKey: branchId)
             wtLog("[BranchTerminalManager] Cleaned up stale tmux session '\(sessionName)' for \(branchId.prefix(8))")
+            return false
         }
-        return alive
+
+        // Session exists — check if the pane's shell is still running.
+        // If the shell exited (pane-died), respawn it in-place instead of
+        // destroying the session and creating a new one.
+        let paneAlive = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: tmuxPath)
+            // list-panes returns non-zero if the pane is dead
+            proc.arguments = ["list-panes", "-t", sessionName, "-F", "#{pane_dead}"]
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = FileHandle.nullDevice
+
+            proc.terminationHandler = { _ in
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let output = String(data: data, encoding: .utf8) ?? "1"
+                // pane_dead = 0 means alive, 1 means dead
+                continuation.resume(returning: output.trimmingCharacters(in: .whitespacesAndNewlines) == "0")
+            }
+
+            do {
+                try proc.run()
+            } catch {
+                continuation.resume(returning: true) // assume alive if we can't check
+            }
+        }
+
+        if !paneAlive {
+            // Respawn the pane — keeps the session name, env vars, pipe-pane, and hooks intact.
+            // Much better than kill-session + new-session which loses all configuration.
+            let workDir = workingDirs[branchId] ?? FileManager.default.homeDirectoryForCurrentUser.path
+            let respawnProc = Process()
+            respawnProc.executableURL = URL(fileURLWithPath: tmuxPath)
+            respawnProc.arguments = ["respawn-pane", "-t", sessionName, "-k", "-c", workDir]
+            respawnProc.standardOutput = FileHandle.nullDevice
+            respawnProc.standardError = FileHandle.nullDevice
+            do {
+                try respawnProc.run()
+                respawnProc.waitUntilExit()
+                wtLog("[BranchTerminalManager] Respawned dead pane in '\(sessionName)' for \(branchId.prefix(8))")
+            } catch {
+                wtLog("[BranchTerminalManager] Failed to respawn pane in '\(sessionName)': \(error)")
+            }
+        }
+
+        return true
     }
 
     /// Recover orphaned tmux sessions on app launch.

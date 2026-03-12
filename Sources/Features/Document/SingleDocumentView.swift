@@ -297,6 +297,7 @@ struct TerminalPanelView: View {
     let branchId: String?
     let workingDirectory: String
     let onClose: () -> Void
+    @ObservedObject private var terminalManager = BranchTerminalManager.shared
 
     /// Project-mode initializer — uses wt-{project} tmux session.
     init(project: String, workingDirectory: String, onClose: @escaping () -> Void) {
@@ -372,16 +373,21 @@ struct TerminalPanelView: View {
                 .opacity(0.4)
 
             // ── Terminal ──────────────────────────────────────────────────
+            // .id() includes terminalVersions — when the watchdog detects a dead session
+            // and increments the version, SwiftUI recreates the view and makeNSView fires,
+            // pulling a fresh CapturingTerminalView (and new PTY) from BranchTerminalManager.
             if let project {
                 ProjectTerminalView(
                     project: project,
                     workingDirectory: workingDirectory
                 )
+                .id("project-\(project)-\(terminalManager.terminalVersions["project-\(project)"] ?? 0)")
             } else if let branchId {
                 BranchTerminalView(
                     branchId: branchId,
                     workingDirectory: workingDirectory
                 )
+                .id("\(branchId)-\(terminalManager.terminalVersions[branchId] ?? 0)")
             }
         }
         .background(Color(red: 0.08, green: 0.08, blue: 0.10))
