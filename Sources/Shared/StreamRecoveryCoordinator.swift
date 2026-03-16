@@ -52,6 +52,11 @@ final class StreamRecoveryCoordinator {
     private func attemptRecoveryIfNeeded(sessionId: String) async {
         guard activeAttempts[sessionId] == nil else { return }
         guard let pending = StreamRecoveryStore.shared.pendingRecovery(for: sessionId) else { return }
+        guard ProviderManager.shared.activeProvider != nil else {
+            wtLog("[StreamRecoveryCoordinator] Provider not ready — deferring recovery for session \(sessionId.prefix(8))")
+            scheduleRecoveryCheck(sessionId: sessionId, delay: .seconds(3))
+            return
+        }
 
         if pending.attemptCount >= maxAttempts {
             wtLog("[StreamRecoveryCoordinator] Auto-resume attempts exhausted for session \(sessionId.prefix(8))")

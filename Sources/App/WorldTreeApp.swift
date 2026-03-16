@@ -51,6 +51,10 @@ struct WorldTreeApp: App {
                     Task {
                         do { await ProviderManager.shared.refreshHealth() }
                         catch { wtLog("[WorldTree] ProviderManager refresh failed: \(error)") }
+                        // Activate recovery only after providers are registered so the first
+                        // auto-resume attempt doesn't fire against an uninitialised provider,
+                        // fail instantly, clear activeAttempts, and race a second attempt.
+                        await MainActor.run { StreamRecoveryCoordinator.shared.activate() }
                     }
                     Task {
                         do { EventStore.shared.prune() }
@@ -58,7 +62,6 @@ struct WorldTreeApp: App {
                     }
                     DispatchSupervisor.shared.start()
                     DispatchSupervisor.shared.pruneOldDispatches()
-                    StreamRecoveryCoordinator.shared.activate()
                     EventRuleStore.shared.loadRules()
                     UIStateStore.shared.loadAll()
                     BranchTerminalManager.shared.recoverOrphanedSessions()
