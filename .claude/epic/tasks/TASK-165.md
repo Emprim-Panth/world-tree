@@ -1,7 +1,7 @@
 # TASK-165: MEDIUM — WorldTreeServer silent sendMessage at line 758
 
 **Priority**: medium
-**Status**: Pending
+**Status**: Done
 **Category**: reliability
 **Epic**: Chat Hardening
 **Sprint**: 5
