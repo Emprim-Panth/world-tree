@@ -10,6 +10,36 @@ UID           = $(shell id -u)
 
 .PHONY: generate build install update open clean rebuild rebuild-now
 
+define WRITE_LAUNCHD_PLIST
+	@mkdir -p "$(HOME)/Library/LaunchAgents" "$(HOME)/.cortana/logs"
+	@cat > "$(LAUNCHD_PLIST)" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$(LAUNCHD_LABEL)</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$(INSTALL_PATH)/Contents/MacOS/$(APP_NAME)</string>
+    </array>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>StandardOutPath</key>
+    <string>$(HOME)/.cortana/logs/world-tree-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>$(HOME)/.cortana/logs/world-tree-launchd.log</string>
+</dict>
+</plist>
+EOF
+endef
+
 ## Regenerate .xcodeproj from project.yml
 generate:
 	xcodegen generate
@@ -39,6 +69,7 @@ install: build
 		--timestamp=none \
 		--deep \
 		"$(INSTALL_PATH)"
+	$(WRITE_LAUNCHD_PLIST)
 	@./Scripts/flush-runningboard.sh
 	@echo "→ Restarting launchd service..."
 	@launchctl bootstrap gui/$(UID) $(LAUNCHD_PLIST)
@@ -83,6 +114,7 @@ rebuild-now:
 		--timestamp=none \
 		--deep \
 		"$(INSTALL_PATH)"
+	$(WRITE_LAUNCHD_PLIST)
 	@./Scripts/flush-runningboard.sh
 	@echo "→ Restarting launchd service..."
 	@launchctl bootstrap gui/$(UID) $(LAUNCHD_PLIST)

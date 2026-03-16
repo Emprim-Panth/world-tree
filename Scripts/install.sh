@@ -14,6 +14,37 @@ LAUNCHD_LABEL="com.forgeandcode.world-tree"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
 UID_NUM=$(id -u)
 DERIVED_DATA_PATH="${WT_DERIVED_DATA_PATH:-/tmp/WorldTree-install}"
+LAUNCH_LOG="$HOME/.cortana/logs/world-tree-launchd.log"
+
+write_launchd_plist() {
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.cortana/logs"
+  cat >"$LAUNCHD_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${LAUNCHD_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${INSTALL_PATH}/Contents/MacOS/${APP_NAME}</string>
+    </array>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>StandardOutPath</key>
+    <string>${LAUNCH_LOG}</string>
+    <key>StandardErrorPath</key>
+    <string>${LAUNCH_LOG}</string>
+</dict>
+</plist>
+EOF
+}
 
 echo "▸ Building..."
 BUILD_LOG=$(mktemp -t worldtree-install-build.XXXXXX.log)
@@ -71,6 +102,8 @@ codesign --force --sign "${SIGN_IDENTITY}" \
   --timestamp=none \
   --deep \
   "${INSTALL_PATH}"
+
+write_launchd_plist
 
 # Flush runningboardd CDHash cache
 "${PROJECT_DIR}/Scripts/flush-runningboard.sh"
