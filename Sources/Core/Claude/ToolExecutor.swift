@@ -424,6 +424,7 @@ actor ToolExecutor {
                 )
                 guard approved else {
                     return ToolResult(content: "[Security Gate] Operation denied.", isError: true)
+                }
             }
         }
 
