@@ -1,6 +1,6 @@
 # TASK-166: Session resume fails after long gap (>15 min idle)
 
-**Status:** open
+**Status:** Done
 **Priority:** high
 **Component:** Document / Session Management
 
