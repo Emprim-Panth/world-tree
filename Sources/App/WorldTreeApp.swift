@@ -160,6 +160,20 @@ struct WorldTreeApp: App {
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     CrashSentinel.shared.markCleanExit()
+                    // Close all open stream handles so their .tmp files are deleted, and
+                    // clear their pending-recovery entries from UserDefaults. Without this,
+                    // a clean SIGTERM (rebuild watcher) leaves stream files on disk that
+                    // recoverOrphanedStreams() picks up on the next launch and treats as
+                    // crash-interrupted, causing a spurious auto-resume loop on every rebuild.
+                    Task {
+                        let openIds = await StreamCacheManager.shared.openSessionIds()
+                        await StreamCacheManager.shared.closeAllStreams()
+                        await MainActor.run {
+                            for sessionId in openIds {
+                                StreamRecoveryStore.shared.clearPending(sessionId: sessionId)
+                            }
+                        }
+                    }
                 }
         }
         .windowStyle(.titleBar)

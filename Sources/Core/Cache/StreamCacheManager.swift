@@ -128,6 +128,9 @@ actor StreamCacheManager {
         lastWriteTime[sessionId] = Date()
     }
 
+    /// Returns all session IDs with currently open write handles.
+    func openSessionIds() -> [String] { Array(handles.keys) }
+
     /// Clean shutdown — close all open handles and delete their files so they are not
     /// mistaken for crash-interrupted streams on the next launch.
     /// Only call from willTerminateNotification, not from mid-stream cancellations.
