@@ -38,6 +38,10 @@ final class ActiveStreamRegistry {
         var subscribers: [UUID: (BridgeEvent) -> Void] = [:]
     }
 
+    /// Hard timeout per stream — cancels and surfaces an error if a stream is still active
+    /// after this interval. Catches hung CLI processes that never send .done or .error.
+    private static let streamTimeoutInterval: TimeInterval = 15 * 60  // 15 minutes
+
     // MARK: - State
 
     private var handles: [String: StreamHandle] = [:]
@@ -128,6 +132,23 @@ final class ActiveStreamRegistry {
         if !initialContent.isEmpty {
             GlobalStreamRegistry.shared.appendContent(branchId: branchId, content: initialContent)
             Task { await StreamCacheManager.shared.appendToStream(sessionId: sessionId, chunk: initialContent) }
+        }
+
+        // Watchdog: cancel and surface an error if the stream hasn't completed after the timeout.
+        // Guards against hung CLI processes that never send .done or .error.
+        let timeoutInterval = Self.streamTimeoutInterval
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(timeoutInterval))
+            guard let self, self.handles[branchId] != nil else { return }
+            wtLog("[ActiveStreamRegistry] ⚠️ Stream timeout for \(branchId.prefix(8)) after \(Int(timeoutInterval / 60))min — force-cancelling")
+            let timeoutMinutes = Int(timeoutInterval / 60)
+            // Deliver error to all current subscribers before cancelling
+            if let subs = self.handles[branchId]?.subscribers {
+                for callback in subs.values {
+                    callback(.error("No response after \(timeoutMinutes) minutes — the session may have stalled. Send another message to retry."))
+                }
+            }
+            self.cancelStream(branchId: branchId)
         }
 
         return subscriberId
@@ -256,6 +277,16 @@ final class ActiveStreamRegistry {
             receivedText: receivedText
         ) {
             persistAssistantContent(sessionId: sessionId, content: accumulated, phase: "completion")
+        } else if accumulated.isEmpty && initialContent.isEmpty {
+            // Stream ended with zero text — CLI/provider failed silently.
+            // Persist a failure notice so the user sees an explanation when they return
+            // to this chat rather than an unanswered user message with no assistant reply.
+            wtLog("[ActiveStreamRegistry] Stream completed with no content for session \(sessionId.prefix(8)) — persisting failure notice")
+            persistAssistantContent(
+                sessionId: sessionId,
+                content: "⚠️ No response received — the session may have expired. Send another message to continue.",
+                phase: "empty-completion"
+            )
         }
 
         GlobalStreamRegistry.shared.endStream(branchId: branchId, notify: true)

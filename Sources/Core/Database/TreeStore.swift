@@ -23,10 +23,21 @@ final class TreeStore {
         project: String? = nil,
         workingDirectory: String? = nil
     ) throws -> ConversationTree {
+        // Infer project from working directory when not explicitly set.
+        // Prevents trees from being created with nil project (orphaned in sidebar).
+        let resolvedProject: String?
+        if let explicit = project, !explicit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            resolvedProject = explicit
+        } else if let wd = workingDirectory, !wd.isEmpty {
+            let inferred = URL(fileURLWithPath: wd).lastPathComponent
+            resolvedProject = (inferred.isEmpty || inferred == "/") ? nil : inferred
+        } else {
+            resolvedProject = nil
+        }
         let tree = ConversationTree(
             id: UUID().uuidString,
             name: name,
-            project: project,
+            project: resolvedProject,
             workingDirectory: workingDirectory,
             createdAt: Date(),
             updatedAt: Date(),
