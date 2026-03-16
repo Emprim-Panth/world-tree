@@ -101,8 +101,80 @@ final class TicketStore: ObservableObject {
     static let shared = TicketStore()
 
     @Published private(set) var tickets: [String: [Ticket]] = [:] // project → tickets
+    /// Last time `scanAll()` completed successfully. Nil = never scanned this session.
+    @Published private(set) var lastScanDate: Date?
+    /// True when a scan is currently running.
+    @Published private(set) var isScanning = false
+
+    /// DispatchSource file-descriptor watchers keyed by tasks-directory path.
+    private var dirWatchers: [String: DispatchSourceFileSystemObject] = [:]
 
     private init() {}
+
+    // MARK: - File-system watching
+
+    /// Watch all `.claude/epic/tasks` directories under `developmentDir` for changes.
+    /// When any watched directory is written to, trigger a targeted rescan after a
+    /// short debounce so rapid batch writes only generate one scan.
+    func startWatching(developmentDir: String? = nil) {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let devDir = developmentDir ?? "\(home)/Development"
+        guard let contents = try? FileManager.default.contentsOfDirectory(atPath: devDir) else { return }
+
+        for dir in contents {
+            let tasksDir = "\(devDir)/\(dir)/.claude/epic/tasks"
+            guard FileManager.default.fileExists(atPath: tasksDir) else { continue }
+            guard dirWatchers[tasksDir] == nil else { continue }
+
+            let fd = open(tasksDir, O_EVTONLY)
+            guard fd >= 0 else { continue }
+
+            let source = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: fd,
+                eventMask: [.write, .rename, .delete],
+                queue: DispatchQueue.global(qos: .utility)
+            )
+            source.setEventHandler { [weak self] in
+                Task { @MainActor [weak self] in
+                    // Debounce — batch file writes arrive in rapid succession
+                    try? await Task.sleep(for: .milliseconds(500))
+                    self?.scanProject(projectDir: "\(devDir)/\(dir)", project: dir)
+                }
+            }
+            source.setCancelHandler { close(fd) }
+            source.resume()
+            dirWatchers[tasksDir] = source
+        }
+    }
+
+    /// Stop all file-system watchers (call on app background / deinit).
+    func stopWatching() {
+        for (_, source) in dirWatchers { source.cancel() }
+        dirWatchers.removeAll()
+    }
+
+    // MARK: - Targeted project scan
+
+    /// Rescan a single project's tasks directory and update DB + published state.
+    func scanProject(projectDir: String, project: String) {
+        let tasksDir = "\(projectDir)/.claude/epic/tasks"
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(atPath: tasksDir) else { return }
+        guard let dbPool = DatabaseManager.shared.dbPool else { return }
+
+        let taskFiles = files.filter { $0.hasPrefix("TASK-") && $0.hasSuffix(".md") }
+        let tickets = taskFiles.compactMap { parseTaskFile(path: "\(tasksDir)/\($0)", project: project) }
+
+        do {
+            try dbPool.write { db in
+                for ticket in tickets { try ticket.upsert(db) }
+            }
+            refresh()
+            wtLog("[TicketStore] Rescanned \(project): \(tickets.count) tickets")
+        } catch {
+            wtLog("[TicketStore] Project rescan failed for \(project): \(error)")
+        }
+    }
 
     // MARK: - Queries
 
@@ -189,14 +261,16 @@ final class TicketStore: ObservableObject {
 
     // MARK: - Scanning
 
-    /// Scan all projects for TASK-*.md files and upsert into canvas_tickets
+    /// Scan all projects for TASK-*.md files and upsert into canvas_tickets.
+    /// Also starts file-system watching so future external edits are picked up automatically.
     func scanAll(developmentDir: String? = nil) {
+        isScanning = true
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let devDir = developmentDir ?? "\(home)/Development"
         let fm = FileManager.default
 
-        guard let dbPool = DatabaseManager.shared.dbPool else { return }
-        guard let contents = try? fm.contentsOfDirectory(atPath: devDir) else { return }
+        guard let dbPool = DatabaseManager.shared.dbPool else { isScanning = false; return }
+        guard let contents = try? fm.contentsOfDirectory(atPath: devDir) else { isScanning = false; return }
 
         var allTickets: [Ticket] = []
 
@@ -223,10 +297,15 @@ final class TicketStore: ObservableObject {
                 }
             }
             refresh()
+            lastScanDate = Date()
             wtLog("[TicketStore] Scanned \(allTickets.count) tickets across projects")
         } catch {
             wtLog("[TicketStore] Failed to save tickets: \(error)")
         }
+
+        isScanning = false
+        // Start watching for external file changes now that directories are known
+        startWatching(developmentDir: devDir)
     }
 
     // MARK: - Mutations (writes back to TASK-*.md)

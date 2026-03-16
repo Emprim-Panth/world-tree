@@ -1,6 +1,6 @@
 # TASK-168: StreamingSectionView @State cache lost when content goes nil briefly
 
-**Status:** open
+**Status:** closed
 **Priority:** medium
 **Component:** Document / Streaming Render
 
