@@ -23,7 +23,7 @@ Sources/
 ├── Core/
 │   ├── Database/ # DatabaseManager, TreeStore, MessageStore, Migrations
 │   ├── Daemon/   # Unix socket client, log tailer
-│   ├── Claude/   # Context builder for branch forks
+│   ├── Claude/   # ClaudeBridge — send/fork dispatch
 │   └── Models/   # ConversationTree, Branch, Message
 ├── Features/
 │   ├── Sidebar/       # Tree browser with recursive branch nodes
@@ -53,3 +53,7 @@ Compass (read-write): `~/.cortana/compass.db` — project state read/written by 
 ## Tickets
 
 Tickets live as `TASK-*.md` files in `.claude/epic/tasks/`. Compass scans them into `canvas_tickets` for the Command Center. Use `compass_tickets WorldTree` to see open work.
+
+## Anti-Duplication Rule
+
+When refactoring replaces a file with a new implementation, **delete the old file in the same commit**. Do not leave superseded files as "for reference". Stranded dead code accumulates silently — two known culprits already removed (ContextBuilder.swift superseded by SendContextBuilder; VMExecutor.swift — speculative stub never completed).
