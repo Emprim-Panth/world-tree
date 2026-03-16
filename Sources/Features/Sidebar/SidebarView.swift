@@ -298,6 +298,8 @@ struct SidebarView: View {
                                         treeCount: group.trees.count,
                                         isDocsSelected: appState.selectedProjectName == group.project && appState.sidebarDestination == .projectDocs,
                                         isExpanded: isGroupExpanded,
+                                        phase: viewModel.compassStates[group.project]?.currentPhase,
+                                        blockerCount: viewModel.compassStates[group.project]?.blockers.count ?? 0,
                                         onToggle: {
                                             if isGroupExpanded {
                                                 collapsedProjects.insert(group.project)
@@ -606,6 +608,8 @@ struct SidebarView: View {
                         treeCount: 0,
                         isDocsSelected: false,
                         isExpanded: false,
+                        phase: viewModel.compassStates[group.project]?.currentPhase,
+                        blockerCount: viewModel.compassStates[group.project]?.blockers.count ?? 0,
                         onToggle: {},
                         onNewTree: {
                             newTreeProject = group.project
@@ -1110,6 +1114,8 @@ struct ProjectGroupHeader: View {
     let treeCount: Int
     let isDocsSelected: Bool
     let isExpanded: Bool
+    let phase: String?
+    let blockerCount: Int
     let onToggle: () -> Void
     let onNewTree: () -> Void
     let onOpenDocs: () -> Void
@@ -1156,6 +1162,28 @@ struct ProjectGroupHeader: View {
                         .background(.quaternary)
                         .cornerRadius(3)
                         .accessibilityLabel("Git branch: \(git)")
+                }
+
+                if let phase = phase {
+                    Text(phase)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.accentColor.opacity(0.12))
+                        .cornerRadius(3)
+                        .accessibilityLabel("Phase: \(phase)")
+                }
+
+                if blockerCount > 0 {
+                    Text("\(blockerCount)!")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.red.opacity(0.8))
+                        .cornerRadius(3)
+                        .accessibilityLabel("\(blockerCount) blocker\(blockerCount == 1 ? "" : "s")")
                 }
 
                 Spacer()

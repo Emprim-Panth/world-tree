@@ -118,6 +118,7 @@ final class SidebarViewModel: ObservableObject {
     @Published var isSearching: Bool = false
     @Published var isLoading: Bool = false
     @Published var error: String?
+    @Published private(set) var compassStates: [String: CompassState] = [:]
 
     private var observation: AnyDatabaseCancellable?
     private var projectObserver: Any?
@@ -404,11 +405,18 @@ final class SidebarViewModel: ObservableObject {
             trees = try TreeStore.shared.getTrees()
             cachedProjects = (try? ProjectCache().getAll()) ?? []
             rebuildProjectGroups()
+            refreshCompassStates()
             error = nil
         } catch {
             self.error = error.localizedDescription
         }
         isLoading = false
+    }
+
+    func refreshCompassStates() {
+        let store = CompassStore.shared
+        store.refresh()
+        compassStates = store.snapshot(for: cachedProjects.map(\.name))
     }
 
     func startObserving() {
