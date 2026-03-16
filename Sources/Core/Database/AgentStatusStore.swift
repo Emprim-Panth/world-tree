@@ -82,11 +82,9 @@ final class AgentStatusStore: ObservableObject {
                     self.activeSessions = result.active
                     self.recentCompleted = result.completed
                     self.totalActiveCount = result.active.count
-                    self.healthScores = Dictionary(
-                        uniqueKeysWithValues: result.active.map { s in
-                            (s.id, SessionHealth.calculate(from: s))
-                        }
-                    )
+                    var scores: [String: SessionHealth] = [:]
+                    for s in result.active { scores[s.id] = SessionHealth.calculate(from: s) }
+                    self.healthScores = scores
                 }
             }
         )
@@ -111,11 +109,9 @@ final class AgentStatusStore: ObservableObject {
             self.activeSessions = result.active
             self.recentCompleted = result.completed
             self.totalActiveCount = result.active.count
-            self.healthScores = Dictionary(
-                uniqueKeysWithValues: result.active.map { s in
-                    (s.id, SessionHealth.calculate(from: s))
-                }
-            )
+            var scores: [String: SessionHealth] = [:]
+            for s in result.active { scores[s.id] = SessionHealth.calculate(from: s) }
+            self.healthScores = scores
         } catch {
             wtLog("[AgentStatusStore] Error refreshing async: \(error)")
         }

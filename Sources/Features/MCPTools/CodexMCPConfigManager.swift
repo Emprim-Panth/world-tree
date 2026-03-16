@@ -95,7 +95,8 @@ final class CodexMCPConfigManager {
                 includeWorldTree: includeWorldTree
             )
             let existingServers = try await fetchServers(executablePath: executablePath)
-            var existingByName = Dictionary(uniqueKeysWithValues: existingServers.map { ($0.name, $0) })
+            var existingByName: [String: CodexMCPServerConfig] = [:]
+            for s in existingServers { existingByName[s.name] = s }
 
             for desired in desiredServers {
                 if let existing = existingByName[desired.name], existing.matches(desired) {
