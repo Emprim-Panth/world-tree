@@ -615,6 +615,11 @@ final class BranchTerminalManager: ObservableObject {
         projectTmuxNames[project] = sessionName
 
         if FileManager.default.fileExists(atPath: tmuxExecutable) {
+            // Snapshot whether this is a pre-existing session before we attach/create it.
+            // Used to decide whether to send a git-context init — existing sessions keep
+            // their current shell state intact; only fresh sessions get the welcome init.
+            let sessionWasNew = !isTmuxSessionAlive(named: sessionName)
+
             tv.startProcess(
                 executable: tmuxExecutable,
                 args: ["new-session", "-A", "-s", sessionName],
@@ -622,7 +627,11 @@ final class BranchTerminalManager: ObservableObject {
                 execName: "tmux",
                 currentDirectory: workingDirectory
             )
-            wtLog("[BranchTerminalManager] project tmux '\(sessionName)' attached/created for \(project)")
+            wtLog("[BranchTerminalManager] project tmux '\(sessionName)' \(sessionWasNew ? "created" : "reattached") for \(project)")
+
+            if sessionWasNew {
+                initializeProjectSession(name: sessionName, workingDirectory: workingDirectory)
+            }
         } else {
             tv.startProcess(
                 executable: "/bin/zsh",
@@ -641,6 +650,32 @@ final class BranchTerminalManager: ObservableObject {
         }
 
         return tv
+    }
+
+    /// Send a brief git-context welcome to a freshly created project session.
+    /// Only runs for NEW sessions — reattached sessions keep their existing shell state.
+    /// Shows git branch + short status (or ls if not a git repo) so the terminal
+    /// is immediately useful rather than a blank prompt.
+    private func initializeProjectSession(name: String, workingDirectory: String) {
+        let tmuxPath = tmuxExecutable
+        Task.detached(priority: .utility) {
+            // Give the session shell time to fully start before sending keys
+            try? await Task.sleep(for: .milliseconds(800))
+
+            // cd ensures correct dir even if tmux ignored currentDirectory,
+            // then show git branch + short status (read-only, safe to auto-run).
+            let initCmd = "cd '\(workingDirectory)' && git status 2>/dev/null || ls"
+
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: tmuxPath)
+            proc.arguments = ["send-keys", "-t", name, initCmd, "Enter"]
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
+            try? proc.run()
+            proc.waitUntilExit()
+
+            wtLog("[BranchTerminalManager] Sent git-context init to fresh project session '\(name)'")
+        }
     }
 
     /// Whether a project has an active terminal.
