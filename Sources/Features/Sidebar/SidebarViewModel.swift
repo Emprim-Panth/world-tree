@@ -277,18 +277,22 @@ final class SidebarViewModel: ObservableObject {
             .map { (project: $0, trees: []) }
 
         allProjectGroups = result
-        // Recents: sort by chat activity only (most recent message/update), NOT filesystem mtime.
-        // Filesystem mtime contaminates the signal — background processes touching files make
-        // projects appear "recent" even when the user hasn't opened a chat there.
-        recentProjectGroups = result
-            .filter { $0.project != AppConstants.defaultProjectName }
-            .sorted {
-                let aActivity = $0.trees.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
-                let bActivity = $1.trees.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
-                return aActivity > bActivity
+        // Recents: walk `visibleTrees` in DB-sort order (already COALESCE(last_message_at, updated_at) DESC)
+        // and take the first 4 unique non-General project names.
+        // This sidesteps any in-memory nil-date edge cases — the DB ordering is authoritative.
+        var recentSeen: [String] = []
+        var recentSeenSet: Set<String> = []
+        for tree in visibleTrees {
+            let proj = tree.project.flatMap { $0.isEmpty ? nil : $0 } ?? AppConstants.defaultProjectName
+            guard proj != AppConstants.defaultProjectName else { continue }
+            if recentSeenSet.insert(proj).inserted {
+                recentSeen.append(proj)
+                if recentSeen.count == 4 { break }
             }
-            .prefix(4)
-            .map { $0 }
+        }
+        recentProjectGroups = recentSeen.map { proj in
+            (project: proj, trees: sortTrees(treesByProject[proj] ?? []))
+        }
     }
 
     /// Sort an array of trees according to the current sortOrder.
