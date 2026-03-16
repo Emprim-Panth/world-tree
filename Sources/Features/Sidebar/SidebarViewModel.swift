@@ -197,28 +197,33 @@ final class SidebarViewModel: ObservableObject {
         // Projects from ProjectCache with NO chats are shown in a collapsed "dormant" section.
         var chatNames: [String] = []     // has at least one tree
         var dormantNames: [String] = []  // only in ProjectCache, no trees
-        var seenLowercased: Set<String> = []
+        var seenNormalized: Set<String> = []
 
         let filteredCache = searchText.isEmpty
             ? cachedProjects
             : cachedProjects.filter { $0.name.lowercased().contains(searchText.lowercased()) }
 
+        // Normalize for deduplication: lowercase + strip whitespace so "World Tree"
+        // and "WorldTree" are treated as the same project (directory vs display name).
+        func normalizedKey(_ name: String) -> String {
+            name.lowercased().filter { !$0.isWhitespace }
+        }
+
         // First pass: names that appear in treesByProject (have chats)
         for project in treesByProject.keys where project != AppConstants.defaultProjectName {
-            let key = project.lowercased()
-            if seenLowercased.insert(key).inserted { chatNames.append(project) }
+            if seenNormalized.insert(normalizedKey(project)).inserted { chatNames.append(project) }
         }
         // Second pass: cached projects that have no trees → dormant
+        // Skips any project whose normalized name already appeared in the first pass.
         for p in filteredCache where p.name != AppConstants.defaultProjectName {
-            let key = p.name.lowercased()
-            if seenLowercased.insert(key).inserted { dormantNames.append(p.name) }
+            if seenNormalized.insert(normalizedKey(p.name)).inserted { dormantNames.append(p.name) }
         }
 
         let allNames = chatNames
 
         var cachedProjectsByName: [String: CachedProject] = [:]
         for project in cachedProjects {
-            let key = project.name.lowercased()
+            let key = normalizedKey(project.name)
             let existing = cachedProjectsByName[key]
             if let existing {
                 cachedProjectsByName[key] = existing.lastModified >= project.lastModified ? existing : project
@@ -227,7 +232,7 @@ final class SidebarViewModel: ObservableObject {
             }
         }
         func cachedProject(for projectName: String) -> CachedProject? {
-            cachedProjectsByName[projectName.lowercased()]
+            cachedProjectsByName[normalizedKey(projectName)]
         }
 
         let cutoff = Date().addingTimeInterval(-Self.activeThreshold)
