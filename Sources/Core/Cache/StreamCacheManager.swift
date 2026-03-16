@@ -128,6 +128,16 @@ actor StreamCacheManager {
         lastWriteTime[sessionId] = Date()
     }
 
+    /// Clean shutdown — close all open handles and delete their files so they are not
+    /// mistaken for crash-interrupted streams on the next launch.
+    /// Only call from willTerminateNotification, not from mid-stream cancellations.
+    func closeAllStreams() {
+        let openIds = Array(handles.keys)
+        for sessionId in openIds {
+            closeStream(sessionId: sessionId)
+        }
+    }
+
     /// Normal completion — stream finished cleanly, nothing to recover. Delete the file.
     func closeStream(sessionId: String) {
         if let handle = handles[sessionId] {
@@ -158,7 +168,14 @@ actor StreamCacheManager {
 
         var recovered: [String: String] = [:]
         for url in files where url.pathExtension == "tmp" {
-            let sessionId = url.deletingPathExtension().lastPathComponent
+            // Strip legacy "session-" prefix written by older app versions.
+            // These files have names like "session-<UUID>.tmp" but the recovery
+            // store and coordinator expect bare UUIDs.
+            var sessionId = url.deletingPathExtension().lastPathComponent
+            if sessionId.hasPrefix("session-") {
+                sessionId = String(sessionId.dropFirst("session-".count))
+                wtLog("[StreamCache] Stripped legacy 'session-' prefix from stream file: \(url.lastPathComponent)")
+            }
             do {
                 let text = try String(contentsOf: url, encoding: .utf8)
                 recovered[sessionId] = text

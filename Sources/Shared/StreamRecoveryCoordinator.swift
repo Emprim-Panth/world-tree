@@ -36,6 +36,13 @@ final class StreamRecoveryCoordinator {
         }
 
         for sessionId in StreamRecoveryStore.shared.allPendingSessionIds() {
+            // Purge stale entries that carry the legacy "session-" prefix —
+            // these can never resolve to a real branch and would log a warning on every launch.
+            if sessionId.hasPrefix("session-") {
+                wtLog("[StreamRecoveryCoordinator] Purging stale legacy key: \(sessionId.prefix(20))…")
+                StreamRecoveryStore.shared.clearPending(sessionId: sessionId)
+                continue
+            }
             scheduleRecoveryCheck(sessionId: sessionId, delay: .seconds(2))
         }
     }
