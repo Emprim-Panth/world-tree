@@ -176,20 +176,25 @@ enum SessionRotator {
     /// Called on document close/disappear — no API call, just persists recent turns.
     /// The next open will restore this as context if it's the most recent checkpoint.
     static func writeSnapshot(sessionId: String, branchId: String, summary: String, messageCount: Int) {
-        do {
-            try DatabaseManager.shared.write { db in
-                try db.execute(
-                    sql: """
-                        INSERT INTO canvas_context_checkpoints
-                        (session_id, branch_id, summary, estimated_tokens_at_rotation, message_count_at_rotation, created_at)
-                        VALUES (?, ?, ?, 0, ?, datetime('now'))
-                        """,
-                    arguments: [sessionId, branchId, summary, messageCount]
-                )
+        // Capture value types — safe to hand off to a background Task even after
+        // the calling ViewModel is deallocated.
+        let sid = sessionId, bid = branchId, sum = summary, count = messageCount
+        Task { @MainActor in
+            do {
+                try await DatabaseManager.shared.asyncWrite { db in
+                    try db.execute(
+                        sql: """
+                            INSERT INTO canvas_context_checkpoints
+                            (session_id, branch_id, summary, estimated_tokens_at_rotation, message_count_at_rotation, created_at)
+                            VALUES (?, ?, ?, 0, ?, datetime('now'))
+                            """,
+                        arguments: [sid, bid, sum, count]
+                    )
+                }
+                wtLog("[SessionRotator] Snapshot checkpoint written for \(sid.prefix(8))… (\(sum.count) chars, \(count) turns)")
+            } catch {
+                wtLog("[SessionRotator] Failed to write snapshot: \(error)")
             }
-            wtLog("[SessionRotator] Snapshot checkpoint written for \(sessionId.prefix(8))… (\(summary.count) chars, \(messageCount) turns)")
-        } catch {
-            wtLog("[SessionRotator] Failed to write snapshot: \(error)")
         }
     }
 
