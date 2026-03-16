@@ -53,6 +53,8 @@ struct ContentView: View {
                     EventTimelineView()
                 case .mcpTools:
                     MCPToolsView()
+                case .brain:
+                    BrainView()
                 }
             }
         }

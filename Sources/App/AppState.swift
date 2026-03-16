@@ -7,6 +7,7 @@ enum SidebarDestination: String, Hashable {
     case tickets
     case timeline
     case mcpTools
+    case brain
 }
 
 /// Global app state — selected tree, selected branch, daemon connection status.

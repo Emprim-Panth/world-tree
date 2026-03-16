@@ -916,6 +916,33 @@ enum MigrationManager {
             }
         }
 
+        // Migration 27: Brain docs index — file-based knowledge store at ~/.cortana/brain/
+        migrator.registerMigration("v27_brain_index") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS canvas_brain_index (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_path TEXT NOT NULL UNIQUE,
+                    category TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    preview TEXT,
+                    word_count INTEGER,
+                    last_modified TIMESTAMP,
+                    last_indexed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_brain_category ON canvas_brain_index(category)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_brain_modified ON canvas_brain_index(last_modified DESC)")
+            try db.execute(sql: """
+                CREATE VIRTUAL TABLE IF NOT EXISTS brain_fts USING fts5(
+                    title,
+                    preview,
+                    content='canvas_brain_index',
+                    content_rowid='id',
+                    tokenize='porter unicode61'
+                )
+                """)
+        }
+
         try migrator.migrate(dbPool)
     }
 }

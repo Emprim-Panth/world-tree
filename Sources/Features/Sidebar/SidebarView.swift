@@ -81,6 +81,7 @@ struct SidebarView: View {
                 sidebarNavButton("Command Center", icon: "square.grid.2x2", dest: .commandCenter)
                 sidebarNavButton("Tickets", icon: "checklist", dest: .tickets)
                 sidebarNavButton("MCP Tools", icon: "puzzlepiece.extension", dest: .mcpTools)
+                sidebarNavButton("Brain", icon: "brain", dest: .brain)
             }
             .padding(.horizontal, 8)
             .padding(.top, 6)
