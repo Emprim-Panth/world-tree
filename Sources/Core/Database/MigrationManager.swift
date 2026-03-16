@@ -859,6 +859,42 @@ enum MigrationManager {
                 """)
         }
 
+        // Migration 25: Normalize project names and surface orphaned trees
+        //
+        // Fix 1: "WorldTree" (no space) was used as project name in some older trees —
+        //         normalize to "World Tree" so all World Tree chats appear in the same group.
+        // Fix 2: Trees with empty/nil project are invisible in the sidebar project list
+        //         and the Recent Projects section. Infer a project name from the last
+        //         segment of their working_directory so they surface correctly.
+        //         Trees whose working_directory is empty or unknown stay in General.
+        migrator.registerMigration("v25_normalize_project_names") { db in
+            // Fix 1: collapse "WorldTree" into "World Tree"
+            try db.execute(sql: """
+                UPDATE canvas_trees
+                SET project = 'World Tree'
+                WHERE project = 'WorldTree'
+                """)
+
+            // Fix 2: infer project from working_directory for orphaned trees.
+            // SQLite has no REVERSE(), so we do the last-path-component extraction in Swift.
+            let orphanRows = try Row.fetchAll(db, sql: """
+                SELECT id, working_directory FROM canvas_trees
+                WHERE (project IS NULL OR TRIM(project) = '')
+                  AND TRIM(COALESCE(working_directory, '')) != ''
+                """)
+            for row in orphanRows {
+                let id: String = row["id"]
+                let wd: String = row["working_directory"] ?? ""
+                guard !wd.isEmpty else { continue }
+                let inferred = URL(fileURLWithPath: wd).lastPathComponent
+                guard !inferred.isEmpty, inferred != "/" else { continue }
+                try db.execute(
+                    sql: "UPDATE canvas_trees SET project = ? WHERE id = ?",
+                    arguments: [inferred, id]
+                )
+            }
+        }
+
         try migrator.migrate(dbPool)
     }
 }
