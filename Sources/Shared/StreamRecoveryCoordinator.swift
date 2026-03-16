@@ -48,6 +48,12 @@ final class StreamRecoveryCoordinator {
     }
 
     func scheduleRecoveryCheck(sessionId: String, delay: Duration = .milliseconds(250)) {
+        // Don't schedule if auto-resume is already exhausted — prevents repeated
+        // "attempts exhausted" log spam from applyMessages / autoResumeIfNeeded callbacks.
+        if let pending = StreamRecoveryStore.shared.pendingRecovery(for: sessionId),
+           pending.attemptCount >= maxAttempts {
+            return
+        }
         scheduledChecks[sessionId]?.cancel()
         scheduledChecks[sessionId] = Task { @MainActor [weak self] in
             defer { self?.scheduledChecks.removeValue(forKey: sessionId) }
