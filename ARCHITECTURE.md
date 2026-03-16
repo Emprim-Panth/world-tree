@@ -662,7 +662,7 @@ MessageStore + [NEW] JobQueue + [NEW] ProjectCache updates
 
 ### Subjective Measures
 - **Evan's reaction**: "This is better than Ghostty + tmux"
-- **Workflow change**: Canvas becomes primary development window
+- **Workflow change**: World Tree becomes primary development window
 - **Context loss**: Zero — never need to re-explain project state
 
 ---
@@ -730,7 +730,7 @@ Frames link to tickets via Pencil's `annotation` field. Set annotation to `TASK-
 
 ### Design Invariants
 
-- **Read-only.** Canvas authority stays in Pencil.
+- **Read-only.** Design authority stays in Pencil; World Tree only displays.
 - **Auto-import via FS watcher.** `DispatchSource` watches each `.pen` file's directory. Saves auto re-import within 2 seconds of any change.
 - **Binary discovery:** UserDefaults override → `/Applications/Pencil.app` → `~/.vscode/extensions/` → `~/.cursor/extensions/`
 

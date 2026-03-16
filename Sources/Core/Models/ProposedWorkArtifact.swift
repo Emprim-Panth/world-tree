@@ -78,9 +78,9 @@ struct ProposedWorkArtifact: Identifiable, Sendable {
         // Infer risk from the assessment
         let risk: RiskLevel
         switch assessment.riskLevel {
-        case .low:    risk = .low
-        case .medium: risk = .medium
-        case .high, .critical: risk = .high
+        case .safe:        risk = .low
+        case .caution:     risk = .medium
+        case .destructive, .critical: risk = .high
         }
 
         // Extract first line as goal, rest as context
