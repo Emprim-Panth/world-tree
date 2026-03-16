@@ -126,14 +126,14 @@ final class TokenBroadcaster {
 
         // Persist the partial assistant message
         let savedId: String
-        if let msg = try? MessageStore.shared.sendMessage(
-            sessionId: sessionId, role: .assistant, content: partial
-        ) {
+        do {
+            let msg = try MessageStore.shared.sendMessage(sessionId: sessionId, role: .assistant, content: partial)
             savedId = msg.id
             if let branch = try? TreeStore.shared.getBranchBySessionId(sessionId) {
                 try? TreeStore.shared.updateTreeTimestamp(branch.treeId)
             }
-        } else {
+        } catch {
+            wtLog("[TokenBroadcaster] sendMessage failed for session \(sessionId): \(error) — using ghost ID")
             savedId = UUID().uuidString
         }
 
@@ -201,15 +201,15 @@ final class TokenBroadcaster {
 
             // Persist assistant message; fall back to a generated id on failure
             let savedId: String
-            if let msg = try? MessageStore.shared.sendMessage(
-                sessionId: sessionId, role: .assistant, content: accumulated
-            ) {
+            do {
+                let msg = try MessageStore.shared.sendMessage(sessionId: sessionId, role: .assistant, content: accumulated)
                 savedId = msg.id
                 // Bump tree timestamp so the sidebar refreshes
                 if let branch = try? TreeStore.shared.getBranchBySessionId(sessionId) {
                     try? TreeStore.shared.updateTreeTimestamp(branch.treeId)
                 }
-            } else {
+            } catch {
+                wtLog("[TokenBroadcaster] sendMessage(.done) failed for session \(sessionId): \(error) — using ghost ID")
                 savedId = UUID().uuidString
             }
 
