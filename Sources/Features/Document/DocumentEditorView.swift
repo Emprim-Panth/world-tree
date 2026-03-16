@@ -1492,6 +1492,12 @@ class DocumentEditorViewModel: ObservableObject {
         let attachmentSnapshot = pendingAttachments
         guard !inputText.isEmpty || !attachmentSnapshot.isEmpty else { return }
 
+        // Slash command interception — must run before we clear currentInput
+        if inputText.hasPrefix("/"), let command = SlashCommandRegistry.match(inputText) {
+            handleSlashCommand(command, rawInput: inputText)
+            return
+        }
+
         currentInput = ""
         UserDefaults.standard.removeObject(forKey: "draft.\(branchId)")
         pendingAttachments = []
@@ -1545,6 +1551,54 @@ class DocumentEditorViewModel: ObservableObject {
                 messageText: finalText.isEmpty ? nil : finalText,
                 attachments: attachmentSnapshot
             )
+        }
+    }
+
+    // MARK: - Slash Commands
+
+    func handleSlashCommand(_ command: SlashCommand, rawInput: String) {
+        let prompt = command.expandedPrompt(rawInput)
+
+        currentInput = ""
+        UserDefaults.standard.removeObject(forKey: "draft.\(branchId)")
+        pendingAttachments = []
+
+        switch command.route {
+        case .injectConversation:
+            // Treat the expanded prompt as a normal user message — same path as submitInput.
+            let userSection = DocumentSection(
+                content: AttributedString(prompt),
+                author: .user(name: "You"),
+                timestamp: Date(),
+                branchPoint: true,
+                isEditable: true
+            )
+            document.sections.append(userSection)
+            processUserInput(userSection, sectionUUID: userSection.id, messageText: prompt)
+
+        case .dispatch:
+            // Fire a background job via CortanaWorkflowDispatchService.
+            let resolvedWorkingDir = workingDirectory.isEmpty
+                ? (AppState.shared.selectedProjectPath ?? "")
+                : workingDirectory
+            let project = cachedProject ?? resolvedWorkingDir
+            let dispatchId = CortanaWorkflowDispatchService.shared.dispatch(
+                message: prompt,
+                project: project,
+                workingDirectory: resolvedWorkingDir,
+                origin: .workflow
+            )
+            wtLog("[SlashCommand] Dispatched '\(command.trigger)' → job \(dispatchId.prefix(8))")
+
+            // Surface a lightweight inline acknowledgement so the user knows it fired.
+            let ack = DocumentSection(
+                content: AttributedString("↗ Background job started: \(command.displayName)"),
+                author: .system,
+                timestamp: Date(),
+                branchPoint: false,
+                isEditable: false
+            )
+            document.sections.append(ack)
         }
     }
 
@@ -2362,6 +2416,11 @@ struct UserInputArea: View {
     @State private var isListening = false
     @State private var liveTranscription = ""
     @State private var editorContentHeight: CGFloat = 44
+    @State private var slashMenuVisible = false
+
+    private var slashSuggestions: [SlashCommand] {
+        SlashCommandRegistry.suggestions(for: text.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -2390,6 +2449,17 @@ struct UserInputArea: View {
                             .padding(.vertical, 4)
                         }
                         .frame(maxHeight: 72)
+                    }
+
+                    // Slash command autocomplete — appears above the text field
+                    if slashMenuVisible && !slashSuggestions.isEmpty {
+                        SlashCommandMenuView(
+                            commands: slashSuggestions,
+                            onSelect: { cmd in
+                                text = cmd.trigger + " "
+                                slashMenuVisible = false
+                            }
+                        )
                     }
 
                     ZStack(alignment: .topLeading) {
@@ -2514,6 +2584,14 @@ struct UserInputArea: View {
                 }
             }
         }
+        .onChange(of: text) { newValue in
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Show menu only when input starts with "/" and no full command has been selected yet
+            // (a selected command ends in space — hide once the user continues typing past the trigger)
+            let hasFullCommand = SlashCommandRegistry.match(trimmed) != nil && !trimmed.hasSuffix(" ")
+            slashMenuVisible = trimmed.hasPrefix("/") && !hasFullCommand
+                && !SlashCommandRegistry.suggestions(for: trimmed).isEmpty
+        }
         .onReceive(NotificationCenter.default.publisher(for: VoiceService.transcriptionUpdated)) { notification in
             guard let transcribedText = notification.userInfo?["text"] as? String else { return }
             let isFinal = notification.userInfo?["isFinal"] as? Bool ?? false
@@ -2582,6 +2660,47 @@ struct UserInputArea: View {
                 if let attachment = Attachment.from(url: url) { attachments.append(attachment) }
             }
         }
+    }
+}
+
+// MARK: - Slash Command Menu
+
+struct SlashCommandMenuView: View {
+    let commands: [SlashCommand]
+    let onSelect: (SlashCommand) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(commands) { cmd in
+                Button {
+                    onSelect(cmd)
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(cmd.trigger)
+                            .font(.system(.caption, design: .monospaced))
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.primary)
+                        Text(cmd.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4)
+        .background(Color(NSColor.windowBackgroundColor))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+        )
+        .cornerRadius(8)
+        .shadow(color: .black.opacity(0.12), radius: 6, x: 0, y: 3)
     }
 }
 
