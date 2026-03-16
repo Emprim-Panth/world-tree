@@ -20,6 +20,13 @@ struct WorldTreeApp: App {
                 .onAppear {
                     // Crash sentinel — detect abnormal exits from previous session
                     _ = CrashSentinel.shared.checkAndStart()
+                    // SIGTERM from the rebuild watcher does NOT fire willTerminateNotification,
+                    // so install a signal handler that writes the clean-exit sentinel before dying.
+                    // This prevents every rebuild-triggered restart from being logged as a crash.
+                    signal(SIGTERM) { _ in
+                        CrashSentinel.shared.markCleanExit()
+                        exit(0)
+                    }
 
                     checkForUpdateBadge()
                     // DB is set up in AppState.init() — just surface any error here
