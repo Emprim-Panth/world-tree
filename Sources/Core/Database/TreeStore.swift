@@ -16,6 +16,18 @@ final class TreeStore {
 
     private init() {}
 
+    // MARK: - Project Name Normalization
+
+    /// Map filesystem folder names to canonical display names.
+    /// Prevents naming splits like "WorldTree" vs "World Tree" when a project's
+    /// directory name omits a space that the display name requires.
+    static func normalizeProjectName(_ name: String) -> String {
+        switch name {
+        case "WorldTree": return "World Tree"
+        default: return name
+        }
+    }
+
     // MARK: - Trees
 
     func createTree(
@@ -27,10 +39,11 @@ final class TreeStore {
         // Prevents trees from being created with nil project (orphaned in sidebar).
         let resolvedProject: String?
         if let explicit = project, !explicit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            resolvedProject = explicit
+            resolvedProject = TreeStore.normalizeProjectName(explicit)
         } else if let wd = workingDirectory, !wd.isEmpty {
             let inferred = URL(fileURLWithPath: wd).lastPathComponent
-            resolvedProject = (inferred.isEmpty || inferred == "/") ? nil : inferred
+            let raw = (inferred.isEmpty || inferred == "/") ? nil : inferred
+            resolvedProject = raw.map { TreeStore.normalizeProjectName($0) }
         } else {
             resolvedProject = nil
         }

@@ -711,6 +711,16 @@ class DocumentEditorViewModel: ObservableObject {
         }
         loadRetryCount = 0  // reset on success
 
+        // Load checkpoint synchronously before the async Task — eliminates the race
+        // where a user sends immediately after opening a long-gap branch.
+        // SessionRotator.latestCheckpoint() is a synchronous DB read (< 1ms).
+        // Must happen here so checkpointContext is set before submitInput() can run.
+        if let (summary, createdAt) = SessionRotator.latestCheckpoint(sessionId: sessionId),
+           Date().timeIntervalSince(createdAt) < 259200 {  // within 72 hours
+            checkpointContext = summary
+            wtLog("[DocumentEditor] Pre-loaded checkpoint from DB (\(summary.count) chars, age \(Int(Date().timeIntervalSince(createdAt)))s)")
+        }
+
         let sid = sessionId  // capture value type, not self
         let limit = pageSize
 
@@ -861,6 +871,17 @@ class DocumentEditorViewModel: ObservableObject {
                       let noteBranchId = note.userInfo?["branchId"] as? String,
                       noteBranchId == self.branchId else { return }
                 self.activeSubscriptionId = nil
+                // Belt-and-suspenders: ensure wasStreaming and isProcessing are cleared
+                // even if the ViewModel never received .done via its subscriber (e.g. it
+                // subscribed after the stream started but the process exited before .done
+                // was dispatched). Without this, the spinner stays up permanently and
+                // wasStreaming leaks in UserDefaults causing spurious auto-resumes.
+                UserDefaults.standard.removeObject(forKey: "wasStreaming.\(self.branchId)")
+                if self.isProcessing {
+                    self.stopStreamBatching()
+                    self.streamingContent = nil
+                    self.isProcessing = false
+                }
                 self.refreshRecoveryStatus()
             }
         }
@@ -916,15 +937,6 @@ class DocumentEditorViewModel: ObservableObject {
                 }
             } catch {
                 wtLog("[DocumentEditor] Failed to load branch context for session \(self.sessionId): \(error)")
-            }
-            // Restore the most recent rotation checkpoint so the first send after
-            // a restart or session reload picks up where the last session left off.
-            // Without this, `checkpointContext` stays nil and we fall back to the
-            // much shallower "stale session" context injection (12 turns × 500 chars).
-            if let (summary, createdAt) = SessionRotator.latestCheckpoint(sessionId: self.sessionId),
-               Date().timeIntervalSince(createdAt) < 259200 {  // within 72 hours
-                self.checkpointContext = summary
-                wtLog("[DocumentEditor] Restored rotation checkpoint from DB (\(summary.count) chars, age \(Int(Date().timeIntervalSince(createdAt)))s)")
             }
             // Schedule auto-resume evaluation after UI settles.
             // Handles two cases without any user input:
@@ -1181,10 +1193,17 @@ class DocumentEditorViewModel: ObservableObject {
             }
         }
 
-        // Stop processing indicator when an assistant message arrives
-        if newMessages.contains(where: { $0.role == .assistant }) {
+        // Stop processing indicator when an assistant message arrives — but ONLY if
+        // no stream is currently active. When navigating back to a branch, the new
+        // ViewModel sees all historical messages as "new" (empty seenMessageIds), so
+        // without this guard, the initial observation delivery would kill the live
+        // stream indicator and send a spurious "Cortana finished" notification.
+        if newMessages.contains(where: { $0.role == .assistant }),
+           !ActiveStreamRegistry.shared.isActive(branchId) {
             isProcessing = false
-            GlobalStreamRegistry.shared.endStream(branchId: branchId)
+            // notify: false — the real "Cortana finished" notification fires in
+            // finishStream(). This call is only a safety-net for stale registry entries.
+            GlobalStreamRegistry.shared.endStream(branchId: branchId, notify: false)
         }
 
         refreshRecoveryStatus()
