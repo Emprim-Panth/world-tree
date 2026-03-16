@@ -70,6 +70,30 @@ struct ProposedWorkArtifact: Identifiable, Sendable {
 
     // MARK: - Factory
 
+    /// Build a proposal artifact from a resolved workflow plan, so the user can
+    /// review routing + risk before any execution begins.
+    static func fromWorkflowPlan(
+        goal: String,
+        steps: [String] = [],
+        plan: CortanaWorkflowExecutionPlan,
+        projectScope: String? = nil,
+        riskLevel: RiskLevel = .medium,
+        accessMode: AccessMode = .writeCapable
+    ) -> ProposedWorkArtifact {
+        ProposedWorkArtifact(
+            goal: goal,
+            steps: steps,
+            primaryModel: plan.primaryModelId,
+            reviewer: plan.reviewer?.modelId,
+            projectScope: projectScope,
+            affectedFiles: [],
+            riskLevel: riskLevel,
+            accessMode: accessMode,
+            sourceCommand: nil,
+            createdAt: Date()
+        )
+    }
+
     static func fromToolAssessment(
         assessment: ToolGuard.Assessment,
         command: String,
