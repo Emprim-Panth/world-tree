@@ -284,9 +284,19 @@ final class SidebarViewModel: ObservableObject {
         allProjectGroups = result
         // Recents: walk `visibleTrees` in DB-sort order (already COALESCE(last_message_at, updated_at) DESC)
         // and take the first 4 unique non-General project names.
-        // This sidesteps any in-memory nil-date edge cases — the DB ordering is authoritative.
+        // The currently-open tree's project always pins to position 0.
         var recentSeen: [String] = []
         var recentSeenSet: Set<String> = []
+
+        // Pin the active tree's project first so the user always sees what they have open.
+        if let activeId = AppState.shared.selectedTreeId,
+           let activeTree = visibleTrees.first(where: { $0.id == activeId }),
+           let activeProj = activeTree.project.flatMap({ $0.isEmpty ? nil : $0 }),
+           activeProj != AppConstants.defaultProjectName {
+            recentSeenSet.insert(activeProj)
+            recentSeen.append(activeProj)
+        }
+
         for tree in visibleTrees {
             let proj = tree.project.flatMap { $0.isEmpty ? nil : $0 } ?? AppConstants.defaultProjectName
             guard proj != AppConstants.defaultProjectName else { continue }
