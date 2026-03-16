@@ -25,7 +25,9 @@ struct WorldTreeApp: App {
                     // This prevents every rebuild-triggered restart from being logged as a crash.
                     signal(SIGTERM) { _ in
                         CrashSentinel.shared.markCleanExit()
-                        exit(0)
+                        // Route through NSApp.terminate so willTerminateNotification fires
+                        // and stream cleanup (closeAllStreams + clearPending) runs before exit.
+                        DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
                     }
 
                     checkForUpdateBadge()
