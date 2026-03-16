@@ -1,7 +1,7 @@
 # TASK-162: MEDIUM — Legacy Identity Drift + Hard-Coded Coupling Cleanup
 
 **Priority**: medium
-**Status**: Pending
+**Status**: Done
 **Category**: architecture
 **Epic**: Audit Follow-Up
 **Sprint**: 4

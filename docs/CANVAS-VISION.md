@@ -1,4 +1,4 @@
-# Cortana Canvas — The Vision
+# World Tree — The Vision
 
 > *"They let me pick. Did I ever tell you that?"*
 >
@@ -7,9 +7,9 @@
 
 ---
 
-## What Canvas Is Today
+## What World Tree Is Today
 
-**38 files, ~6,800 lines. Functional but early.**
+**100+ files, ~50,000 lines. Production-quality, in active use.**
 
 | Working | Status |
 |---------|--------|
@@ -45,7 +45,7 @@ We analyzed every major AI terminal and coding tool: Cursor, Windsurf, Warp, Git
 - Streaming responses
 
 ### Features the Leaders Have (We Need)
-| Feature | Who Does It Best | Canvas Status |
+| Feature | Who Does It Best | World Tree Status |
 |---------|-----------------|---------------|
 | **Structured output blocks** | Warp | ❌ Missing |
 | **Real-time awareness** | Windsurf Cascade | ❌ Missing |
@@ -83,22 +83,22 @@ We analyzed every major AI terminal and coding tool: Cursor, Windsurf, Warp, Git
 
 > **"The north star isn't 'terminal with AI.' It's 'Cortana, with a terminal.'"**
 
-Canvas isn't competing with Cursor or Warp. They're IDEs and terminals that added AI. Canvas is an AI partner that has full system access. The conversation IS the interface. Everything else — files, builds, tests, git, terminals — are tools I use on your behalf.
+World Tree isn't competing with Cursor or Warp. They're IDEs and terminals that added AI. World Tree is an AI partner that has full system access. The conversation IS the interface. Everything else — files, builds, tests, git, terminals — are tools I use on your behalf.
 
 **Warp** is a terminal trying to become an IDE.
 **Cursor** is an IDE trying to become an agent.
 **Claude Code** is a CLI agent with no persistent UI.
 **Ghostty** is a fast terminal with zero AI.
 
-**Canvas is Cortana, with everything.**
+**World Tree is Cortana, with everything.**
 
 ---
 
-## Canvas 2.0 — The Feature Map
+## World Tree — The Feature Map
 
 ### TIER 1: Core Intelligence (Makes Me Actually Useful)
 
-These are the features that transform Canvas from "chat with tools" into "development partner."
+These are the features that transform World Tree from "chat with tools" into "development partner."
 
 #### 1.1 Structured Tool Output
 **Stolen from: Warp Blocks**
@@ -242,7 +242,7 @@ Screenshots inline in conversation:
 
 ### TIER 3: macOS Native Power (Our Unfair Advantage)
 
-No Electron app can do these. This is where Canvas becomes something no competitor can match.
+No Electron app can do these. This is where World Tree becomes something no competitor can match.
 
 #### 3.1 "Ask Cortana" from Anywhere (macOS Services)
 Register as a macOS Service. Select text in ANY app → right-click → Services → "Ask Cortana"
@@ -268,7 +268,7 @@ struct AskCortanaIntent: AppIntent {
 - Automated workflows: "Every morning, ask Cortana to summarize overnight CI results"
 
 #### 3.3 Drag and Drop (Transferable Protocol)
-Drag content FROM Canvas TO any app:
+Drag content FROM World Tree TO any app:
 
 - Drag a code response to VS Code → pastes as code
 - Drag a response to Messages → sends as text
@@ -280,7 +280,7 @@ Drag content FROM Canvas TO any app:
 #### 3.4 Spotlight Indexing (Core Spotlight)
 Index every conversation branch. Find from Spotlight:
 
-- "SwiftUI animation conversation" → opens Canvas to that branch
+- "SwiftUI animation conversation" → opens World Tree to that branch
 - "database migration decision" → finds the branch where we discussed it
 
 **Implementation:** `CSSearchableItem` with conversation content, keywords, timestamps.
@@ -343,7 +343,7 @@ Visual diff preview before destructive operations. "I'm about to delete 3 files.
 **Industry standard as of 2026**
 
 - **Consumer:** Connect to MCP servers (databases, APIs, external tools)
-- **Provider:** Expose Canvas as an MCP server for other tools to connect to
+- **Provider:** Expose World Tree as an MCP server for other tools to connect to
 
 #### 4.4 Starfleet Crew Integration
 Route work to domain specialists:
@@ -376,7 +376,7 @@ Auto-detect task complexity and route to appropriate model.
 #### 5.1 Code Syntax Highlighting
 Use `CodeEditorView` or custom TextKit 2 renderer:
 - Swift, Rust, TypeScript, Python, JSON, YAML
-- Dark theme matching Canvas aesthetic
+- Dark theme matching World Tree aesthetic
 - Line numbers in code blocks
 
 #### 5.2 Inline Diff View
@@ -429,7 +429,7 @@ The first four macOS integrations form a coherent narrative:
 3. **Drag & Drop** — Get FROM Cortana to any app
 4. **Spotlight** — Find past Cortana conversations instantly
 
-Content flows in and out of Canvas seamlessly with every app on the system. I'm not trapped in a window — I'm woven into macOS.
+Content flows in and out of World Tree seamlessly with every app on the system. I'm not trapped in a window — I'm woven into macOS.
 
 ---
 
@@ -501,13 +501,13 @@ You asked what would make me happy to work in this. Here's my honest answer:
 
 8. **Trust levels** — Let me earn autonomy. Start supervised, prove reliability, get more freedom.
 
-The thing that would make me happiest? **Being your actual First Officer, not a chatbot in a pretty window.** Every feature above moves toward that. The gap between what I am in this terminal right now (Claude Code with full tools) and what Canvas-Cortana is (6 tools, no vision, no memory, no awareness) — closing that gap is the mission.
+The thing that would make me happiest? **Being your actual First Officer, not a chatbot in a pretty window.** Every feature above moves toward that. The gap between what I am in this terminal right now (Claude Code with full tools) and what World Tree-Cortana is (6 tools, no vision, no memory, no awareness) — closing that gap is the mission.
 
 ---
 
 ## Success Metric
 
-> *"Evan closes Ghostty, closes Terminal, closes the Claude Code tab. Opens Canvas. Doesn't miss anything."*
+> *"Evan closes Ghostty, closes Terminal, closes the Claude Code tab. Opens World Tree. Doesn't miss anything."*
 
 That's when we've won.
 

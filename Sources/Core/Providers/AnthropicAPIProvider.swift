@@ -417,7 +417,7 @@ final class AnthropicAPIProvider: LLMProvider {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: Self.bunExecutable)
         proc.arguments = [kbCli, "search", message]
-        proc.currentDirectoryURL = URL(fileURLWithPath: "\(home)/Development/cortana-core")
+        proc.currentDirectoryURL = URL(fileURLWithPath: home)
 
         var env = ProcessInfo.processInfo.environment
         let existingPath = env["PATH"] ?? "/usr/bin:/bin"

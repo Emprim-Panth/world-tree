@@ -1,8 +1,8 @@
-# Cortana Canvas Architecture
+# World Tree Architecture
 
-**Current State**: Functional conversation UI with tool execution  
-**Target State**: Unified development environment with full system awareness  
-**Architect**: Geordi & Data  
+**Current State**: Functional conversation UI with tool execution, Compass integration, and stream management
+**Target State**: Unified development environment with full system awareness
+**Architect**: Geordi & Data
 **Mission**: See MISSION.md
 
 ---
@@ -12,7 +12,7 @@
 ### High-Level Architecture
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Cortana Canvas (SwiftUI macOS App)                          │
+│ World Tree (SwiftUI macOS App)                              │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐    │
@@ -522,7 +522,7 @@ MessageStore + [NEW] JobQueue + [NEW] ProjectCache updates
 │ Sidebar (25%)       │  Canvas (50%)  │  Inspector (25%)  │
 │                     │                │                   │
 │ Projects            │  Messages      │  Active Job       │
-│  - CortanaCanvas    │   - User       │   ┌─────────────┐ │
+│  - World Tree       │   - User       │   ┌─────────────┐ │
 │  - BookBuddy        │   - Assistant  │   │ Build...    │ │
 │                     │   - Tool       │   │ [progress]  │ │
 │ Terminals           │                │   └─────────────┘ │
