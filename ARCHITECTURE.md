@@ -89,15 +89,15 @@
 **Stability**: Medium (interface stable, adding features)  
 **Dependencies**: Foundation
 
-#### `Sources/Features/Canvas/`
-**Responsibility**: Main conversation UI  
+#### `Sources/Features/Document/`
+**Responsibility**: Main conversation UI
 **Components**:
-- `CanvasView` — Primary conversation interface
-- `BranchView` — Branch-specific message list
-- `BranchViewModel` — State and actions for a branch
+- `DocumentEditorView` — Primary conversation interface
+- `SingleDocumentView` — Branch-specific message list
+- `DocumentEditorViewModel` — State and actions for a branch
 - `MessageRow` — Individual message rendering
 
-**Stability**: Low (UI evolves with features)  
+**Stability**: Low (UI evolves with features)
 **Dependencies**: SwiftUI, Core modules
 
 #### `Sources/Features/Sidebar/`
@@ -504,7 +504,7 @@ MessageStore + [NEW] JobQueue + [NEW] ProjectCache updates
 ### Current Layout
 ```
 ┌───────────────────────────────────────────┐
-│ Sidebar (30%)   │  Canvas (70%)           │
+│ Sidebar (30%)   │  Document (70%)         │
 │                 │                         │
 │ Tree List       │  Branch Messages        │
 │  - Branch 1     │   - User message        │

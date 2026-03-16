@@ -606,10 +606,14 @@ final class TreeStore {
             let sql = "SELECT * FROM canvas_branches WHERE session_id IN (\(placeholders))"
             let args = StatementArguments(sessionIds)
             let branches = try Branch.fetchAll(db, sql: sql, arguments: args)
-            return Dictionary(uniqueKeysWithValues: branches.compactMap { branch in
-                guard let sid = branch.sessionId else { return nil }
-                return (sid, branch)
-            })
+            // Use subscript to handle duplicate session_ids safely (last one wins).
+            // Dictionary(uniqueKeysWithValues:) crashes on duplicates.
+            var result: [String: Branch] = [:]
+            for branch in branches {
+                guard let sid = branch.sessionId else { continue }
+                result[sid] = branch
+            }
+            return result
         }
     }
 
@@ -685,10 +689,10 @@ final class TreeStore {
     static func buildBranchTree(from branches: [Branch]) -> [Branch] {
         guard !branches.isEmpty else { return [] }
 
-        // Build O(1) parent lookup — avoids O(n) scan per depth computation
-        let parentLookup: [String: String?] = Dictionary(
-            uniqueKeysWithValues: branches.map { ($0.id, $0.parentBranchId) }
-        )
+        // Build O(1) parent lookup — avoids O(n) scan per depth computation.
+        // Use subscript to handle any corrupt duplicate branch IDs safely.
+        var parentLookup: [String: String?] = [:]
+        for branch in branches { parentLookup[branch.id] = branch.parentBranchId }
 
         // Pass 1: compute depth by walking each branch's parent chain
         var depthCache: [String: Int] = [:]
