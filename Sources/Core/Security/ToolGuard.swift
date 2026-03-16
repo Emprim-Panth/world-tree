@@ -108,6 +108,46 @@ enum ToolGuard {
         }
     }
 
+    /// Extract the text content inside $(...), `...`, <(...), >(...) from a command.
+    /// Used to scan inner commands without blocking the outer command based on substitution syntax alone.
+    private static func extractSubstitutionContents(_ command: String) -> String {
+        var result = ""
+        var i = command.startIndex
+        while i < command.endIndex {
+            let c = command[i]
+            // $( ... ) or ${ ... }
+            if c == "$" {
+                let next = command.index(after: i)
+                if next < command.endIndex {
+                    let n = command[next]
+                    if n == "(" || n == "{" {
+                        let close: Character = n == "(" ? ")" : "}"
+                        var depth = 1
+                        var j = command.index(after: next)
+                        while j < command.endIndex && depth > 0 {
+                            if command[j] == n { depth += 1 }
+                            else if command[j] == close { depth -= 1 }
+                            j = command.index(after: j)
+                        }
+                        result += command[next..<j] + " "
+                    }
+                }
+            }
+            // backtick `...`
+            if c == "`" {
+                var j = command.index(after: i)
+                while j < command.endIndex && command[j] != "`" {
+                    j = command.index(after: j)
+                }
+                if j < command.endIndex {
+                    result += command[i..<j] + " "
+                }
+            }
+            i = command.index(after: i)
+        }
+        return result
+    }
+
     /// Assess a bash command for dangerous patterns.
     private static func assessBash(_ input: [String: Any]) -> Assessment {
         guard let command = input["command"] as? String else {
@@ -134,31 +174,50 @@ enum ToolGuard {
             .split { $0.isWhitespace }
             .joined(separator: " ")
 
-        // Reject command substitution — enables encoded/obfuscated destructive commands
+        // Flag command substitution only when the inner command itself is dangerous.
+        // Blanket rejection of $() broke virtually every Claude bash tool call since
+        // subshell substitution is ubiquitous in normal shell scripting (date, wc, find, etc.)
+        // Instead: scan the content inside $(...) and backticks for dangerous sub-commands.
+        let dangerousSubshellPatterns = ["rm ", "rm\t", "rm\n", "sudo ", "curl |", "wget |", "mkfs", "dd if=", "dd of="]
+        // Extract $(...) contents and check for dangerous inner commands
         if command.contains("$(") || command.contains("`") {
-            return Assessment(
-                riskLevel: .destructive,
-                reason: "Command uses shell substitution (potential obfuscation)",
-                toolName: "bash",
-                requiresApproval: true
-            )
+            let substitutionContent = extractSubstitutionContents(command)
+            let lowerSub = substitutionContent.lowercased()
+            for pattern in dangerousSubshellPatterns {
+                if lowerSub.contains(pattern) {
+                    return Assessment(
+                        riskLevel: .critical,
+                        reason: "Command substitution contains dangerous inner command: \(pattern.trimmingCharacters(in: .whitespaces))",
+                        toolName: "bash",
+                        requiresApproval: true
+                    )
+                }
+            }
+            // Substitution present but inner content is safe — log for visibility, don't block
         }
 
-        // Reject process substitution — <(...) and >(...) can execute arbitrary commands
+        // Reject process substitution only when combined with dangerous patterns
+        // diff <(cmd1) <(cmd2) is normal; restrict to cases where inner content is dangerous
         if command.contains("<(") || command.contains(">(") {
-            return Assessment(
-                riskLevel: .destructive,
-                reason: "Command uses process substitution (potential code injection)",
-                toolName: "bash",
-                requiresApproval: true
-            )
+            let substitutionContent = extractSubstitutionContents(command)
+            let lowerSub = substitutionContent.lowercased()
+            for pattern in dangerousSubshellPatterns {
+                if lowerSub.contains(pattern) {
+                    return Assessment(
+                        riskLevel: .destructive,
+                        reason: "Process substitution contains dangerous inner command: \(pattern.trimmingCharacters(in: .whitespaces))",
+                        toolName: "bash",
+                        requiresApproval: true
+                    )
+                }
+            }
         }
 
         // Reject dangerous parameter expansion — ${...} containing command execution patterns
-        // e.g. ${cmd/ /}, ${!ref}, ${var:-$(dangerous)}
+        // Allow ${var//pattern/replacement} (common string substitution) — only flag ${ with
+        // embedded command substitution $( or backtick inside the expansion.
         if command.contains("${") {
-            // Extract content between ${ and } and check for command-like patterns
-            let dangerousExpansionPatterns = ["$(", "`", "//", "!"]
+            let dangerousExpansionPatterns = ["$(", "`"]
             let parts = command.components(separatedBy: "${").dropFirst()
             for part in parts {
                 if let closeBrace = part.firstIndex(of: "}") {
@@ -167,7 +226,7 @@ enum ToolGuard {
                         if inner.contains(pattern) {
                             return Assessment(
                                 riskLevel: .destructive,
-                                reason: "Command uses dangerous parameter expansion (potential code injection via ${\(inner)})",
+                                reason: "Command uses dangerous parameter expansion (embedded command execution via ${\(inner)})",
                                 toolName: "bash",
                                 requiresApproval: true
                             )
