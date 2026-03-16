@@ -755,8 +755,12 @@ final class WorldTreeServer: ObservableObject {
 
         // Stream ended without .done
         if !fullResponse.isEmpty {
-            _ = try? MessageStore.shared.sendMessage(
-                sessionId: resolved.sessionId, role: .assistant, content: fullResponse)
+            do {
+                _ = try MessageStore.shared.sendMessage(
+                    sessionId: resolved.sessionId, role: .assistant, content: fullResponse)
+            } catch {
+                wtLog("[WorldTreeServer] sendMessage (stream-end fallback) failed for session \(resolved.sessionId): \(error)")
+            }
         }
         sendSSEClose(connection)
     }
