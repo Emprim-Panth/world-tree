@@ -349,8 +349,10 @@ final class CoordinatorActor: ObservableObject {
             // Also pull recent completed plans
             let all = try CoordinatorStore.fetchAllPlans(limit: 10)
             let combined = activePlans + all.filter { !$0.isActive }
-            activePlans = Array(Dictionary(uniqueKeysWithValues: combined.map { ($0.id, $0) }).values)
-                .sorted { $0.createdAt > $1.createdAt }
+            // Dictionary(uniqueKeysWithValues:) crashes on duplicate IDs — use safe loop instead.
+            var deduped: [String: CoordinatorPlan] = [:]
+            for plan in combined { deduped[plan.id] = plan }
+            activePlans = Array(deduped.values).sorted { $0.createdAt > $1.createdAt }
 
             // Load tasks for each active plan
             for plan in activePlans where plan.isActive {
