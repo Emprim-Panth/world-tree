@@ -6,6 +6,8 @@ struct BrainView: View {
     @State private var searchQuery = ""
     @State private var isEditing = false
     @State private var editContent = ""
+    @State private var isPolishing = false
+    @State private var polishError: String?
 
     var displayedDocs: [BrainDocument] {
         searchQuery.isEmpty
@@ -74,17 +76,83 @@ struct BrainView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button(isEditing ? "Done" : "Edit") {
-                            if isEditing {
-                                try? editContent.write(to: doc.id, atomically: true, encoding: .utf8)
+                        if let err = polishError {
+                            Text(err)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .lineLimit(1)
+                        }
+                        if isEditing {
+                            Button("Clear") {
+                                editContent = ""
+                            }
+                            .buttonStyle(.bordered)
+                            Button {
+                                guard !isPolishing else { return }
+                                isPolishing = true
+                                polishError = nil
+                                let raw = editContent
+                                Task {
+                                    do {
+                                        let result = try await OllamaClient.shared.chat(
+                                            model: "qwen2.5-coder:7b",
+                                            messages: [
+                                                OllamaChatMessage(role: "system", content: """
+You are a technical documentation editor. \
+Rewrite the user's raw notes into a clean, structured markdown document \
+suitable for use as a reference by AI agents and developers. \
+Use clear headings, bullet points, and concise language. \
+Preserve all technical details and decisions. \
+Do not add placeholder content or invented facts. \
+Output only the formatted markdown — no preamble, no commentary.
+"""),
+                                                OllamaChatMessage(role: "user", content: raw)
+                                            ]
+                                        )
+                                        await MainActor.run { editContent = result }
+                                    } catch {
+                                        await MainActor.run { polishError = "Ollama unavailable" }
+                                    }
+                                    await MainActor.run { isPolishing = false }
+                                }
+                            } label: {
+                                if isPolishing {
+                                    ProgressView().scaleEffect(0.7)
+                                } else {
+                                    Label("Polish", systemImage: "wand.and.stars")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isPolishing || editContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            Button("Save") {
+                                do {
+                                    try editContent.write(to: doc.id, atomically: true, encoding: .utf8)
+                                    isEditing = false
+                                    polishError = nil
+                                    Task {
+                                        await store.reload()
+                                        if let refreshed = store.documents.first(where: { $0.id == doc.id }) {
+                                            selectedDoc = refreshed
+                                        }
+                                    }
+                                } catch {
+                                    polishError = "Save failed: \(error.localizedDescription)"
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Button("Cancel") {
                                 isEditing = false
-                                Task { await store.reload() }
-                            } else {
+                                editContent = ""
+                                polishError = nil
+                            }
+                            .buttonStyle(.bordered)
+                        } else {
+                            Button("Edit") {
                                 editContent = doc.content
                                 isEditing = true
                             }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
                     }
                     .padding(12)
                     .background(Color(NSColor.windowBackgroundColor))
