@@ -442,7 +442,7 @@ struct MarkdownCodeFenceView: View {
                             if let attr = try? AttributedString(
                                 markdown: text,
                                 options: AttributedString.MarkdownParsingOptions(
-                                    interpretedSyntax: .full
+                                    interpretedSyntax: .inlineOnlyPreservingWhitespace
                                 )
                             ) {
                                 Text(attr)

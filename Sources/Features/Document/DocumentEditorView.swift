@@ -2135,7 +2135,7 @@ struct StreamingSectionView: View {
         cachedRendered = (try? AttributedString(
             markdown: newContent,
             options: AttributedString.MarkdownParsingOptions(
-                interpretedSyntax: .full
+                interpretedSyntax: .inlineOnlyPreservingWhitespace
             )
         )) ?? AttributedString(newContent)
     }
