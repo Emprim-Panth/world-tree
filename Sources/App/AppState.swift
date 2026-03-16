@@ -100,8 +100,16 @@ final class AppState {
 
     func navigateBack() {
         guard branchHistoryIndex > 0 else { return }
+        let oldBranchId = selectedBranchId
         branchHistoryIndex -= 1
         let entry = branchHistory[branchHistoryIndex]
+        if let old = oldBranchId, old != entry.branchId {
+            NotificationCenter.default.post(
+                name: .branchWillSwitch,
+                object: nil,
+                userInfo: ["oldBranchId": old, "newBranchId": entry.branchId]
+            )
+        }
         clearProjectSelection()
         selectedTreeId = entry.treeId
         selectedBranchId = entry.branchId
@@ -109,8 +117,16 @@ final class AppState {
 
     func navigateForward() {
         guard branchHistoryIndex < branchHistory.count - 1 else { return }
+        let oldBranchId = selectedBranchId
         branchHistoryIndex += 1
         let entry = branchHistory[branchHistoryIndex]
+        if let old = oldBranchId, old != entry.branchId {
+            NotificationCenter.default.post(
+                name: .branchWillSwitch,
+                object: nil,
+                userInfo: ["oldBranchId": old, "newBranchId": entry.branchId]
+            )
+        }
         clearProjectSelection()
         selectedTreeId = entry.treeId
         selectedBranchId = entry.branchId
