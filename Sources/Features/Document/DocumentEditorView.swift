@@ -1055,12 +1055,13 @@ class DocumentEditorViewModel: ObservableObject {
         hasCheckpointContext: Bool
     ) -> Bool {
         guard lastMessageRole == .user else { return false }
-        // Only auto-resume if there's evidence the session was interrupted mid-stream:
-        // either a rotation checkpoint exists (session was active long enough to rotate)
-        // or the wasStreaming flag was set (isProcessing was true when we last left).
-        // Avoids firing on deliberate mid-conversation navigation.
+        // Only auto-resume when the stream was provably live at last exit.
+        // wasStreaming is set when isProcessing becomes true and cleared when it becomes false.
+        // A checkpoint existing (hasCheckpointContext) only means we had prior exchanges —
+        // it does NOT mean the current turn was interrupted. Using it caused spurious
+        // auto-resumes whenever the user switched away from a chat mid-turn.
         let wasStreaming = UserDefaults.standard.bool(forKey: "wasStreaming.\(branchId)")
-        return hasCheckpointContext || wasStreaming
+        return wasStreaming
     }
 
     /// Automatically continue a conversation that was interrupted (crash, force-quit, or
