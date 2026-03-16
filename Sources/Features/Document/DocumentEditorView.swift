@@ -2132,8 +2132,26 @@ struct StreamingSectionView: View {
     /// string through AttributedString(markdown:) AND then re-parsing each prose segment inside
     /// MarkdownCodeFenceView. This cache skips re-parsing until content grows by 80+ characters
     /// or a code fence boundary changes, cutting markdown parse work by ~90% during streaming.
-    @State private var cachedRaw: String = ""
-    @State private var cachedRendered: AttributedString = AttributedString("")
+    ///
+    /// Seeded from `content` in init so view recreation (e.g. after brief nil gap during
+    /// stream recovery) shows correct content immediately with no raw-text flash.
+    @State private var cachedRaw: String
+    @State private var cachedRendered: AttributedString
+
+    init(content: String) {
+        self.content = content
+        self._cachedRaw = State(initialValue: content)
+        self._cachedRendered = State(initialValue: Self.parseMarkdown(content))
+    }
+
+    private static func parseMarkdown(_ text: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: text,
+            options: AttributedString.MarkdownParsingOptions(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace
+            )
+        )) ?? AttributedString(text)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -2174,12 +2192,7 @@ struct StreamingSectionView: View {
         guard Self.shouldRefreshMarkdownCache(previous: cachedRaw, new: newContent) else { return }
 
         cachedRaw = newContent
-        cachedRendered = (try? AttributedString(
-            markdown: newContent,
-            options: AttributedString.MarkdownParsingOptions(
-                interpretedSyntax: .inlineOnlyPreservingWhitespace
-            )
-        )) ?? AttributedString(newContent)
+        cachedRendered = Self.parseMarkdown(newContent)
     }
 
     static func shouldRefreshMarkdownCache(previous: String, new: String) -> Bool {
