@@ -1698,6 +1698,11 @@ class DocumentEditorViewModel: ObservableObject {
                             timestamp: lastAssistant.createdAt,
                             hasFindingSignal: !isRootBranch && scanForFindingSignals(lastAssistant.content)
                         )
+                    } else {
+                        // No assistant message in DB yet — the registry is persisting the failure notice
+                        // asynchronously. GRDB observation will deliver it with the real messageId
+                        // once written, avoiding any deduplication race. Nothing to do here.
+                        wtLog("[DocumentEditor] No DB assistant message found after stream completion — waiting for GRDB observation")
                     }
                 } catch {
                     wtLog("[DocumentEditor] Failed to load persisted assistant response: \(error)")
