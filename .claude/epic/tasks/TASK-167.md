@@ -1,6 +1,6 @@
 # TASK-167: autoResumeIfNeeded fires on every branch load with unanswered turn
 
-**Status:** open
+**Status:** Done
 **Priority:** medium
 **Component:** Document / Auto-Resume
 
