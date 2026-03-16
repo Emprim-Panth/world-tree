@@ -277,18 +277,15 @@ final class SidebarViewModel: ObservableObject {
             .map { (project: $0, trees: []) }
 
         allProjectGroups = result
+        // Recents: sort by chat activity only (most recent message/update), NOT filesystem mtime.
+        // Filesystem mtime contaminates the signal — background processes touching files make
+        // projects appear "recent" even when the user hasn't opened a chat there.
         recentProjectGroups = result
             .filter { $0.project != AppConstants.defaultProjectName }
             .sorted {
-                Self.projectActivity(
-                    for: $0.project,
-                    trees: $0.trees,
-                    cachedProject: cachedProject(for: $0.project)
-                ) > Self.projectActivity(
-                    for: $1.project,
-                    trees: $1.trees,
-                    cachedProject: cachedProject(for: $1.project)
-                )
+                let aActivity = $0.trees.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
+                let bActivity = $1.trees.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
+                return aActivity > bActivity
             }
             .prefix(4)
             .map { $0 }
@@ -315,9 +312,11 @@ final class SidebarViewModel: ObservableObject {
         trees: [ConversationTree],
         cachedProject: CachedProject?
     ) -> Date {
-        let treeActivity = trees.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
-        let fileActivity = cachedProject?.lastModified ?? .distantPast
-        return max(treeActivity, fileActivity)
+        // Chat activity always wins. File mtime is only a fallback when there are no chats.
+        if let treeActivity = trees.compactMap({ $0.lastMessageAt ?? $0.updatedAt }).max() {
+            return treeActivity
+        }
+        return cachedProject?.lastModified ?? .distantPast
     }
 
     nonisolated static func sortProjectNames(
