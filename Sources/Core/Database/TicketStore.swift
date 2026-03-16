@@ -264,12 +264,12 @@ final class TicketStore: ObservableObject {
         let id = String(filename[idMatch])
 
         let title = extractField(content, pattern: #"^#\s+TASK-\d+:\s*(.+)"#) ?? id
-        let status = extractField(content, pattern: #"\*\*Status:\*\*\s*(.+)"#)?.lowercased().replacingOccurrences(of: " ", with: "_") ?? "pending"
-        let priority = extractField(content, pattern: #"\*\*Priority:\*\*\s*(.+)"#)?.lowercased() ?? "medium"
-        let assignee = extractField(content, pattern: #"\*\*Assignee:\*\*\s*(.+)"#)
-        let sprint = extractField(content, pattern: #"\*\*Sprint:\*\*\s*(.+)"#)
-        let created = extractField(content, pattern: #"\*\*Created:\*\*\s*(.+)"#)
-        let updated = extractField(content, pattern: #"\*\*Updated:\*\*\s*(.+)"#)
+        let status = extractField(content, pattern: #"\*\*Status(?::\*\*|\*\*:)\s*(.+)"#)?.lowercased().replacingOccurrences(of: " ", with: "_") ?? "pending"
+        let priority = extractField(content, pattern: #"\*\*Priority(?::\*\*|\*\*:)\s*(.+)"#)?.lowercased() ?? "medium"
+        let assignee = extractField(content, pattern: #"\*\*Assignee(?::\*\*|\*\*:)\s*(.+)"#)
+        let sprint = extractField(content, pattern: #"\*\*Sprint(?::\*\*|\*\*:)\s*(.+)"#)
+        let created = extractField(content, pattern: #"\*\*Created(?::\*\*|\*\*:)\s*(.+)"#)
+        let updated = extractField(content, pattern: #"\*\*Updated(?::\*\*|\*\*:)\s*(.+)"#)
 
         // Extract description (between ## Description and next ##)
         let description = extractSection(content, header: "## Description")
@@ -335,14 +335,14 @@ final class TicketStore: ObservableObject {
 
         // Replace the status line
         let displayStatus = newStatus.replacingOccurrences(of: "_", with: " ").capitalized
-        if let regex = try? NSRegularExpression(pattern: #"\*\*Status:\*\*\s*.+"#, options: .anchorsMatchLines) {
+        if let regex = try? NSRegularExpression(pattern: #"\*\*Status(?::\*\*|\*\*:)\s*.+"#, options: .anchorsMatchLines) {
             let range = NSRange(content.startIndex..., in: content)
             content = regex.stringByReplacingMatches(in: content, range: range, withTemplate: "**Status:** \(displayStatus)")
         }
 
         // Update the Updated date
         let today = ISO8601DateFormatter.string(from: Date(), timeZone: .current, formatOptions: [.withFullDate])
-        if let regex = try? NSRegularExpression(pattern: #"\*\*Updated:\*\*\s*.+"#, options: .anchorsMatchLines) {
+        if let regex = try? NSRegularExpression(pattern: #"\*\*Updated(?::\*\*|\*\*:)\s*.+"#, options: .anchorsMatchLines) {
             let range = NSRange(content.startIndex..., in: content)
             content = regex.stringByReplacingMatches(in: content, range: range, withTemplate: "**Updated:** \(today)")
         }

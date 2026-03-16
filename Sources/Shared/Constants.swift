@@ -1,6 +1,12 @@
 import Foundation
 
 enum AppConstants {
+    static let isRunningTests: Bool = {
+        let env = ProcessInfo.processInfo.environment
+        return env["XCTestConfigurationFilePath"] != nil
+            || env["XCTestBundlePath"] != nil
+    }()
+
     // MARK: - Database
     static let databasePath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -25,6 +31,7 @@ enum AppConstants {
 
     // MARK: - Plugin Server (Cortana plugin integration, port 9400)
     static let pluginServerEnabledKey = "cortana.pluginEnabled"
+    static let codexMCPSyncEnabledKey = "cortana.codexMCPSyncEnabled"
     static let pluginManifestDir: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/.cortana/state/plugins"
@@ -83,6 +90,8 @@ enum AppConstants {
     // Provider / model (DocumentEditorView, ClaudeBridge, SettingsView, ModelPickerButton)
     static let defaultModelKey = "defaultModel"
     static let extendedThinkingEnabledKey = "extendedThinkingEnabled"
+    static let cortanaAutoRoutingEnabledKey = "cortana.autoRoutingEnabled"
+    static let cortanaCrossCheckEnabledKey = "cortana.crossCheckEnabled"
 
     // Voice (SettingsView, DocumentEditorView)
     static let voiceAutoSpeakKey = "voiceAutoSpeak"

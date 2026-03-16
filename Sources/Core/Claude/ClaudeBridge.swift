@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 /// Events yielded during a conversation turn — text streaming, tool activity, completion.
-enum BridgeEvent {
+enum BridgeEvent: Sendable {
     case text(String)
     /// Internal reasoning tokens from extended thinking. Not shown in the chat bubble —
     /// mirrored to the terminal in a dimmed style so they're visible but not intrusive.

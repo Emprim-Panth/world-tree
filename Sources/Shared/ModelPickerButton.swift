@@ -5,29 +5,23 @@ import SwiftUI
 /// so the next chat message immediately uses the new model.
 struct ModelPickerButton: View {
     @AppStorage(AppConstants.defaultModelKey) private var defaultModel = AppConstants.defaultModel
+    @StateObject private var providerManager = ProviderManager.shared
 
-    private struct ModelOption {
-        let id: String
-        let label: String
-        let badge: String
-        let description: String
+    private var models: [ProviderModelOption] {
+        providerManager.availableModelOptions
     }
 
-    private let models: [ModelOption] = [
-        ModelOption(id: "claude-sonnet-4-6",            label: "Sonnet",  badge: "S", description: "Balanced — fast, capable, default"),
-        ModelOption(id: "claude-opus-4-6",            label: "Opus",    badge: "O", description: "Deep — complex reasoning, slower"),
-        ModelOption(id: "claude-haiku-4-5-20251001",  label: "Haiku",   badge: "H", description: "Fast — quick tasks, lightest"),
-    ]
-
-    private var active: ModelOption {
-        models.first { $0.id == defaultModel } ?? models[0]
+    private var active: ProviderModelOption {
+        models.first { $0.id == defaultModel }
+            ?? ModelCatalog.option(for: defaultModel)
+            ?? models[0]
     }
 
     var body: some View {
         Menu {
             ForEach(models, id: \.id) { model in
                 Button {
-                    defaultModel = model.id
+                    providerManager.selectModel(model.id)
                 } label: {
                     HStack {
                         Text(model.label)
@@ -54,6 +48,6 @@ struct ModelPickerButton: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help("Active model: \(active.label) — click to switch")
+        .help("Active model: \(active.label) — click to switch model and provider")
     }
 }

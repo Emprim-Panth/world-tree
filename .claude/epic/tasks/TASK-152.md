@@ -1,7 +1,7 @@
 # TASK-152: One-Click Terminal Focus
 
 **Priority**: medium
-**Status**: Todo
+**Status**: Done
 **Category**: feature
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 3

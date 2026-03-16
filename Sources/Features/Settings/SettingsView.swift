@@ -27,6 +27,11 @@ struct SettingsView: View {
                     Label("API", systemImage: "bolt.fill")
                 }
 
+            CortanaControlView()
+                .tabItem {
+                    Label("Cortana", systemImage: "brain.head.profile")
+                }
+
             serverTab
                 .tabItem {
                     Label("Server", systemImage: "server.rack")
@@ -61,7 +66,7 @@ struct SettingsView: View {
     private var providerTab: some View {
         Form {
             Section("Active Provider") {
-                ForEach(providerManager.providers, id: \.identifier) { provider in
+                ForEach(providerManager.selectableProviders, id: \.identifier) { provider in
                     HStack(spacing: 10) {
                         // Selection radio
                         Image(systemName: provider.identifier == providerManager.selectedProviderId
@@ -146,8 +151,12 @@ struct SettingsView: View {
             return "CLI backend using Max subscription. Free, full tools + session resume."
         case "anthropic-api":
             return "Direct API with managed context. Requires API credits."
+        case "codex-cli":
+            return "OpenAI Codex via the local CLI. Uses your OpenAI key or Codex login."
         case "ollama":
             return "Local models via Ollama. Free, private, not yet implemented."
+        case "remote-canvas":
+            return "Routes messages to a remote World Tree host."
         default:
             return ""
         }
@@ -169,6 +178,13 @@ struct SettingsView: View {
     private var appState = AppState.shared
     @AppStorage(AppConstants.globalHotKeyEnabledKey) private var globalHotKeyEnabled = true
 
+    private var modelSelectionBinding: Binding<String> {
+        Binding(
+            get: { defaultModel },
+            set: { providerManager.selectModel($0) }
+        )
+    }
+
     private var generalTab: some View {
         @Bindable var appState = appState
         return Form {
@@ -182,11 +198,15 @@ struct SettingsView: View {
             }
 
             Section("Default Model") {
-                Picker("Model", selection: $defaultModel) {
-                    Text("Sonnet (Balanced)").tag("claude-sonnet-4-6")
-                    Text("Opus (Deep)").tag("claude-opus-4-6")
-                    Text("Haiku (Fast)").tag("claude-haiku-4-5-20251001")
+                Picker("Model", selection: modelSelectionBinding) {
+                    ForEach(providerManager.availableModelOptions, id: \.id) { model in
+                        Text("\(model.label) (\(model.description))").tag(model.id)
+                    }
                 }
+
+                Text("Selecting a model also switches to its provider. Current provider: \(providerManager.activeProviderName).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Context") {
@@ -227,6 +247,8 @@ struct SettingsView: View {
 
     @State private var apiKeyInput = ""
     @State private var showAPIKey = false
+    @State private var openAIKeyInput = ""
+    @State private var showOpenAIKey = false
     @AppStorage(AppConstants.extendedThinkingEnabledKey) private var extendedThinkingEnabled = false
     @AppStorage(AppConstants.fileWriteReviewEnabledKey) private var fileWriteReviewEnabled = false
 
@@ -244,8 +266,8 @@ struct SettingsView: View {
                         .foregroundStyle(.green)
 
                     Button("Clear Keychain Key") {
-                        // Clear by saving empty string
                         ClaudeService.shared.setAPIKey("")
+                        refreshProvidersAfterCredentialChange()
                     }
                     .foregroundStyle(.red)
                 } else {
@@ -278,10 +300,63 @@ struct SettingsView: View {
                 Button("Save to Keychain") {
                     ClaudeService.shared.setAPIKey(apiKeyInput)
                     apiKeyInput = ""
+                    refreshProvidersAfterCredentialChange()
                 }
                 .disabled(apiKeyInput.isEmpty)
 
                 Text("Get your API key from: https://console.anthropic.com")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("OpenAI API Key (Codex)") {
+                if OpenAIKeyStore.hasEnvironmentKey {
+                    Label("API key loaded from environment", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else if OpenAIKeyStore.hasKeychainKey {
+                    Label("API key loaded from Keychain", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+
+                    Button("Clear Keychain Key") {
+                        OpenAIKeyStore.clearAPIKey()
+                        refreshProvidersAfterCredentialChange()
+                    }
+                    .foregroundStyle(.red)
+                } else {
+                    Label("No API key configured", systemImage: "xmark.circle")
+                        .foregroundStyle(.orange)
+                }
+
+                Divider()
+
+                HStack {
+                    if showOpenAIKey {
+                        TextField("sk-...", text: $openAIKeyInput)
+                            .textFieldStyle(.roundedBorder)
+                            .monospaced()
+                            .font(.caption)
+                    } else {
+                        SecureField("sk-...", text: $openAIKeyInput)
+                            .textFieldStyle(.roundedBorder)
+                            .monospaced()
+                            .font(.caption)
+                    }
+
+                    Button(action: { showOpenAIKey.toggle() }) {
+                        Image(systemName: showOpenAIKey ? "eye.slash" : "eye")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(showOpenAIKey ? "Hide OpenAI API key" : "Show OpenAI API key")
+                }
+
+                Button("Save to Keychain") {
+                    OpenAIKeyStore.saveAPIKey(openAIKeyInput)
+                    openAIKeyInput = ""
+                    refreshProvidersAfterCredentialChange()
+                }
+                .disabled(openAIKeyInput.isEmpty)
+
+                Text("Used by Codex CLI when World Tree is launched outside your shell.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -329,7 +404,7 @@ struct SettingsView: View {
             Section("Plugin Server (Cortana)") {
                 Toggle("Enable plugin server (port \(PluginServer.port))", isOn: $pluginEnabled)
                     .onChange(of: pluginEnabled) { _, enabled in
-                        if enabled { pluginServer.start() } else { pluginServer.stop() }
+                        handlePluginServerToggle(enabled)
                     }
 
                 HStack(spacing: 6) {
@@ -727,6 +802,30 @@ struct SettingsView: View {
             remoteHealthStatus = "⚠ Degraded: \(reason)"
         case .unavailable(let reason):
             remoteHealthStatus = "✗ Unreachable: \(reason)"
+        }
+    }
+
+    private func refreshProvidersAfterCredentialChange() {
+        providerManager.reloadProviders()
+        Task {
+            await providerManager.refreshHealth()
+        }
+    }
+
+    private func handlePluginServerToggle(_ enabled: Bool) {
+        if enabled {
+            pluginServer.start()
+        } else {
+            pluginServer.stop()
+        }
+
+        let codexSyncEnabled = UserDefaults.standard.object(forKey: AppConstants.codexMCPSyncEnabledKey) as? Bool ?? true
+        Task {
+            if codexSyncEnabled {
+                await CodexMCPConfigManager.shared.syncFromClaudeAsync(includeWorldTree: enabled)
+            } else if !enabled {
+                await CodexMCPConfigManager.shared.removeWorldTreeRegistration()
+            }
         }
     }
 

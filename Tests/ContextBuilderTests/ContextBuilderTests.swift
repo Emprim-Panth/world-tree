@@ -53,6 +53,12 @@ final class ContextBuilderTests: XCTestCase {
         title: String? = nil
     ) throws -> Branch {
         try dbPool.write { db in
+            if let sessionId {
+                try db.execute(sql: """
+                    INSERT OR IGNORE INTO sessions (id, terminal_id, working_directory, description, started_at)
+                    VALUES (?, 'canvas', '/tmp/test', ?, datetime('now'))
+                    """, arguments: [sessionId, title ?? "Test session"])
+            }
             try db.execute(sql: """
                 INSERT INTO canvas_branches (id, tree_id, session_id, branch_type, title, status, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, 'active', datetime('now'), datetime('now'))

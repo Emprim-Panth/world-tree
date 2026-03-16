@@ -63,8 +63,10 @@ actor StreamCacheManager {
     /// How often (in chunks) to call synchronizeFile()
     private let fsyncInterval = 20
 
-    /// Handles unused for longer than this are considered stale
-    private let staleHandleTimeout: TimeInterval = 5 * 60  // 5 minutes
+    /// Handles unused for longer than this are considered stale.
+    /// Tool-heavy turns can legitimately go quiet for several minutes while work happens
+    /// off-token, so keep the recovery file alive long enough to survive background runs.
+    private let staleHandleTimeout: TimeInterval = 30 * 60  // 30 minutes
 
     /// Whether the stale-handle cleanup task is running
     private var cleanupTaskRunning = false
@@ -82,20 +84,15 @@ actor StreamCacheManager {
 
     /// Open a crash-recovery temp file for this session. Call when streaming starts.
     func openStreamFile(sessionId: String) {
-        ensureDirs()
-        let url = streamURL(sessionId)
-        FileManager.default.createFile(atPath: url.path, contents: nil)
-        handles[sessionId] = try? FileHandle(forWritingTo: url)
-        chunkCounts[sessionId] = 0
-        lastWriteTime[sessionId] = Date()
+        _ = ensureHandle(for: sessionId)
         startStaleHandleCleanupIfNeeded()
     }
 
     /// Append a token chunk. Fire-and-forget safe — the actor serialises these.
     /// Calls synchronizeFile() every `fsyncInterval` chunks to ensure data reaches disk.
     func appendToStream(sessionId: String, chunk: String) {
-        guard let handle = handles[sessionId],
-              let data = chunk.data(using: .utf8) else { return }
+        guard let data = chunk.data(using: .utf8),
+              let handle = ensureHandle(for: sessionId) else { return }
         do {
             try handle.write(contentsOf: data)
             lastWriteTime[sessionId] = Date()
@@ -116,6 +113,13 @@ actor StreamCacheManager {
         }
     }
 
+    /// Refresh the recovery file's liveness without appending text.
+    /// Used for tool/thinking events so long-running background work stays recoverable.
+    func touchStream(sessionId: String) {
+        guard ensureHandle(for: sessionId) != nil else { return }
+        lastWriteTime[sessionId] = Date()
+    }
+
     /// Normal completion — stream finished cleanly, nothing to recover. Delete the file.
     func closeStream(sessionId: String) {
         if let handle = handles[sessionId] {
@@ -129,7 +133,9 @@ actor StreamCacheManager {
         try? FileManager.default.removeItem(at: streamURL(sessionId))
     }
 
-    /// Call on app launch. Returns content salvaged from a previous crash, keyed by sessionId.
+    /// Call on app launch. Returns every orphaned stream keyed by sessionId.
+    /// Empty content is still meaningful: it indicates a quiet tool/thinking run that should
+    /// be auto-resumed even though there are no assistant tokens to restore yet.
     /// Deletes all orphaned files after reading — they've served their purpose.
     func recoverOrphanedStreams() -> [String: String] {
         guard let files = try? FileManager.default.contentsOfDirectory(
@@ -139,9 +145,8 @@ actor StreamCacheManager {
         var recovered: [String: String] = [:]
         for url in files where url.pathExtension == "tmp" {
             let sessionId = url.deletingPathExtension().lastPathComponent
-            if let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty {
-                recovered[sessionId] = text
-            }
+            let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            recovered[sessionId] = text
             try? FileManager.default.removeItem(at: url)
         }
         return recovered
@@ -274,5 +279,21 @@ actor StreamCacheManager {
         return files.reduce(0) {
             $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
         }
+    }
+
+    private func ensureHandle(for sessionId: String) -> FileHandle? {
+        if let existing = handles[sessionId] { return existing }
+
+        ensureDirs()
+        let url = streamURL(sessionId)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+
+        let handle = try? FileHandle(forWritingTo: url)
+        handles[sessionId] = handle
+        chunkCounts[sessionId] = chunkCounts[sessionId] ?? 0
+        lastWriteTime[sessionId] = Date()
+        return handle
     }
 }

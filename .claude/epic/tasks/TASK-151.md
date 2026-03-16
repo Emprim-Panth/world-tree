@@ -1,7 +1,7 @@
 # TASK-151: Event Rules UI — Settings Sheet
 
 **Priority**: medium
-**Status**: Todo
+**Status**: Done
 **Category**: ui
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 3

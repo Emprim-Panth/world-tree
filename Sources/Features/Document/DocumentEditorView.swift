@@ -23,6 +23,7 @@ struct DocumentEditorView: View {
     @State private var forkBranchType: BranchType = .conversation
     @State private var showSearch = false
     @State private var searchQuery = ""
+    @Environment(\.scenePhase) private var scenePhase
 
     // Error alert
     @State private var showErrorAlert = false
@@ -230,6 +231,7 @@ struct DocumentEditorView: View {
                 }  // closes else (ScrollView branch)
             }  // closes ScrollViewReader
             .onAppear {
+                viewModel.claimWindowOwnership()
                 viewModel.loadDocument()
                 viewModel.parentBranchLayout = parentBranchLayout
                 // Delay focus so the view is fully in the responder chain before we request it.
@@ -247,6 +249,16 @@ struct DocumentEditorView: View {
                         viewModel.submitInput()
                     }
                 }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    viewModel.claimWindowOwnership()
+                } else {
+                    viewModel.releaseWindowOwnership()
+                }
+            }
+            .onDisappear {
+                viewModel.releaseWindowOwnership()
             }
             .frame(maxHeight: .infinity)
             .background(Color(nsColor: .textBackgroundColor))
@@ -395,12 +407,6 @@ final class StreamingState: ObservableObject {
 
 @MainActor
 class DocumentEditorViewModel: ObservableObject {
-
-    /// Session IDs that had an interrupted stream recovered on this launch.
-    /// WorldTreeApp populates this set; loadDocument() consumes it to auto-send a
-    /// continuation prompt so the user doesn't have to type anything.
-    @MainActor static var pendingAutoResume: Set<String> = []
-
     @Published var document: ConversationDocument
     private var branchAnalysisTask: Task<Void, Never>?
     @Published var currentInput = "" {
@@ -409,9 +415,14 @@ class DocumentEditorViewModel: ObservableObject {
             branchAnalysisTask = Task { await analyzeForBranchOpportunities() }
             // Persist draft so it survives branch switches and window changes
             UserDefaults.standard.set(currentInput, forKey: "draft.\(branchId)")
+            refreshRecoveryStatus()
+            if currentInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                scheduleRecoveryCheck()
+            }
         }
     }
     @Published var pendingAttachments: [Attachment] = []
+    @Published var recoveryStatusMessage: String?
     /// Streaming state in its own ObservableObject so hot-path token updates
     /// don't trigger full document re-renders. Exposed for view binding.
     let streaming = StreamingState()
@@ -447,6 +458,9 @@ class DocumentEditorViewModel: ObservableObject {
     private var externalSourceObserver: NSObjectProtocol?
     private var mobileStreamTokenObserver: NSObjectProtocol?
     private var mobileStreamCompleteObserver: NSObjectProtocol?
+    private var streamRecoveryObserver: NSObjectProtocol?
+    private var activeStreamStartObserver: NSObjectProtocol?
+    private var activeStreamCompleteObserver: NSObjectProtocol?
 
     /// Whether the conversation scroll view is at (or near) the bottom.
     /// False when the user has manually scrolled up — suppresses auto-scroll.
@@ -525,6 +539,7 @@ class DocumentEditorViewModel: ObservableObject {
     private let sessionId: String
     private let branchId: String
     private let workingDirectory: String
+    private let windowOwnerId = UUID()
     private var cachedProject: String?
     /// Parent branch's session ID — loaded once at document open for --fork-session support.
     private var cachedParentSessionId: String?
@@ -607,6 +622,9 @@ class DocumentEditorViewModel: ObservableObject {
                 ActiveStreamRegistry.shared.unsubscribe(branchId: bid, id: id)
             }
         }
+        MainActor.assumeIsolated {
+            BranchWindowOwnershipRegistry.shared.release(branchId: bid, ownerId: windowOwnerId)
+        }
         streamFlushTimer?.invalidate()
         refreshTimer?.invalidate()
         if let observer = externalSourceObserver {
@@ -614,6 +632,9 @@ class DocumentEditorViewModel: ObservableObject {
         }
         if let obs = mobileStreamTokenObserver { NotificationCenter.default.removeObserver(obs) }
         if let obs = mobileStreamCompleteObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = streamRecoveryObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = activeStreamStartObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = activeStreamCompleteObserver { NotificationCenter.default.removeObserver(obs) }
     }
 
     init(sessionId: String, branchId: String, workingDirectory: String) {
@@ -631,6 +652,18 @@ class DocumentEditorViewModel: ObservableObject {
         )
     }
 
+    func claimWindowOwnership() {
+        BranchWindowOwnershipRegistry.shared.claim(branchId: branchId, ownerId: windowOwnerId)
+    }
+
+    func releaseWindowOwnership() {
+        BranchWindowOwnershipRegistry.shared.release(branchId: branchId, ownerId: windowOwnerId)
+    }
+
+    private func isOwningWindow() -> Bool {
+        BranchWindowOwnershipRegistry.shared.isOwner(branchId: branchId, ownerId: windowOwnerId)
+    }
+
     func loadDocument() {
         // Start GRDB ValueObservation — fires immediately with existing messages,
         // then re-fires any time the messages table changes for this session.
@@ -642,10 +675,14 @@ class DocumentEditorViewModel: ObservableObject {
         if let obs = externalSourceObserver { NotificationCenter.default.removeObserver(obs); externalSourceObserver = nil }
         if let obs = mobileStreamTokenObserver { NotificationCenter.default.removeObserver(obs); mobileStreamTokenObserver = nil }
         if let obs = mobileStreamCompleteObserver { NotificationCenter.default.removeObserver(obs); mobileStreamCompleteObserver = nil }
+        if let obs = streamRecoveryObserver { NotificationCenter.default.removeObserver(obs); streamRecoveryObserver = nil }
+        if let obs = activeStreamStartObserver { NotificationCenter.default.removeObserver(obs); activeStreamStartObserver = nil }
+        if let obs = activeStreamCompleteObserver { NotificationCenter.default.removeObserver(obs); activeStreamCompleteObserver = nil }
         // Restore any in-progress draft from before this branch was last left
         if let saved = UserDefaults.standard.string(forKey: "draft.\(branchId)"), !saved.isEmpty {
             currentInput = saved
         }
+        refreshRecoveryStatus()
         guard let dbPool = DatabaseManager.shared.dbPool else {
             // Database not ready yet (app cold start — child .onAppear fires before
             // WorldTreeApp.onAppear calls setupDatabase). Retry shortly.
@@ -715,17 +752,7 @@ class DocumentEditorViewModel: ObservableObject {
         // Restore typing indicator when navigating back to a branch with an active stream.
         // ActiveStreamRegistry owns the Task independent of any ViewModel lifecycle.
         // Re-subscribe here so this ViewModel receives future events and shows current content.
-        if ActiveStreamRegistry.shared.isActive(branchId) && !isProcessing {
-            isProcessing = true
-            streamingContent = ActiveStreamRegistry.shared.currentContent(for: branchId) ?? ""
-            startStreamBatching()
-            let id = ActiveStreamRegistry.shared.subscribe(branchId: branchId) { [weak self] event in
-                Task { @MainActor [weak self] in
-                    await self?.handleStreamEvent(event)
-                }
-            }
-            activeSubscriptionId = id
-        }
+        attachToActiveStreamIfNeeded()
 
         // Listen for external message sources (e.g. Telegram → 📱 indicator)
         externalSourceObserver = NotificationCenter.default.addObserver(
@@ -788,6 +815,44 @@ class DocumentEditorViewModel: ObservableObject {
                 GlobalStreamRegistry.shared.endStream(branchId: self.branchId)
             }
         }
+        streamRecoveryObserver = NotificationCenter.default.addObserver(
+            forName: .streamRecoveryStateChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let noteSessionId = note.userInfo?["sessionId"] as? String,
+                      noteSessionId == self.sessionId else { return }
+                self.refreshRecoveryStatus()
+                self.scheduleRecoveryCheck()
+            }
+        }
+        activeStreamStartObserver = NotificationCenter.default.addObserver(
+            forName: .activeStreamStarted,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let noteBranchId = note.userInfo?["branchId"] as? String,
+                      noteBranchId == self.branchId else { return }
+                self.attachToActiveStreamIfNeeded()
+            }
+        }
+        activeStreamCompleteObserver = NotificationCenter.default.addObserver(
+            forName: .activeStreamComplete,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let noteBranchId = note.userInfo?["branchId"] as? String,
+                      noteBranchId == self.branchId else { return }
+                self.activeSubscriptionId = nil
+                self.refreshRecoveryStatus()
+            }
+        }
 
         // Pre-warm provider context + load branch context (treeId, parent, etc.)
         // Runs in background — doesn't block the UI.
@@ -825,32 +890,112 @@ class DocumentEditorViewModel: ObservableObject {
                 self.checkpointContext = summary
                 wtLog("[DocumentEditor] Restored rotation checkpoint from DB (\(summary.count) chars, age \(Int(Date().timeIntervalSince(createdAt)))s)")
             }
-            // Schedule auto-resume check: fires after UI settles.
+            // Schedule auto-resume evaluation after UI settles.
             // Handles two cases without any user input:
             // 1. Session had an interrupted stream recovered this launch (stream cache)
             // 2. Last DB message is from the user with no assistant reply (app quit mid-exchange)
-            Task { [weak self] in
-                guard let self else { return }
-                try? await Task.sleep(for: .seconds(2.0))
-                await self.autoResumeIfNeeded()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                await self?.autoResumeIfNeeded()
             }
         }
+    }
+
+    private func scheduleRecoveryCheck(delay: Duration = .milliseconds(250)) {
+        guard StreamRecoveryStore.shared.hasPendingRecovery(sessionId: sessionId) else { return }
+        StreamRecoveryCoordinator.shared.scheduleRecoveryCheck(sessionId: sessionId, delay: delay)
+    }
+
+    @MainActor
+    private func attachToActiveStreamIfNeeded() {
+        if Self.shouldClearStaleSubscription(
+            activeSubscriptionId: activeSubscriptionId,
+            isStreamActive: ActiveStreamRegistry.shared.isActive(branchId)
+        ) {
+            activeSubscriptionId = nil
+        }
+        guard ActiveStreamRegistry.shared.isActive(branchId) else { return }
+        guard activeSubscriptionId == nil else { return }
+
+        isProcessing = true
+        streamingContent = ActiveStreamRegistry.shared.currentContent(for: branchId) ?? ""
+        startStreamBatching()
+        let id = ActiveStreamRegistry.shared.subscribe(branchId: branchId) { [weak self] event in
+            Task { @MainActor [weak self] in
+                await self?.handleStreamEvent(event)
+            }
+        }
+        activeSubscriptionId = id
+        refreshRecoveryStatus()
+    }
+
+    static func shouldClearStaleSubscription(
+        activeSubscriptionId: UUID?,
+        isStreamActive: Bool
+    ) -> Bool {
+        activeSubscriptionId != nil && !isStreamActive
+    }
+
+    private func refreshRecoveryStatus() {
+        recoveryStatusMessage = Self.recoveryStatusMessage(
+            pendingRecovery: StreamRecoveryStore.shared.pendingRecovery(for: sessionId),
+            hasDraft: !currentInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty,
+            isProcessing: isProcessing,
+            isStreamActive: ActiveStreamRegistry.shared.isActive(branchId)
+        )
+    }
+
+    static func recoveryStatusMessage(
+        pendingRecovery: PendingStreamRecovery?,
+        hasDraft: Bool,
+        isProcessing: Bool,
+        isStreamActive: Bool
+    ) -> String? {
+        guard let pendingRecovery else { return nil }
+        if hasDraft {
+            return "Recovered response is queued until the draft is cleared."
+        }
+        if isProcessing || isStreamActive {
+            return nil
+        }
+        if pendingRecovery.attemptCount >= StreamRecoveryCoordinator.autoResumeMaxAttempts {
+            return "Recovered response needs a manual retry."
+        }
+        if pendingRecovery.lastAttemptAt != nil {
+            return "Recovered response is retrying automatically."
+        }
+        return "Recovered response is ready to resume."
+    }
+
+    static func shouldAutoResumeUnansweredTurn(
+        lastMessageRole: MessageRole?,
+        messageCount: Int,
+        hasCheckpointContext: Bool
+    ) -> Bool {
+        guard lastMessageRole == .user else { return false }
+        return hasCheckpointContext || messageCount > 1
     }
 
     /// Automatically continue a conversation that was interrupted (crash, force-quit, or
     /// mid-exchange app close) without requiring the user to type anything.
     @MainActor
     private func autoResumeIfNeeded() async {
-        // Don't auto-resume if the user is already typing or a stream is live
-        guard streamingContent == nil, currentInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard isOwningWindow() else { return }
+        refreshRecoveryStatus()
+
+        // Don't auto-resume if the user is already typing or a stream is live.
+        guard streamingContent == nil,
+              currentInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              pendingAttachments.isEmpty,
+              !isProcessing,
+              !isSending,
+              !ActiveStreamRegistry.shared.isActive(branchId)
+        else { return }
 
         // Case 1: stream was interrupted on a previous launch — WorldTreeApp already saved
         // the partial content to DB and registered this session for auto-resume.
-        let wasInterrupted = DocumentEditorViewModel.pendingAutoResume.contains(sessionId)
-        if wasInterrupted {
-            DocumentEditorViewModel.pendingAutoResume.remove(sessionId)
-            wtLog("[DocumentEditor] Auto-resuming interrupted stream for session \(sessionId.prefix(8))")
-            sendAutoResumeMessage("[Session recovered after interruption — please continue your previous response from where it left off]")
+        if StreamRecoveryStore.shared.hasPendingRecovery(sessionId: sessionId) {
+            StreamRecoveryCoordinator.shared.scheduleRecoveryCheck(sessionId: sessionId)
             return
         }
 
@@ -864,26 +1009,28 @@ class DocumentEditorViewModel: ObservableObject {
             return
         }
         guard let lastMsg = messages.last,
-              lastMsg.role == .user,
-              checkpointContext != nil || messages.count > 1 else { return }
+              Self.shouldAutoResumeUnansweredTurn(
+                lastMessageRole: lastMsg.role,
+                messageCount: messages.count,
+                hasCheckpointContext: checkpointContext != nil
+              ) else { return }
 
         wtLog("[DocumentEditor] Last message is unanswered user turn — auto-resuming session \(sessionId.prefix(8))")
         sendAutoResumeMessage("[Continuing session — please respond to the message above]")
     }
 
     /// Inject a system-level resume prompt and fire the LLM call.
-    /// The section is marked as system author so it renders as a subtle status line,
-    /// not a user message bubble.
     private func sendAutoResumeMessage(_ text: String) {
-        let resumeSection = DocumentSection(
-            content: AttributedString("▶ Session resumed automatically"),
-            author: .system,
-            timestamp: Date(),
-            branchPoint: false,
-            isEditable: false
+        processUserInput(
+            DocumentSection(
+                content: AttributedString(text),
+                author: .system,
+                timestamp: Date(),
+                branchPoint: false,
+                isEditable: false
+            ),
+            messageText: text
         )
-        document.sections.append(resumeSection)
-        processUserInput(resumeSection, messageText: text)
     }
 
     /// Returns a stable UUID for a given message ID string.
@@ -959,11 +1106,7 @@ class DocumentEditorViewModel: ObservableObject {
             // This is the expensive operation that was killing scroll performance.
             var parsed: AttributedString? = nil
             if case .assistant = author {
-                let raw = msg.content
-                parsed = (try? AttributedString(
-                    markdown: raw,
-                    options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-                )) ?? AttributedString(raw)
+                parsed = Self.parseAssistantMarkdown(msg.content)
             }
 
             let section = DocumentSection(
@@ -996,6 +1139,11 @@ class DocumentEditorViewModel: ObservableObject {
         if newMessages.contains(where: { $0.role == .assistant }) {
             isProcessing = false
             GlobalStreamRegistry.shared.endStream(branchId: branchId)
+        }
+
+        refreshRecoveryStatus()
+        if StreamRecoveryStore.shared.hasPendingRecovery(sessionId: sessionId) {
+            scheduleRecoveryCheck()
         }
 
         // On first load, check if there might be older messages to paginate
@@ -1072,6 +1220,12 @@ class DocumentEditorViewModel: ObservableObject {
                 case .system: return .system
                 }
             }()
+            let parsedMarkdown: AttributedString?
+            if case .assistant = author {
+                parsedMarkdown = Self.parseAssistantMarkdown(msg.content)
+            } else {
+                parsedMarkdown = nil
+            }
             return DocumentSection(
                 id: stableId(for: msg.id),
                 content: AttributedString(msg.content),
@@ -1081,7 +1235,8 @@ class DocumentEditorViewModel: ObservableObject {
                 isEditable: msg.role == .user && !isFinding,
                 messageId: msg.id,
                 hasBranches: msg.hasBranches,
-                isFinding: isFinding
+                isFinding: isFinding,
+                parsedMarkdown: parsedMarkdown
             )
         }
 
@@ -1214,45 +1369,22 @@ class DocumentEditorViewModel: ObservableObject {
 
         // Registry persists partial and cleans up WakeLock / ProcessingRegistry
         ActiveStreamRegistry.shared.cancelStream(branchId: branchId)
+        StreamRecoveryStore.shared.clearPending(sessionId: sessionId)
 
         stopStreamBatching()
         streamingContent = nil
         currentTool = nil
         isProcessing = false
-
-        // Show partial as a completed section in the UI
-        if !partial.isEmpty {
-            do {
-                let msg = try MessageStore.shared.sendMessage(
-                    sessionId: sessionId, role: .assistant, content: partial)
-                seenMessageIds.insert(msg.id)
-                let section = DocumentSection(
-                    id: stableId(for: msg.id),
-                    content: AttributedString(partial),
-                    author: .assistant,
-                    timestamp: msg.createdAt,
-                    branchPoint: true,
-                    isEditable: false,
-                    messageId: msg.id
-                )
-                document.sections.append(section)
-            } catch {
-                let section = DocumentSection(
-                    content: AttributedString(partial),
-                    author: .assistant,
-                    timestamp: Date(),
-                    branchPoint: true,
-                    isEditable: false
-                )
-                document.sections.append(section)
-            }
-            Task { await StreamCacheManager.shared.closeStream(sessionId: sessionId) }
-        }
+        isSending = false
+        appendLatestPersistedAssistantMessage(fallbackContent: partial)
+        refreshRecoveryStatus()
     }
 
     func submitInput() {
-        // Prevent rapid double-sends while a previous send is still being processed
-        guard !isSending else { return }
+        // Allow sending while streaming (interrupts current response) but block rapid double-sends
+        // during the synchronous processUserInput setup phase (isSending is true only briefly
+        // during setup, then stays true via the stream — but processUserInput handles mid-stream sends).
+        guard !isSending || ActiveStreamRegistry.shared.isActive(branchId) else { return }
         let inputText = currentInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachmentSnapshot = pendingAttachments
         guard !inputText.isEmpty || !attachmentSnapshot.isEmpty else { return }
@@ -1284,6 +1416,9 @@ class DocumentEditorViewModel: ObservableObject {
 
     private func processUserInput(_ section: DocumentSection, sectionUUID: UUID? = nil, messageText: String? = nil, attachments: [Attachment] = []) {
         isSending = true
+        if case .user = section.author {
+            StreamRecoveryStore.shared.clearPending(sessionId: sessionId)
+        }
         // If we're mid-stream, cancel it (registry persists partial), then proceed.
         if ActiveStreamRegistry.shared.isActive(branchId) {
             let partial = ActiveStreamRegistry.shared.currentContent(for: branchId) ?? streamingContent ?? ""
@@ -1294,39 +1429,19 @@ class DocumentEditorViewModel: ObservableObject {
                 activeSubscriptionId = nil
             }
 
+            // Stop batching timer from the interrupted stream
+            stopStreamBatching()
+
             // Registry handles persist + WakeLock + ProcessingRegistry cleanup
+            // cancelStream() persists partial to DB — do NOT persist again here (prevents duplicates)
             ActiveStreamRegistry.shared.cancelStream(branchId: branchId)
+            StreamRecoveryStore.shared.clearPending(sessionId: sessionId)
 
             streamingContent = nil
             currentTool = nil
 
             if !partial.isEmpty {
-                do {
-                    let msg = try MessageStore.shared.sendMessage(
-                        sessionId: sessionId, role: .assistant, content: partial)
-                    seenMessageIds.insert(msg.id)
-                    let interruptedSection = DocumentSection(
-                        id: stableId(for: msg.id),
-                        content: AttributedString(partial),
-                        author: .assistant,
-                        timestamp: msg.createdAt,
-                        branchPoint: true,
-                        isEditable: false,
-                        messageId: msg.id
-                    )
-                    document.sections.append(interruptedSection)
-                } catch {
-                    wtLog("[DocumentEditor] Failed to persist interrupted response: \(error)")
-                    let interruptedSection = DocumentSection(
-                        content: AttributedString(partial),
-                        author: .assistant,
-                        timestamp: Date(),
-                        branchPoint: true,
-                        isEditable: false
-                    )
-                    document.sections.append(interruptedSection)
-                }
-                Task { await StreamCacheManager.shared.closeStream(sessionId: sessionId) }
+                appendLatestPersistedAssistantMessage(fallbackContent: partial)
                 wtLog("[DocumentEditor] Interrupted mid-stream — preserved partial response (\(partial.count) chars)")
             }
         }
@@ -1334,7 +1449,11 @@ class DocumentEditorViewModel: ObservableObject {
         let content = messageText ?? String(section.content.characters)
 
         // Context state captured before the async Task
-        let model = UserDefaults.standard.string(forKey: AppConstants.defaultModelKey) ?? AppConstants.defaultModel
+        let modelOverrideKey = "pending_model_override_\(sessionId)"
+        let model = UserDefaults.standard.string(forKey: modelOverrideKey)
+            ?? UserDefaults.standard.string(forKey: AppConstants.defaultModelKey)
+            ?? AppConstants.defaultModel
+        UserDefaults.standard.removeObject(forKey: modelOverrideKey)
         let now = Date()
         let isSessionStale = lastSendTimestamp.map {
             now.timeIntervalSince($0) > DocumentEditorViewModel.sessionStaleInterval
@@ -1387,22 +1506,26 @@ class DocumentEditorViewModel: ObservableObject {
 
         // Start the stream first — this creates the handle synchronously (Task body is deferred).
         // Then subscribe so the handle exists to accept the subscriber.
-        ActiveStreamRegistry.shared.startStream(
+        let subscriptionId = ActiveStreamRegistry.shared.startStream(
             branchId: branchId,
             sessionId: sessionId,
             treeId: treeId,
             projectName: cachedProject,
-            stream: claudeBridge.send(context: ctx)
-        )
-
-        let subscriptionId = ActiveStreamRegistry.shared.subscribe(branchId: branchId) { [weak self] event in
-            Task { @MainActor [weak self] in
-                await self?.handleStreamEvent(event)
+            stream: claudeBridge.send(context: ctx),
+            onEvent: { [weak self] event in
+                Task { @MainActor [weak self] in
+                    await self?.handleStreamEvent(event)
+                    // Release the send lock only on terminal events — prevents concurrent sends mid-stream
+                    if case .done = event { self?.isSending = false }
+                    if case .error = event { self?.isSending = false }
+                }
             }
-        }
+        )
         activeSubscriptionId = subscriptionId
 
-        isSending = false
+        // NOTE: isSending stays true until .done/.error arrives via the subscriber above.
+        // This prevents a second send from slipping through while the stream is active.
+        refreshRecoveryStatus()
     }
 
     // MARK: - Stream Event Handler
@@ -1480,6 +1603,7 @@ class DocumentEditorViewModel: ObservableObject {
             }
 
         case .done(let usage):
+            activeSubscriptionId = nil
             // Flush + stop batching timer before any async work
             stopStreamBatching()
             streamingContent = nil
@@ -1522,30 +1646,21 @@ class DocumentEditorViewModel: ObservableObject {
                     // Fetch the last assistant message from DB (just persisted by registry)
                     let msgs = try MessageStore.shared.getMessages(sessionId: sessionId)
                     if let lastAssistant = msgs.last(where: { $0.role == .assistant }) {
-                        seenMessageIds.insert(lastAssistant.id)
-                        pendingAssistantContent = lastAssistant.content
-                        let assistantSection = DocumentSection(
-                            id: stableId(for: lastAssistant.id),
-                            content: AttributedString(lastAssistant.content),
-                            author: .assistant,
-                            timestamp: lastAssistant.createdAt,
-                            branchPoint: true,
-                            isEditable: false,
+                        appendAssistantSectionIfNeeded(
                             messageId: lastAssistant.id,
+                            content: lastAssistant.content,
+                            timestamp: lastAssistant.createdAt,
                             hasFindingSignal: !isRootBranch && scanForFindingSignals(lastAssistant.content)
                         )
-                        document.sections.append(assistantSection)
                     }
                 } catch {
                     wtLog("[DocumentEditor] Failed to load persisted assistant response: \(error)")
-                    let assistantSection = DocumentSection(
-                        content: AttributedString(displayResponse),
-                        author: .assistant,
+                    appendAssistantSectionIfNeeded(
+                        messageId: nil,
+                        content: displayResponse,
                         timestamp: Date(),
-                        branchPoint: true,
-                        isEditable: false
+                        hasFindingSignal: !isRootBranch && scanForFindingSignals(displayResponse)
                     )
-                    document.sections.append(assistantSection)
                 }
             }
 
@@ -1613,7 +1728,8 @@ class DocumentEditorViewModel: ObservableObject {
 
             // User notification when not watching
             if !displayResponse.hasPrefix("⚠️") {
-                let userIsWatching = NSApp.isActive && AppState.shared.selectedBranchId == branchId
+                let userIsWatching = NSApp.isActive
+                    && BranchWindowOwnershipRegistry.shared.hasOwner(for: branchId)
                 if !userIsWatching {
                     let preview = String(displayResponse.prefix(120))
                         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1645,15 +1761,110 @@ class DocumentEditorViewModel: ObservableObject {
             }
 
             BranchAutoNamer.shared.suggestRename(forBranchId: branchId)
+            refreshRecoveryStatus()
 
         case .error(let msg):
+            activeSubscriptionId = nil
             stopStreamBatching()
             streamingContent = nil
             isProcessing = false
             wtLog("[DocumentEditor] Provider error: \(msg)")
             mirrorToTerminal("\r\n\u{1B}[1;31m  ⚠ Error: \(msg)\u{1B}[0m\r\n")
             errorMessage = msg
+            refreshRecoveryStatus()
         }
+    }
+
+    private func appendLatestPersistedAssistantMessage(fallbackContent: String) {
+        guard !fallbackContent.isEmpty else { return }
+
+        do {
+            let msgs = try MessageStore.shared.getMessages(sessionId: sessionId)
+            if let lastAssistant = msgs.last(where: { $0.role == .assistant && !seenMessageIds.contains($0.id) }) {
+                appendAssistantSectionIfNeeded(
+                    messageId: lastAssistant.id,
+                    content: lastAssistant.content,
+                    timestamp: lastAssistant.createdAt,
+                    hasFindingSignal: !isRootBranch && scanForFindingSignals(lastAssistant.content)
+                )
+                return
+            }
+        } catch {
+            wtLog("[DocumentEditor] Failed to load interrupted response from DB: \(error)")
+        }
+
+        appendAssistantSectionIfNeeded(
+            messageId: nil,
+            content: fallbackContent,
+            timestamp: Date(),
+            hasFindingSignal: !isRootBranch && scanForFindingSignals(fallbackContent)
+        )
+    }
+
+    private func appendAssistantSectionIfNeeded(
+        messageId: String?,
+        content: String,
+        timestamp: Date,
+        hasFindingSignal: Bool = false
+    ) {
+        guard !content.isEmpty else { return }
+
+        if !Self.shouldAppendAssistantSection(
+            messageId: messageId,
+            content: content,
+            seenMessageIds: seenMessageIds,
+            sections: document.sections
+        ) {
+            return
+        }
+
+        if let messageId {
+            seenMessageIds.insert(messageId)
+            pendingAssistantContent = content
+        }
+
+        let assistantSection = DocumentSection(
+            id: messageId.map(stableId(for:)) ?? UUID(),
+            content: AttributedString(content),
+            author: .assistant,
+            timestamp: timestamp,
+            branchPoint: true,
+            isEditable: false,
+            messageId: messageId,
+            hasFindingSignal: hasFindingSignal,
+            parsedMarkdown: Self.parseAssistantMarkdown(content)
+        )
+        document.sections.append(assistantSection)
+    }
+
+    static func parseAssistantMarkdown(_ raw: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: raw,
+            options: AttributedString.MarkdownParsingOptions(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace
+            )
+        )) ?? AttributedString(raw)
+    }
+
+    static func shouldAppendAssistantSection(
+        messageId: String?,
+        content: String,
+        seenMessageIds: Set<String>,
+        sections: [DocumentSection]
+    ) -> Bool {
+        guard !content.isEmpty else { return false }
+
+        if let messageId {
+            if seenMessageIds.contains(messageId) { return false }
+            if sections.contains(where: { $0.messageId == messageId }) { return false }
+            return true
+        }
+
+        let lastAssistantContent = sections.last(where: {
+            if case .assistant = $0.author { return true }
+            return false
+        }).map { String($0.content.characters) }
+        return lastAssistantContent != content
     }
 
     // MARK: - Organic Branching (Phase 8)
@@ -1844,6 +2055,7 @@ struct ThinkingIndicatorView: View {
 
 struct StreamingSectionView: View {
     let content: String
+    private static let markdownCueCharacters = CharacterSet(charactersIn: "`*_#[]-\n>:")
 
     /// Cached parse result — only recomputed when content crosses a re-parse threshold.
     /// During streaming at 10fps, every body evaluation was re-parsing the entire accumulated
@@ -1889,15 +2101,7 @@ struct StreamingSectionView: View {
     /// "Significant" = 80+ new characters OR a new/closed code fence since last parse.
     private func updateCacheIfNeeded(_ newContent: String) {
         guard !newContent.isEmpty else { return }
-
-        let delta = newContent.count - cachedRaw.count
-        let fenceCountChanged = newContent.components(separatedBy: "```").count
-            != cachedRaw.components(separatedBy: "```").count
-
-        // Re-parse on: first content, fence boundary change, or 10+ chars of new content.
-        // 10 chars at 10fps flush = ~100ms between visible updates — fast enough to feel
-        // token-by-token without saturating AttributedString on long responses.
-        guard cachedRaw.isEmpty || fenceCountChanged || delta >= 10 else { return }
+        guard Self.shouldRefreshMarkdownCache(previous: cachedRaw, new: newContent) else { return }
 
         cachedRaw = newContent
         cachedRendered = (try? AttributedString(
@@ -1906,6 +2110,23 @@ struct StreamingSectionView: View {
                 interpretedSyntax: .full
             )
         )) ?? AttributedString(newContent)
+    }
+
+    static func shouldRefreshMarkdownCache(previous: String, new: String) -> Bool {
+        guard !new.isEmpty else { return false }
+        guard !previous.isEmpty else { return true }
+        guard new != previous else { return false }
+        guard new.count >= previous.count, new.hasPrefix(previous) else { return true }
+
+        let delta = new.count - previous.count
+        let fenceCountChanged = new.components(separatedBy: "```").count
+            != previous.components(separatedBy: "```").count
+        if fenceCountChanged || delta >= 10 {
+            return true
+        }
+
+        let appended = String(new.dropFirst(previous.count))
+        return appended.unicodeScalars.contains { Self.markdownCueCharacters.contains($0) }
     }
 
     @ViewBuilder

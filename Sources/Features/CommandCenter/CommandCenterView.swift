@@ -8,11 +8,30 @@ struct CommandCenterView: View {
     @ObservedObject private var heartbeatStore = HeartbeatStore.shared
     private var outputStore = JobOutputStreamStore.shared
     @State private var isShowingRoster = false
+    @State private var isShowingEventRules = false
+    @ObservedObject private var attentionStore = AttentionStore.shared
+    @ObservedObject private var conflictDetector = ConflictDetector.shared
+    @ObservedObject private var cortanaOpsStore = CortanaOpsStore.shared
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 header
+                if !attentionStore.unacknowledged.isEmpty {
+                    AttentionPanel()
+                }
+                // Pending handoffs from gateway
+                if !viewModel.pendingHandoffs.isEmpty {
+                    HandoffBanner(
+                        handoffs: viewModel.pendingHandoffs,
+                        onDismiss: { id in viewModel.dismissHandoff(id) },
+                        onPickUp: { id in viewModel.pickUpHandoff(id) }
+                    )
+                }
+                CortanaOpsSection()
+                ForEach(conflictDetector.activeConflicts, id: \.filePath) { conflict in
+                    ConflictWarningBanner(conflict: conflict)
+                }
                 DecisionReviewSection()
                 AgentStatusBoard()
                 TokenDashboardView()
@@ -31,21 +50,29 @@ struct CommandCenterView: View {
         }
         .onAppear {
             viewModel.startObserving()
+            viewModel.refreshHandoffs()
             daemonService.refreshTmuxSessions()
             AgentStatusStore.shared.startObserving()
+            cortanaOpsStore.start()
+            EventRuleStore.shared.loadRules()
+            UIStateStore.shared.loadAll()
         }
         .onDisappear {
             viewModel.stopObserving()
             AgentStatusStore.shared.stopObserving()
+            cortanaOpsStore.stop()
         }
         .sheet(isPresented: $viewModel.isShowingDispatchSheet) {
-            DispatchSheet(projects: viewModel.projects) { message, project, model in
-                viewModel.dispatch(message: message, project: project, model: model)
+            DispatchSheet(projects: viewModel.projects) { message, project, model, template in
+                viewModel.dispatch(message: message, project: project, model: model, template: template)
             }
         }
         .sheet(isPresented: $isShowingRoster) {
             StarfleetRosterView()
                 .frame(width: 700, height: 500)
+        }
+        .sheet(isPresented: $isShowingEventRules) {
+            EventRulesSheet()
         }
         .sheet(item: Binding(
             get: { outputStore.inspectedEntry },
@@ -96,6 +123,16 @@ struct CommandCenterView: View {
             }
 
             Spacer()
+
+            // Event Rules button
+            Button {
+                isShowingEventRules = true
+            } label: {
+                Label("Rules", systemImage: "bolt.trianglebadge.exclamationmark")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.bordered)
+            .accessibilityHint("Opens event trigger rules for automation")
 
             // Crew Roster button
             Button {
@@ -276,5 +313,122 @@ struct CommandCenterView: View {
         if count >= 1_000_000 { return "\(count / 1_000_000)M" }
         if count >= 1000 { return "\(count / 1000)K" }
         return "\(count)"
+    }
+}
+
+// MARK: - Handoff Banner
+
+/// Shows pending handoffs from the Ark Gateway — cross-device work items
+/// that need attention (e.g., Telegram handoffs, daemon-created tasks).
+struct HandoffBanner: View {
+    let handoffs: [Handoff]
+    let onDismiss: (String) -> Void
+    let onPickUp: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "tray.full.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+                Text("PENDING HANDOFFS")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.orange)
+                Spacer()
+                Text("\(handoffs.count)")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.orange)
+            }
+
+            ForEach(handoffs) { handoff in
+                HandoffRow(handoff: handoff, onDismiss: onDismiss, onPickUp: onPickUp)
+            }
+        }
+        .padding(12)
+        .background(Color.orange.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.orange.opacity(0.2), lineWidth: 1)
+        }
+    }
+}
+
+private struct HandoffRow: View {
+    let handoff: Handoff
+    let onDismiss: (String) -> Void
+    let onPickUp: (String) -> Void
+
+    private var priorityColor: Color {
+        switch handoff.priority {
+        case "high", "critical": return .red
+        case "normal": return .orange
+        default: return .secondary
+        }
+    }
+
+    private var timeAgo: String {
+        let seconds = Int(Date().timeIntervalSince1970) - Int(handoff.createdAt)
+        if seconds < 60 { return "just now" }
+        if seconds < 3600 { return "\(seconds / 60)m ago" }
+        if seconds < 86400 { return "\(seconds / 3600)h ago" }
+        return "\(seconds / 86400)d ago"
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            // Priority indicator
+            Circle()
+                .fill(priorityColor)
+                .frame(width: 6, height: 6)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(handoff.message)
+                    .font(.system(size: 12))
+                    .lineLimit(2)
+
+                HStack(spacing: 8) {
+                    if let project = handoff.project {
+                        Text(project)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    if let source = handoff.source {
+                        Text("via \(source)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Text(timeAgo)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Spacer()
+
+            Button {
+                onPickUp(handoff.id)
+            } label: {
+                Text("Pick Up")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .tint(.orange)
+
+            Button {
+                onDismiss(handoff.id)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss handoff")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.quaternary.opacity(0.15))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }

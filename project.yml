@@ -81,8 +81,14 @@ targets:
           # Guard: skip for test builds and non-build actions (clean, analyze).
           # codesign --deep fails on .xctest bundles with "bundle format unrecognized",
           # and the /Applications install is unnecessary for test runs. (TASK-094)
-          if [ "${ACTION}" != "build" ]; then
+          if [ "${ACTION}" != "build" ] && [ "${ACTION}" != "build-for-testing" ]; then
             echo "note: Skipping install — action is '${ACTION}', not 'build'"
+            exit 0
+          fi
+          # build-for-testing / xcodebuild test: skip install entirely —
+          # Testing.framework embedding breaks codesign --deep
+          if [ "${ACTION}" = "build-for-testing" ] || [ -n "${TEST_HOST}" ] || [ -d "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Contents/Frameworks/Testing.framework" ]; then
+            echo "note: Skipping install — test build detected"
             exit 0
           fi
           if [ "${WRAPPER_EXTENSION}" = "xctest" ]; then
@@ -112,6 +118,11 @@ targets:
           # NOTE: DerivedData may live on an external volume (U34 Bolt). Cross-volume
           # ditto can strip the embedded code signature. We re-sign after copy to ensure
           # the /Applications copy is always valid.
+          # Skip install during test builds — the embedded .xctest bundle
+          # causes codesign --deep to fail with "bundle format unrecognized".
+          if [ "${ACTION}" = "test" -o "${ACTION}" = "analyze" ]; then
+            exit 0
+          fi
           APP_SRC="${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app"
           APP_DST="/Applications/${PRODUCT_NAME}.app"
           if [ -d "$APP_SRC" ]; then
@@ -120,7 +131,20 @@ targets:
             # Re-sign after cross-volume copy — preserves TeamIdentifier and entitlements.
             # Use EXPANDED_CODE_SIGN_IDENTITY (the cert SHA-1 hash, unambiguous) rather
             # than the display name which can match multiple certs and fail with "ambiguous".
-            codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY}" \
+            # Remove embedded .xctest bundles before signing — codesign --deep
+            # fails with "bundle format unrecognized" on .xctest bundles.
+            find "$APP_DST" -name "*.xctest" -type d -exec rm -rf {} + 2>/dev/null; true
+            # Strip ALL test frameworks/dylibs — embedded by build-for-testing, breaks codesign --deep
+            rm -rf "$APP_DST/Contents/Frameworks/Testing.framework" 2>/dev/null; true
+            rm -rf "$APP_DST/Contents/Frameworks/XCTest.framework" 2>/dev/null; true
+            rm -rf "$APP_DST/Contents/Frameworks/XCTestCore.framework" 2>/dev/null; true
+            rm -rf "$APP_DST/Contents/Frameworks/XCTestSupport.framework" 2>/dev/null; true
+            rm -rf "$APP_DST/Contents/Frameworks/XCTAutomationSupport.framework" 2>/dev/null; true
+            rm -rf "$APP_DST/Contents/Frameworks/XCUIAutomation.framework" 2>/dev/null; true
+            rm -rf "$APP_DST/Contents/Frameworks/XCUnit.framework" 2>/dev/null; true
+            rm -f "$APP_DST/Contents/Frameworks/libXCTestBundleInject.dylib" 2>/dev/null; true
+            rm -f "$APP_DST/Contents/Frameworks/libXCTestSwiftSupport.dylib" 2>/dev/null; true
+            codesign --force --deep --sign "${EXPANDED_CODE_SIGN_IDENTITY}" \
               --entitlements "${CODE_SIGN_ENTITLEMENTS}" \
               --options runtime \
               --timestamp=none \
@@ -147,7 +171,7 @@ targets:
         INFOPLIST_KEY_NSAppleEventsUsageDescription: "World Tree uses Apple Events to open terminal sessions."
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "3"
+        CURRENT_PROJECT_VERSION: "11"
 
 schemes:
   WorldTree:

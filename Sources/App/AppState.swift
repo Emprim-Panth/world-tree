@@ -3,9 +3,11 @@ import Foundation
 /// Which top-level view shows in the detail pane when no tree is selected.
 enum SidebarDestination: String, Hashable {
     case commandCenter
+    case projectDocs
     case tickets
     case timeline
     case graph
+    case mcpTools
 }
 
 /// Global app state — selected tree, selected branch, daemon connection status.
@@ -24,6 +26,7 @@ final class AppState {
     var selectedBranchId: String? {
         didSet { UserDefaults.standard.set(selectedBranchId, forKey: AppConstants.lastSelectedBranchIdKey) }
     }
+    var selectedProjectName: String?
     var selectedProjectPath: String?
     var sidebarDestination: SidebarDestination = .commandCenter
     var showGlobalSearch: Bool = false
@@ -66,6 +69,7 @@ final class AppState {
     }
 
     func selectBranch(_ branchId: String, in treeId: String) {
+        clearProjectSelection()
         selectedTreeId = treeId
         selectedBranchId = branchId
 
@@ -89,6 +93,7 @@ final class AppState {
         guard branchHistoryIndex > 0 else { return }
         branchHistoryIndex -= 1
         let entry = branchHistory[branchHistoryIndex]
+        clearProjectSelection()
         selectedTreeId = entry.treeId
         selectedBranchId = entry.branchId
     }
@@ -97,6 +102,7 @@ final class AppState {
         guard branchHistoryIndex < branchHistory.count - 1 else { return }
         branchHistoryIndex += 1
         let entry = branchHistory[branchHistoryIndex]
+        clearProjectSelection()
         selectedTreeId = entry.treeId
         selectedBranchId = entry.branchId
     }
@@ -106,5 +112,18 @@ final class AppState {
     
     func selectProject(_ path: String) {
         selectedProjectPath = path
+    }
+
+    func selectProjectDocs(name: String, path: String?) {
+        selectedTreeId = nil
+        selectedBranchId = nil
+        selectedProjectName = name
+        selectedProjectPath = path
+        sidebarDestination = .projectDocs
+    }
+
+    func clearProjectSelection() {
+        selectedProjectName = nil
+        selectedProjectPath = nil
     }
 }

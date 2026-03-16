@@ -98,8 +98,9 @@ final class StarfleetRoster: ObservableObject {
         project: String,
         workingDirectory: String,
         model: String?,
+        template: WorkflowTemplate?,
         mode: String = "craft"
-    ) async -> AsyncStream<BridgeEvent> {
+    ) async -> String {
         // Compile agent identity
         let identity = await compile(agentId: agentId, mode: mode)
 
@@ -110,15 +111,18 @@ final class StarfleetRoster: ObservableObject {
             systemPrompt = "You are \(agentId.capitalized), a Starfleet crew member dispatched through World Tree to work on project: \(project)."
         }
 
-        let resolvedModel = model ?? agents.first(where: { $0.id == agentId })?.model ?? "sonnet"
+        let resolvedModel = ModelCatalog.canonicalModelId(
+            for: model ?? agents.first(where: { $0.id == agentId })?.model
+        )
 
-        return ClaudeBridge.shared.dispatch(
+        return CortanaWorkflowDispatchService.shared.dispatch(
             message: message,
             project: project,
             workingDirectory: workingDirectory,
-            model: resolvedModel,
+            preferredModelId: resolvedModel,
+            template: template,
             origin: .crew,
-            systemPrompt: systemPrompt
+            systemPromptOverride: systemPrompt
         )
     }
 

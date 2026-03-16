@@ -21,7 +21,7 @@ final class GraphStoreTests: XCTestCase {
         dbPool = try DatabasePool(path: dbPath)
 
         // Create the knowledge graph tables (normally created by cortana-core)
-        try dbPool.write { db in
+        try await dbPool.write { db in
             try db.execute(sql: """
                 CREATE TABLE IF NOT EXISTS cg_nodes (
                     id TEXT PRIMARY KEY,

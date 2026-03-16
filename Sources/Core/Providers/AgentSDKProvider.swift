@@ -9,6 +9,9 @@ enum DispatchOrigin: String, Sendable {
     case gateway        // Gateway API (/v1/cortana/dispatch)
     case crew           // Starfleet crew delegation
     case ui             // User explicit "dispatch" action
+    case eventRule      // Automated event trigger rule
+    case workflow       // Routed workflow primary stage
+    case review         // Routed workflow reviewer / QA stage
 }
 
 // MARK: - Dispatch Context

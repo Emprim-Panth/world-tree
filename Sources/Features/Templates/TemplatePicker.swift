@@ -94,12 +94,18 @@ struct TemplateCard: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
 
-            // Sandbox indicator
-            HStack(spacing: 4) {
+            HStack(spacing: 8) {
                 Image(systemName: sandboxIcon)
                     .font(.system(size: 8))
                 Text(template.sandboxProfile)
                     .font(.system(size: 9))
+
+                if template.reviewMode != .none {
+                    Image(systemName: template.reviewMode == .qaChain ? "checkmark.shield" : "bolt.shield")
+                        .font(.system(size: 8))
+                    Text(template.reviewMode.label)
+                        .font(.system(size: 9))
+                }
             }
             .foregroundStyle(.tertiary)
         }

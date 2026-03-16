@@ -273,6 +273,12 @@ enum ContentBlock: Codable {
             case isError = "is_error"
         }
 
+        init(toolUseId: String, content: String, isError: Bool) {
+            self.toolUseId = toolUseId
+            self.content = content
+            self.isError = isError
+        }
+
         // Only encode is_error when true (omit false to keep payload clean)
         func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
@@ -281,6 +287,13 @@ enum ContentBlock: Codable {
             if isError {
                 try container.encode(isError, forKey: .isError)
             }
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            toolUseId = try container.decode(String.self, forKey: .toolUseId)
+            content = try container.decode(String.self, forKey: .content)
+            isError = try container.decodeIfPresent(Bool.self, forKey: .isError) ?? false
         }
     }
 
@@ -498,7 +511,7 @@ struct APIError: Decodable {
 
 // MARK: - Session Token Tracking
 
-struct SessionTokenUsage: Codable {
+struct SessionTokenUsage: Codable, Sendable {
     var totalInputTokens: Int = 0
     var totalOutputTokens: Int = 0
     var cacheHitTokens: Int = 0

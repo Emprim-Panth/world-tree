@@ -1,7 +1,7 @@
 # TASK-150: Event-Triggered Agent Launches — Rule Engine
 
 **Priority**: medium
-**Status**: Todo
+**Status**: Done
 **Category**: architecture
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 3

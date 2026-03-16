@@ -20,6 +20,19 @@ actor GatewayClient {
         self.session = URLSession(configuration: config)
     }
 
+    static func fromLocalConfig() -> GatewayClient? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let configPath = "\(home)/.cortana/ark-gateway.toml"
+
+        guard let configData = FileManager.default.contents(atPath: configPath),
+              let configStr = String(data: configData, encoding: .utf8),
+              let token = extractTOMLValue(key: "auth_token", from: configStr) else {
+            return nil
+        }
+
+        return GatewayClient(authToken: token)
+    }
+
     // MARK: - Memory Operations
 
     func logMemory(
@@ -168,6 +181,120 @@ actor GatewayClient {
               (200...299).contains(httpResponse.statusCode) else {
             throw GatewayError.requestFailed
         }
+    }
+
+    // MARK: - Operational Watch State
+
+    func listAgentEvents(
+        project: String? = nil,
+        source: String? = nil
+    ) async throws -> [CortanaAgentEvent] {
+        guard var components = URLComponents(
+            url: baseURL.appendingPathComponent("v1/cortana/events/agent"),
+            resolvingAgainstBaseURL: false
+        ) else { throw GatewayError.requestFailed }
+
+        var items: [URLQueryItem] = []
+        if let project {
+            items.append(URLQueryItem(name: "project", value: project))
+        }
+        if let source {
+            items.append(URLQueryItem(name: "source", value: source))
+        }
+        if !items.isEmpty {
+            components.queryItems = items
+        }
+
+        guard let url = components.url else { throw GatewayError.requestFailed }
+        var request = URLRequest(url: url)
+        request.setValue(authToken, forHTTPHeaderField: "x-cortana-token")
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw GatewayError.requestFailed
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode([CortanaAgentEvent].self, from: data)
+    }
+
+    func listAttentionQueue(project: String? = nil) async throws -> [CortanaAttentionItem] {
+        guard var components = URLComponents(
+            url: baseURL.appendingPathComponent("v1/cortana/attention/queue"),
+            resolvingAgainstBaseURL: false
+        ) else { throw GatewayError.requestFailed }
+
+        if let project {
+            components.queryItems = [URLQueryItem(name: "project", value: project)]
+        }
+
+        guard let url = components.url else { throw GatewayError.requestFailed }
+        var request = URLRequest(url: url)
+        request.setValue(authToken, forHTTPHeaderField: "x-cortana-token")
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw GatewayError.requestFailed
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode([CortanaAttentionItem].self, from: data)
+    }
+
+    func resolveAgentEvent(id: String, executedAction: String? = nil) async throws {
+        let endpoint = baseURL.appendingPathComponent("v1/cortana/events/agent/\(id)/resolve")
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(authToken, forHTTPHeaderField: "x-cortana-token")
+
+        let payload = ["executed_action": executedAction]
+        request.httpBody = try JSONEncoder().encode(payload)
+
+        let (_, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw GatewayError.requestFailed
+        }
+    }
+
+    func updateAttentionItem(id: String, status: String) async throws {
+        let endpoint = baseURL.appendingPathComponent("v1/cortana/attention/queue/\(id)/status")
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(authToken, forHTTPHeaderField: "x-cortana-token")
+
+        let payload = ["status": status]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (_, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw GatewayError.requestFailed
+        }
+    }
+
+    // MARK: - Helpers
+
+    private static func extractTOMLValue(key: String, from toml: String) -> String? {
+        for line in toml.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("\(key)") {
+                guard let eqIdx = trimmed.firstIndex(of: "=") else { continue }
+                let valueStr = trimmed[trimmed.index(after: eqIdx)...]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if valueStr.hasPrefix("\""), valueStr.hasSuffix("\""), valueStr.count >= 2 {
+                    return String(valueStr.dropFirst().dropLast())
+                }
+                return valueStr
+            }
+        }
+        return nil
     }
 
     // MARK: - Terminal Operations
@@ -446,6 +573,33 @@ struct Handoff: Codable, Identifiable {
         case completedAt = "completed_at"
         case viewedAt = "viewed_at"
     }
+
+    private enum LegacyCodingKeys: String, CodingKey {
+        case createdAt
+        case pickedUpAt
+        case completedAt
+        case viewedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
+
+        id = try container.decode(String.self, forKey: .id)
+        message = try container.decode(String.self, forKey: .message)
+        project = try container.decodeIfPresent(String.self, forKey: .project)
+        priority = try container.decode(String.self, forKey: .priority)
+        status = try container.decode(String.self, forKey: .status)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        createdAt = try container.decodeIfPresent(Int64.self, forKey: .createdAt)
+            ?? legacy.decode(Int64.self, forKey: .createdAt)
+        pickedUpAt = try container.decodeIfPresent(Int64.self, forKey: .pickedUpAt)
+            ?? legacy.decodeIfPresent(Int64.self, forKey: .pickedUpAt)
+        completedAt = try container.decodeIfPresent(Int64.self, forKey: .completedAt)
+            ?? legacy.decodeIfPresent(Int64.self, forKey: .completedAt)
+        viewedAt = try container.decodeIfPresent(Int64.self, forKey: .viewedAt)
+            ?? legacy.decodeIfPresent(Int64.self, forKey: .viewedAt)
+    }
 }
 
 struct HandoffCreateRequest: Codable {
@@ -456,6 +610,54 @@ struct HandoffCreateRequest: Codable {
 
 struct HandoffCreateResponse: Codable {
     let id: String
+}
+
+struct CortanaAgentEvent: Codable, Identifiable {
+    let id: String
+    let source: String
+    let project: String?
+    let eventType: String
+    let severity: String
+    let confidence: String
+    let payload: [String: AnyCodable]?
+    let recommendedAction: String?
+    let executedAction: String?
+    let requiresHuman: Bool
+    let status: String
+    let firstSeenAt: Int64
+    let lastSeenAt: Int64
+    let resolvedAt: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case id, source, project, severity, confidence, payload, status
+        case eventType = "event_type"
+        case recommendedAction = "recommended_action"
+        case executedAction = "executed_action"
+        case requiresHuman = "requires_human"
+        case firstSeenAt = "first_seen_at"
+        case lastSeenAt = "last_seen_at"
+        case resolvedAt = "resolved_at"
+    }
+}
+
+struct CortanaAttentionItem: Codable, Identifiable {
+    let id: String
+    let project: String?
+    let reason: String
+    let priority: String
+    let linkedEventId: String?
+    let linkedTicketId: String?
+    let status: String
+    let createdAt: Int64
+    let updatedAt: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case id, project, reason, priority, status
+        case linkedEventId = "linked_event_id"
+        case linkedTicketId = "linked_ticket_id"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
 }
 
 // MARK: - Terminal Stream Event

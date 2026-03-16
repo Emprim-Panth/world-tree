@@ -49,12 +49,12 @@ final class PenAssetStoreTests: XCTestCase {
     func testImportCountsFramesCorrectly() async throws {
         try await store.importFile(at: samplePenURL, project: "TestProject")
 
-        let assetCount = try dbPool.read { db in
+        let assetCount = try await dbPool.read { db in
             try Int.fetchOne(db, sql: "SELECT frame_count FROM pen_assets LIMIT 1") ?? 0
         }
         XCTAssertEqual(assetCount, 3, "fixture has 3 top-level frames")
 
-        let nodeCount = try dbPool.read { db in
+        let nodeCount = try await dbPool.read { db in
             try Int.fetchOne(db, sql: "SELECT node_count FROM pen_assets LIMIT 1") ?? 0
         }
         XCTAssertGreaterThanOrEqual(nodeCount, 3, "total node count must include children")
@@ -81,11 +81,11 @@ final class PenAssetStoreTests: XCTestCase {
             updatedAt: now,
             lastScanned: now
         )
-        try dbPool.write { db in try ticket.insert(db) }
+        try await dbPool.write { db in try ticket.insert(db) }
 
         try await store.importFile(at: samplePenURL, project: "TestProject")
 
-        let resolvedTicketId = try dbPool.read { db in
+        let resolvedTicketId = try await dbPool.read { db in
             try String.fetchOne(db, sql: """
                 SELECT ticket_id FROM pen_frame_links
                 WHERE annotation = 'TASK-001'
@@ -101,7 +101,7 @@ final class PenAssetStoreTests: XCTestCase {
         // No ticket seeded — TASK-999 exists in the fixture but not in canvas_tickets
         try await store.importFile(at: samplePenURL, project: "TestProject")
 
-        let (linkExists, ticketId) = try dbPool.read { db in
+        let (linkExists, ticketId) = try await dbPool.read { db in
             let row = try Row.fetchOne(db, sql: """
                 SELECT id, ticket_id FROM pen_frame_links
                 WHERE annotation = 'TASK-999'
@@ -119,13 +119,13 @@ final class PenAssetStoreTests: XCTestCase {
         try await store.importFile(at: samplePenURL, project: "TestProject")
 
         // Confirm links exist
-        let linksBefore = try dbPool.read { db in
+        let linksBefore = try await dbPool.read { db in
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM pen_frame_links") ?? 0
         }
         XCTAssertGreaterThan(linksBefore, 0, "links must exist after import")
 
         // Get the asset id
-        let assetId = try dbPool.read { db in
+        let assetId = try await dbPool.read { db in
             try String.fetchOne(db, sql: "SELECT id FROM pen_assets LIMIT 1")
         }
         XCTAssertNotNil(assetId)
@@ -133,7 +133,7 @@ final class PenAssetStoreTests: XCTestCase {
         // Delete asset — cascade should remove links
         try await store.deleteAsset(id: assetId!, project: "TestProject")
 
-        let linksAfter = try dbPool.read { db in
+        let linksAfter = try await dbPool.read { db in
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM pen_frame_links") ?? 0
         }
         XCTAssertEqual(linksAfter, 0, "frame links must cascade-delete with asset")
@@ -141,12 +141,12 @@ final class PenAssetStoreTests: XCTestCase {
 
     // MARK: - 5. Migration idempotency
 
-    func testMigrationV22IsIdempotent() throws {
+    func testMigrationV22IsIdempotent() async throws {
         // Migration was already run in setUp(). Run again — must not throw.
         XCTAssertNoThrow(try MigrationManager.migrate(dbPool))
 
         // Tables must still exist
-        let tables = try dbPool.read { db in
+        let tables = try await dbPool.read { db in
             try String.fetchAll(db, sql: """
                 SELECT name FROM sqlite_master WHERE type='table'
                 AND name IN ('pen_assets','pen_frame_links')

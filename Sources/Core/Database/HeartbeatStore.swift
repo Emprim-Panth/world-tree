@@ -98,6 +98,14 @@ final class HeartbeatStore: ObservableObject {
 
     private init() {}
 
+    // MARK: - Signal Queries
+
+    /// Check if there's a recent unprocessed signal matching the given category.
+    /// Used by EventRuleStore for heartbeat-triggered rules.
+    func hasSignal(category: String) -> Bool {
+        recentSignals.contains { $0.category == category }
+    }
+
     // MARK: - Refresh
 
     /// Async refresh — runs DB reads on GRDB's reader queue, not MainActor.

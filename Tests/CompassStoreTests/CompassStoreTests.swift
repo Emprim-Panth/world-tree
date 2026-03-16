@@ -103,11 +103,11 @@ final class CompassStoreTests: XCTestCase {
 
     func testAttentionScoreZeroForCleanProject() {
         let state = makeState(
+            openBlockers: "[]",
             gitDirty: 0,
             gitUncommittedCount: 0,
-            blockedTicketsCount: 0,
             openTicketsCount: 0,
-            openBlockers: "[]"
+            blockedTicketsCount: 0
         )
         XCTAssertEqual(state.attentionScore, 0, "Clean project should have 0 attention score")
     }
@@ -140,11 +140,11 @@ final class CompassStoreTests: XCTestCase {
     func testAttentionScoreCappedAt100() {
         // All flags on: 30 + 15 + 25 + 10 + 20 = 100
         let state = makeState(
+            openBlockers: #"["blocker"]"#,
             gitDirty: 1,
             gitUncommittedCount: 20,
-            blockedTicketsCount: 3,
             openTicketsCount: 10,
-            openBlockers: #"["blocker"]"#
+            blockedTicketsCount: 3
         )
         XCTAssertEqual(state.attentionScore, 100, "Score should cap at 100")
     }

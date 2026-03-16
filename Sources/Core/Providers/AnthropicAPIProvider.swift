@@ -54,6 +54,9 @@ final class AnthropicAPIProvider: LLMProvider {
         // A key being present doesn't guarantee validity, but absent means all requests will fail.
         let envKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
         if !envKey.isEmpty { return .available }
+        if let keychainKey = KeychainHelper.load(key: "anthropic_api_key"), !keychainKey.isEmpty {
+            return .available
+        }
         let keyFile = "\(home)/.anthropic/api_key"
         let fileKey = (try? String(contentsOfFile: keyFile, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
@@ -92,7 +95,7 @@ final class AnthropicAPIProvider: LLMProvider {
                     wtLog("[AnthropicAPIProvider] state manager ready, system blocks=\(state.systemBlocks.count)")
 
                     // Refresh terminal context (captures latest PTY output before each message)
-                    state.refreshTerminalContext()
+                    state.refreshTerminalContext(project: context.project)
 
                     // Query KB (async — runs off MainActor during process wait)
                     let kbContext = await self.queryKnowledgeBase(message: context.message)
@@ -117,8 +120,13 @@ final class AnthropicAPIProvider: LLMProvider {
 
                     let selectedModel = context.model ?? AppConstants.defaultModel
                     let cwd = resolveWorkingDirectory(context.workingDirectory, project: context.project)
-                    // Pass the branch's tmux session name so bash tool calls run visibly in the terminal
-                    let tmuxSession = BranchTerminalManager.shared.sessionName(for: context.branchId)
+                    // Materialize the visible chat terminal before tool execution so project-backed
+                    // chats route through the shared `wt-*` session instead of a fallback `canvas-*`.
+                    let tmuxSession = BranchTerminalManager.shared.preparePreferredSession(
+                        branchId: context.branchId,
+                        project: context.project,
+                        workingDirectory: cwd
+                    )
                     let executor = ToolExecutor(
                         workingDirectory: URL(fileURLWithPath: cwd),
                         tmuxSessionName: tmuxSession,
@@ -325,6 +333,7 @@ final class AnthropicAPIProvider: LLMProvider {
         if let restored = try ConversationStateManager.restore(
             sessionId: context.sessionId, branchId: context.branchId
         ) {
+            restored.applySystemPromptOverride(context.systemPromptOverride)
             stateManager = restored
             return restored
         }
@@ -340,6 +349,7 @@ final class AnthropicAPIProvider: LLMProvider {
                     newSessionId: context.sessionId,
                     newBranchId: context.branchId
                 )
+                forked.applySystemPromptOverride(context.systemPromptOverride)
                 stateManager = forked
                 return forked
             }
@@ -349,14 +359,24 @@ final class AnthropicAPIProvider: LLMProvider {
         let messages = try MessageStore.shared.getMessages(sessionId: context.sessionId)
         if !messages.isEmpty {
             let manager = ConversationStateManager(sessionId: context.sessionId, branchId: context.branchId)
-            await manager.buildFromMessages(messages, project: context.project, workingDirectory: context.workingDirectory)
+            await manager.buildFromMessages(
+                messages,
+                project: context.project,
+                workingDirectory: context.workingDirectory,
+                systemPromptOverride: context.systemPromptOverride
+            )
             stateManager = manager
             return manager
         }
 
         // Fresh session
         let manager = ConversationStateManager(sessionId: context.sessionId, branchId: context.branchId)
-        _ = await manager.buildSystemPrompt(message: context.message, project: context.project, workingDirectory: context.workingDirectory)
+        _ = await manager.buildSystemPrompt(
+            message: context.message,
+            project: context.project,
+            workingDirectory: context.workingDirectory,
+            systemPromptOverride: context.systemPromptOverride
+        )
         stateManager = manager
         return manager
     }

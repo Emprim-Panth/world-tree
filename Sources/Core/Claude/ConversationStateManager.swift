@@ -5,6 +5,8 @@ import GRDB
 /// Handles context windowing, pruning, prompt caching, and persistence.
 @MainActor
 final class ConversationStateManager {
+    private static let workflowDirectivePrefix = "[Workflow directive]\n"
+
     /// Full API message history for this session
     private(set) var apiMessages: [APIMessage] = []
 
@@ -41,7 +43,12 @@ final class ConversationStateManager {
     /// Stable blocks (identity + CLAUDE.md) use 1-hour cache — they're identical across
     /// sessions, so paying 2x write cost once saves 90% on all subsequent reads within the hour.
     /// KB context (per-query) uses no cache so it doesn't bust the stable cache.
-    func buildSystemPrompt(message: String = "", project: String?, workingDirectory: String?) async -> [SystemBlock] {
+    func buildSystemPrompt(
+        message: String = "",
+        project: String?,
+        workingDirectory: String?,
+        systemPromptOverride: String? = nil
+    ) async -> [SystemBlock] {
         var blocks: [SystemBlock] = []
 
         // 1. Cortana identity + operational directives (stable across all sessions — 1h cache)
@@ -69,8 +76,19 @@ final class ConversationStateManager {
             blocks.append(SystemBlock(text: memory, cached: false))
         }
 
-        // 5. Active terminal output (last ~60 lines from the branch's PTY — NOT cached)
-        let terminalOutput = BranchTerminalManager.shared.getRecentOutput(branchId: branchId)
+        if let systemPromptOverride,
+           !systemPromptOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            blocks.append(SystemBlock(
+                text: Self.workflowDirectivePrefix + systemPromptOverride,
+                cached: false
+            ))
+        }
+
+        // 5. Active terminal output from the terminal this chat actually owns — NOT cached
+        let terminalOutput = BranchTerminalManager.shared.preferredRecentOutput(
+            branchId: branchId,
+            project: project
+        )
         if !terminalOutput.isEmpty {
             blocks.append(SystemBlock(
                 text: "<terminal_output>\n\(terminalOutput)\n</terminal_output>",
@@ -82,11 +100,29 @@ final class ConversationStateManager {
         return blocks
     }
 
+    func applySystemPromptOverride(_ systemPromptOverride: String?) {
+        systemBlocks.removeAll { $0.text.hasPrefix(Self.workflowDirectivePrefix) }
+
+        guard let systemPromptOverride,
+              !systemPromptOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return
+        }
+
+        systemBlocks.append(SystemBlock(
+            text: Self.workflowDirectivePrefix + systemPromptOverride,
+            cached: false
+        ))
+    }
+
     /// Refresh the terminal output block before each message (called by provider before send).
     /// Replaces any previous terminal block so it stays current.
-    func refreshTerminalContext() {
+    func refreshTerminalContext(project: String? = nil) {
         systemBlocks.removeAll { $0.text.hasPrefix("<terminal_output>") }
-        let output = BranchTerminalManager.shared.getRecentOutput(branchId: branchId)
+        let output = BranchTerminalManager.shared.preferredRecentOutput(
+            branchId: branchId,
+            project: project
+        )
         if !output.isEmpty {
             systemBlocks.append(SystemBlock(
                 text: "<terminal_output>\n\(output)\n</terminal_output>",
@@ -185,10 +221,21 @@ final class ConversationStateManager {
     }
 
     /// Rebuild API state from stored messages (fallback when no parent state is available).
-    func buildFromMessages(_ messages: [Message], project: String?, workingDirectory: String?) async {
+    func buildFromMessages(
+        _ messages: [Message],
+        project: String?,
+        workingDirectory: String?,
+        systemPromptOverride: String? = nil
+    ) async {
         // Build system prompt if we don't have one
         if systemBlocks.isEmpty {
-            _ = await buildSystemPrompt(project: project, workingDirectory: workingDirectory)
+            _ = await buildSystemPrompt(
+                project: project,
+                workingDirectory: workingDirectory,
+                systemPromptOverride: systemPromptOverride
+            )
+        } else {
+            applySystemPromptOverride(systemPromptOverride)
         }
 
         apiMessages = []

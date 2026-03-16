@@ -159,20 +159,12 @@ struct SingleDocumentView: View {
             )
         }
         .onAppear {
-            if let project = viewModel.projectName {
-                // Project-level terminal — warm up the persistent project session
-                _ = BranchTerminalManager.shared.getOrCreateProjectTerminal(
-                    project: project,
-                    workingDirectory: viewModel.workingDirectory
-                )
-            } else {
-                // Branch-level terminal fallback
-                BranchTerminalManager.shared.warmUp(
-                    branchId: viewModel.mainBranchId,
-                    workingDirectory: viewModel.workingDirectory,
-                    knownTmuxSession: viewModel.mainBranchTmuxSession
-                )
-            }
+            BranchTerminalManager.shared.warmUpPreferred(
+                branchId: viewModel.mainBranchId,
+                project: viewModel.projectName,
+                workingDirectory: viewModel.workingDirectory,
+                knownTmuxSession: viewModel.mainBranchTmuxSession
+            )
         }
         .onReceive(NotificationCenter.default.publisher(for: .canvasServerRequestedTerminalOpen)) { note in
             guard let branchId = note.object as? String else { return }

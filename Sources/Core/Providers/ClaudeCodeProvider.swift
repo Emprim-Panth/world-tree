@@ -30,6 +30,17 @@ final class ClaudeCodeProvider: LLMProvider {
 
     private let home = FileManager.default.homeDirectoryForCurrentUser.path
 
+    static let executablePath: String? = {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let candidates = [
+            "\(home)/.local/bin/claude",
+            "/opt/homebrew/bin/claude",
+            "/usr/local/bin/claude",
+        ]
+
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+    }()
+
     /// Maps Canvas session IDs to CLI session IDs for --resume support
     private var cliSessionMap: [String: String] = [:]
     /// Tracks when each session was last successfully used (CLI returned output).
@@ -84,52 +95,23 @@ final class ClaudeCodeProvider: LLMProvider {
     // MARK: - Health Check
 
     func checkHealth() async -> ProviderHealth {
-        let cliPath = "\(home)/.local/bin/claude"
-        guard FileManager.default.fileExists(atPath: cliPath) else {
-            return .unavailable(reason: "Claude CLI not found at \(cliPath)")
+        guard let executablePath = Self.executablePath else {
+            return .unavailable(reason: "Claude CLI not found")
         }
 
-        return await withCheckedContinuation { continuation in
-            let resumeGuard = OneShotGuard()
+        let authStatus = await Task.detached {
+            ClaudeCodeAuthProbe.currentStatus()
+        }.value
 
-            @Sendable func safeResume(_ value: ProviderHealth) {
-                guard resumeGuard.tryFire() else { return }
-                continuation.resume(returning: value)
-            }
-
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: cliPath)
-            proc.arguments = ["--version"]
-            proc.standardOutput = FileHandle.nullDevice
-            proc.standardError = FileHandle.nullDevice
-
-            var env = ProcessInfo.processInfo.environment
-            env.removeValue(forKey: "ANTHROPIC_API_KEY")
-            env.removeValue(forKey: "CLAUDECODE")
-            proc.environment = env
-
-            // 10s timeout — CLI can hang on startup (license check, update prompt)
-            let timeoutWork = DispatchWorkItem { [weak proc] in
-                if let proc, proc.isRunning { proc.terminate() }
-                safeResume(.degraded(reason: "CLI health check timed out"))
-            }
-            DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(10), execute: timeoutWork)
-
-            proc.terminationHandler = { process in
-                timeoutWork.cancel()
-                if process.terminationStatus == 0 {
-                    safeResume(.available)
-                } else {
-                    safeResume(.degraded(reason: "CLI exited with status \(process.terminationStatus)"))
-                }
-            }
-
-            do {
-                try proc.run()
-            } catch {
-                timeoutWork.cancel()
-                safeResume(.unavailable(reason: error.localizedDescription))
-            }
+        switch authStatus.state {
+        case .loggedIn:
+            return .available
+        case .loggedOut:
+            return .unavailable(reason: "Claude Code not logged in")
+        case .cliMissing:
+            return .unavailable(reason: "Claude CLI not found at \(executablePath)")
+        case .unknown:
+            return .degraded(reason: authStatus.detail ?? "Unable to verify Claude auth")
         }
     }
 
@@ -144,7 +126,11 @@ final class ClaudeCodeProvider: LLMProvider {
             }
 
             let proc = Process()
-            let cliPath = "\(home)/.local/bin/claude"
+            guard let cliPath = Self.executablePath else {
+                continuation.yield(.error("Claude CLI not found"))
+                continuation.finish()
+                return
+            }
             proc.executableURL = URL(fileURLWithPath: cliPath)
 
             // Build the message — prepend checkpoint context if session was rotated
@@ -184,11 +170,12 @@ final class ClaudeCodeProvider: LLMProvider {
                 }
             }
 
-            var systemPrompt = CortanaIdentity.cliSystemPrompt(
-                project: context.project,
-                workingDirectory: context.workingDirectory,
-                sessionId: context.sessionId
-            )
+            var systemPrompt = context.systemPromptOverride
+                ?? CortanaIdentity.cliSystemPrompt(
+                    project: context.project,
+                    workingDirectory: context.workingDirectory,
+                    sessionId: context.sessionId
+                )
             // Inject recent conversation history so context survives --resume failures.
             // Server-side sessions can expire silently; this is the fallback.
             if let recentCtx = context.recentContext {
@@ -207,6 +194,15 @@ final class ClaudeCodeProvider: LLMProvider {
                     wtLog("[ClaudeCodeProvider] ⚠️ Working directory missing: \(cwd) — falling back to ~/Development")
                 }
                 proc.currentDirectoryURL = URL(fileURLWithPath: fallbackDir)
+            }
+
+            let resolvedWorkingDirectory = proc.currentDirectoryURL?.path ?? fallbackDir
+            Task { @MainActor in
+                _ = BranchTerminalManager.shared.preparePreferredSession(
+                    branchId: context.branchId,
+                    project: context.project,
+                    workingDirectory: resolvedWorkingDirectory
+                )
             }
 
             var env = ProcessInfo.processInfo.environment

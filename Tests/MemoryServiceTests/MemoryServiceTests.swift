@@ -164,28 +164,30 @@ final class MemoryServiceTests: XCTestCase {
     func testRecallWithMissingTables() throws {
         // Create a completely blank database — no tables at all
         let blankPath = NSTemporaryDirectory() + "memoryservice-blank-\(UUID().uuidString).sqlite"
-        let blankPool = try DatabasePool(path: blankPath)
+        do {
+            let blankPool = try DatabasePool(path: blankPath)
 
-        // Point DatabaseManager at the blank database
-        DatabaseManager.shared.setDatabasePoolForTesting(blankPool)
-        MemoryService.resetTableExistsCache()
+            // Point DatabaseManager at the blank database
+            DatabaseManager.shared.setDatabasePoolForTesting(blankPool)
+            MemoryService.resetTableExistsCache()
 
-        let result = sut.recallForMessage(
-            "Tell me about authentication",
-            project: "BookBuddy",
-            sessionId: "session-blank"
-        )
+            let result = sut.recallForMessage(
+                "Tell me about authentication",
+                project: "BookBuddy",
+                sessionId: "session-blank"
+            )
 
-        XCTAssertEqual(result, "", "Recall should return empty string when tables don't exist")
-
-        // Cleanup
-        try? FileManager.default.removeItem(atPath: blankPath)
-        try? FileManager.default.removeItem(atPath: blankPath + "-wal")
-        try? FileManager.default.removeItem(atPath: blankPath + "-shm")
+            XCTAssertEqual(result, "", "Recall should return empty string when tables don't exist")
+        }
 
         // Restore the test database for remaining tests
         DatabaseManager.shared.setDatabasePoolForTesting(dbPool)
         MemoryService.resetTableExistsCache()
+
+        // Cleanup after the temporary pool falls out of scope and closes its handles.
+        try? FileManager.default.removeItem(atPath: blankPath)
+        try? FileManager.default.removeItem(atPath: blankPath + "-wal")
+        try? FileManager.default.removeItem(atPath: blankPath + "-shm")
     }
 
     // MARK: - 3. Exclude Current Session

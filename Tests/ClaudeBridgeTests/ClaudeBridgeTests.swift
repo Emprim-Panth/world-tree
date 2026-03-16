@@ -226,6 +226,7 @@ final class ClaudeBridgeTests: XCTestCase {
 
         let events: [BridgeEvent] = [
             .text("chunk"),
+            .thinking("reasoning"),
             .toolStart(name: "bash", input: "echo hi"),
             .toolEnd(name: "bash", result: "hi", isError: false),
             .done(usage: SessionTokenUsage()),
@@ -234,6 +235,7 @@ final class ClaudeBridgeTests: XCTestCase {
 
         // Verify each case matches exactly once
         var textCount = 0
+        var thinkingCount = 0
         var toolStartCount = 0
         var toolEndCount = 0
         var doneCount = 0
@@ -243,6 +245,8 @@ final class ClaudeBridgeTests: XCTestCase {
             switch event {
             case .text:
                 textCount += 1
+            case .thinking:
+                thinkingCount += 1
             case .toolStart:
                 toolStartCount += 1
             case .toolEnd:
@@ -255,13 +259,14 @@ final class ClaudeBridgeTests: XCTestCase {
         }
 
         XCTAssertEqual(textCount, 1, "Should have exactly 1 .text event")
+        XCTAssertEqual(thinkingCount, 1, "Should have exactly 1 .thinking event")
         XCTAssertEqual(toolStartCount, 1, "Should have exactly 1 .toolStart event")
         XCTAssertEqual(toolEndCount, 1, "Should have exactly 1 .toolEnd event")
         XCTAssertEqual(doneCount, 1, "Should have exactly 1 .done event")
         XCTAssertEqual(errorCount, 1, "Should have exactly 1 .error event")
 
-        // Total coverage: 5 cases
-        XCTAssertEqual(events.count, 5, "BridgeEvent should have exactly 5 cases")
+        // Total coverage: 6 cases
+        XCTAssertEqual(events.count, 6, "BridgeEvent should have exactly 6 cases")
     }
 
     // MARK: - 3. testContextAssembly

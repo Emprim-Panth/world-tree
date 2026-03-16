@@ -24,7 +24,7 @@ final class HeartbeatStoreTests: XCTestCase {
         try MigrationManager.migrate(dbPool)
 
         // Create heartbeat-specific tables (normally created by cortana-cli)
-        try dbPool.write { db in
+        try await dbPool.write { db in
             try db.execute(sql: """
                 CREATE TABLE IF NOT EXISTS heartbeat_runs (
                     id TEXT PRIMARY KEY,
@@ -82,15 +82,15 @@ final class HeartbeatStoreTests: XCTestCase {
 
     // MARK: - 1. HeartbeatRun Model Fields
 
-    func testHeartbeatRunFieldMapping() throws {
-        try dbPool.write { db in
+    func testHeartbeatRunFieldMapping() async throws {
+        try await dbPool.write { db in
             try db.execute(sql: """
                 INSERT INTO heartbeat_runs (id, intensity, started_at, completed_at, signals_found, dispatches_made, summary)
                 VALUES ('run-1', 'deep', '2026-03-12 10:00:00', '2026-03-12 10:02:30', 8, 3, 'Deep governance check completed')
                 """)
         }
 
-        let row = try dbPool.read { db in
+        let row = try await dbPool.read { db in
             try Row.fetchOne(db, sql: "SELECT * FROM heartbeat_runs WHERE id = 'run-1'")
         }!
 
@@ -149,15 +149,15 @@ final class HeartbeatStoreTests: XCTestCase {
 
     // MARK: - 3. CrewDispatchJob Model
 
-    func testCrewDispatchJobFieldMapping() throws {
-        try dbPool.write { db in
+    func testCrewDispatchJobFieldMapping() async throws {
+        try await dbPool.write { db in
             try db.execute(sql: """
                 INSERT INTO dispatch_queue (id, project, model, crew_agent, prompt, ticket_id, status, attempts, max_attempts, last_error, created_at)
                 VALUES ('dq-1', 'WorldTree', 'sonnet', 'geordi', 'Fix the build error in TreeStore', 'TASK-100', 'running', 1, 3, NULL, '2026-03-12 14:00:00')
                 """)
         }
 
-        let row = try dbPool.read { db in
+        let row = try await dbPool.read { db in
             try Row.fetchOne(db, sql: "SELECT * FROM dispatch_queue WHERE id = 'dq-1'")
         }!
 
@@ -243,15 +243,15 @@ final class HeartbeatStoreTests: XCTestCase {
 
     // MARK: - 7. HeartbeatSignal Model
 
-    func testHeartbeatSignalFieldMapping() throws {
-        try dbPool.write { db in
+    func testHeartbeatSignalFieldMapping() async throws {
+        try await dbPool.write { db in
             try db.execute(sql: """
                 INSERT INTO governance_journal (id, category, content, project, action_taken, created_at)
                 VALUES ('sig-1', 'stale_branch', 'Branch main has 5 stale commits', 'WorldTree', 'Dispatched cleanup', '2026-03-12 09:00:00')
                 """)
         }
 
-        let row = try dbPool.read { db in
+        let row = try await dbPool.read { db in
             try Row.fetchOne(db, sql: "SELECT * FROM governance_journal WHERE id = 'sig-1'")
         }!
 
@@ -278,8 +278,8 @@ final class HeartbeatStoreTests: XCTestCase {
 
     // MARK: - 8. HeartbeatStore Refresh Integration
 
-    func testRefreshLoadsLatestHeartbeatRun() throws {
-        try dbPool.write { db in
+    func testRefreshLoadsLatestHeartbeatRun() async throws {
+        try await dbPool.write { db in
             try db.execute(sql: """
                 INSERT INTO heartbeat_runs (id, intensity, started_at, signals_found, dispatches_made, summary)
                 VALUES ('run-old', 'light', '2026-03-12 08:00:00', 2, 0, 'Quick check')
@@ -299,8 +299,8 @@ final class HeartbeatStoreTests: XCTestCase {
         XCTAssertNotNil(store.lastHeartbeat)
     }
 
-    func testRefreshLoadsDispatchJobs() throws {
-        try dbPool.write { db in
+    func testRefreshLoadsDispatchJobs() async throws {
+        try await dbPool.write { db in
             try db.execute(sql: """
                 INSERT INTO dispatch_queue (id, project, model, crew_agent, prompt, status, created_at)
                 VALUES ('dq-a', 'WorldTree', 'sonnet', 'geordi', 'Fix tests', 'running', '2026-03-12 11:00:00')
@@ -320,8 +320,8 @@ final class HeartbeatStoreTests: XCTestCase {
                        "Running jobs should appear first in sort order")
     }
 
-    func testRefreshLoadsGovernanceSignals() throws {
-        try dbPool.write { db in
+    func testRefreshLoadsGovernanceSignals() async throws {
+        try await dbPool.write { db in
             try db.execute(sql: """
                 INSERT INTO governance_journal (id, category, content, project, created_at)
                 VALUES ('s1', 'stale_branch', 'Branch is stale', 'WorldTree', '2026-03-12 10:00:00')
@@ -340,8 +340,8 @@ final class HeartbeatStoreTests: XCTestCase {
         XCTAssertEqual(store.recentSignals.first?.category, "stuck_terminal")
     }
 
-    func testRefreshLoadsActiveDispatches() throws {
-        try dbPool.write { db in
+    func testRefreshLoadsActiveDispatches() async throws {
+        try await dbPool.write { db in
             try db.execute(sql: """
                 INSERT INTO canvas_dispatches (id, project, message, working_directory, status)
                 VALUES ('cd-1', 'WorldTree', 'Task A', '/tmp', 'running')
@@ -363,10 +363,10 @@ final class HeartbeatStoreTests: XCTestCase {
                        "Should count only queued and running dispatches")
     }
 
-    func testRefreshLoadsRecentRuns() throws {
+    func testRefreshLoadsRecentRuns() async throws {
         // Insert 12 runs — should only load 10
         for i in 1...12 {
-            try dbPool.write { db in
+            try await dbPool.write { db in
                 try db.execute(sql: """
                     INSERT INTO heartbeat_runs (id, intensity, started_at, signals_found, dispatches_made)
                     VALUES (?, 'light', ?, 1, 0)

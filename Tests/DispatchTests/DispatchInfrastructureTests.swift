@@ -427,7 +427,7 @@ final class DispatchInfrastructureTests: XCTestCase {
                         message: "Concurrent task \(i)",
                         workingDirectory: "/tmp"
                     )
-                    try? dbPool?.write { db in try d.insert(db) }
+                    try? await dbPool?.write { db in try d.insert(db) }
                 }
             }
         }
@@ -442,9 +442,9 @@ final class DispatchInfrastructureTests: XCTestCase {
         // Stress test: 20 concurrent metrics updates for the same project
         let count = 20
         await withTaskGroup(of: Void.self) { group in
-            for i in 0..<count {
+            for _ in 0..<count {
                 group.addTask { [dbPool] in
-                    try? dbPool?.write { db in
+                    try? await dbPool?.write { db in
                         try db.execute(
                             sql: """
                                 INSERT INTO canvas_project_metrics

@@ -56,15 +56,32 @@ enum SendContextBuilder {
             checkpointContext: checkpointContext
         )
 
-        // 4. Cross-session memory recall
+        // 4. Cross-session memory recall (local DB)
         let memoryBlock = MemoryService.shared.recallForMessage(
             message,
             project: resolvedProject,
             sessionId: sessionId
         )
 
+        // 4b. Gateway memory enrichment — fire-and-forget async enrichment.
+        //     The gateway result is cached for the NEXT send if it misses this one.
+        //     We don't block the send path waiting for gateway.
+        Task {
+            let gatewayContext = await MemoryService.shared.enrichFromGateway(
+                query: message,
+                project: resolvedProject
+            )
+            if !gatewayContext.isEmpty {
+                MemoryService.shared.lastGatewayEnrichment = gatewayContext
+            }
+        }
+
+        // Include cached gateway enrichment from previous sends (if any)
+        let gatewayBlock = MemoryService.shared.lastGatewayEnrichment ?? ""
+        let fullMemory = gatewayBlock.isEmpty ? memoryBlock : memoryBlock + gatewayBlock
+
         // 5. Merge scored context + memory
-        let enrichedContext = mergeContext(scored: scoredContext, memory: memoryBlock)
+        let enrichedContext = mergeContext(scored: scoredContext, memory: fullMemory)
 
         // 6. Layer on project context for CLI providers
         let projectContext = loadProjectContext(project: resolvedProject, workingDirectory: resolvedWorkingDir)
@@ -92,12 +109,19 @@ enum SendContextBuilder {
         let finalContext: String? = contextParts.isEmpty ? nil : contextParts.joined(separator: "\n\n")
 
         let extendedThinking = UserDefaults.standard.bool(forKey: AppConstants.extendedThinkingEnabledKey)
+        let requestedModel = model
+            ?? UserDefaults.standard.string(forKey: AppConstants.defaultModelKey)
+            ?? AppConstants.defaultModel
+        let routedModel = ProviderManager.shared.routePreview(
+            message: message,
+            preferredModelId: requestedModel
+        ).primaryModelId
 
         var ctx = ProviderSendContext(
             message: message,
             sessionId: sessionId,
             branchId: branchId,
-            model: model ?? UserDefaults.standard.string(forKey: AppConstants.defaultModelKey) ?? AppConstants.defaultModel,
+            model: routedModel,
             workingDirectory: resolvedWorkingDir,
             project: resolvedProject,
             parentSessionId: parentSessionId,

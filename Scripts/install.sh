@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds World Tree and installs to /Applications — run this instead of building from Xcode
-# when you want the Dock/Spotlight to pick up the latest code.
+# Builds World Tree and installs to /Applications with proper service lifecycle.
+# Handles: launchd stop → kill → copy → sign → flush runningboard → launchd start
 #
 # Usage: ./Scripts/install.sh
 
@@ -9,27 +9,41 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="World Tree"
 INSTALL_PATH="/Applications/${APP_NAME}.app"
+SIGN_IDENTITY="4B1FEE2344F79AD30E99304B6454317CDEAB3878"
+LAUNCHD_LABEL="com.forgeandcode.world-tree"
+LAUNCHD_PLIST="$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
+UID_NUM=$(id -u)
+DERIVED_DATA_PATH="${WT_DERIVED_DATA_PATH:-/tmp/WorldTree-install}"
 
 echo "▸ Building..."
-xcodebuild \
+BUILD_LOG=$(mktemp -t worldtree-install-build.XXXXXX.log)
+if ! WT_STAGED_BUILD=1 xcodebuild \
   -project "$PROJECT_DIR/WorldTree.xcodeproj" \
   -scheme WorldTree \
   -configuration Debug \
+  -derivedDataPath "$DERIVED_DATA_PATH" \
   build \
   CODE_SIGN_IDENTITY="" \
   CODE_SIGNING_REQUIRED=NO \
-  2>&1 | grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" | tail -5
+  >"$BUILD_LOG" 2>&1; then
+  tail -n 80 "$BUILD_LOG"
+  echo "✗ Build failed. Full log: $BUILD_LOG"
+  exit 1
+fi
+grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" "$BUILD_LOG" | tail -5 || true
 
-# Find the freshest build
-BUILT_APP=$(find "$HOME/Library/Developer/Xcode/DerivedData" -name "${APP_NAME}.app" \
-  -not -path "*/Index.noindex/*" \
-  -type d 2>/dev/null \
-  | xargs stat -f "%m %N" 2>/dev/null \
-  | sort -rn \
-  | head -1 \
-  | awk '{print substr($0, index($0,$2))}')
+BUILT_PRODUCTS_DIR=$(
+  WT_STAGED_BUILD=1 xcodebuild \
+    -project "$PROJECT_DIR/WorldTree.xcodeproj" \
+    -scheme WorldTree \
+    -configuration Debug \
+    -derivedDataPath "$DERIVED_DATA_PATH" \
+    -showBuildSettings 2>/dev/null \
+    | awk -F ' = ' '/ BUILT_PRODUCTS_DIR = / { print $2; exit }'
+)
+BUILT_APP="$BUILT_PRODUCTS_DIR/${APP_NAME}.app"
 
-if [ -z "$BUILT_APP" ]; then
+if [ ! -d "$BUILT_APP" ]; then
   echo "✗ Could not find built app. Build may have failed."
   exit 1
 fi
@@ -37,7 +51,11 @@ fi
 BUILD_NUM=$(defaults read "${BUILT_APP}/Contents/Info" CFBundleVersion 2>/dev/null || echo "?")
 echo "▸ Installing build ${BUILD_NUM} → ${INSTALL_PATH}"
 
-# Kill running instance if present
+# Stop launchd service first (prevents auto-restart during swap)
+echo "▸ Stopping launchd service..."
+launchctl bootout "gui/${UID_NUM}/${LAUNCHD_LABEL}" 2>/dev/null || true
+
+# Kill running instance
 pkill -x "${APP_NAME}" 2>/dev/null || true
 sleep 0.5
 
@@ -45,7 +63,20 @@ sleep 0.5
 rm -rf "${INSTALL_PATH}"
 cp -R "${BUILT_APP}" "${INSTALL_PATH}"
 
-echo "▸ Launching..."
-open "${INSTALL_PATH}"
+# Sign — unsigned apps won't launch on macOS 26+
+echo "▸ Signing..."
+codesign --force --sign "${SIGN_IDENTITY}" \
+  --entitlements "${PROJECT_DIR}/WorldTree.entitlements" \
+  --options runtime \
+  --timestamp=none \
+  --deep \
+  "${INSTALL_PATH}"
+
+# Flush runningboardd CDHash cache
+"${PROJECT_DIR}/Scripts/flush-runningboard.sh"
+
+# Restart launchd service
+echo "▸ Restarting launchd service..."
+launchctl bootstrap "gui/${UID_NUM}" "${LAUNCHD_PLIST}"
 
 echo "✓ World Tree build ${BUILD_NUM} running from /Applications"

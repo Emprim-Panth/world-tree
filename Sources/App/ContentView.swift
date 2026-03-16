@@ -47,12 +47,20 @@ struct ContentView: View {
                 switch appState.sidebarDestination {
                 case .commandCenter:
                     CommandCenterView()
+                case .projectDocs:
+                    if let projectName = appState.selectedProjectName {
+                        ProjectDocsView(projectName: projectName, workingDirectory: appState.selectedProjectPath)
+                    } else {
+                        CommandCenterView()
+                    }
                 case .tickets:
                     AllTicketsView()
                 case .timeline:
                     EventTimelineView()
                 case .graph:
                     GraphView()
+                case .mcpTools:
+                    MCPToolsView()
                 }
             }
         }

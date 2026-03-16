@@ -2,8 +2,13 @@ APP_NAME     = World Tree
 SCHEME       = WorldTree
 BUILD_DIR    = /tmp/worldtree-release-build
 INSTALL_PATH = /Applications/$(APP_NAME).app
+SIGN_IDENTITY = 4B1FEE2344F79AD30E99304B6454317CDEAB3878
+ENTITLEMENTS  = WorldTree.entitlements
+LAUNCHD_LABEL = com.forgeandcode.world-tree
+LAUNCHD_PLIST = $(HOME)/Library/LaunchAgents/$(LAUNCHD_LABEL).plist
+UID           = $(shell id -u)
 
-.PHONY: generate build install update open clean
+.PHONY: generate build install update open clean rebuild rebuild-now
 
 ## Regenerate .xcodeproj from project.yml
 generate:
@@ -21,18 +26,28 @@ build: generate
 
 ## Install to /Applications (build first)
 install: build
-	@echo "→ Stopping running instance..."
+	@echo "→ Stopping launchd service..."
+	@launchctl bootout gui/$(UID)/$(LAUNCHD_LABEL) 2>/dev/null; true
 	@killall "$(APP_NAME)" 2>/dev/null; sleep 1; true
 	@echo "→ Installing to /Applications..."
+	@rm -rf "$(INSTALL_PATH)"
 	@cp -R "$(BUILD_DIR)/Build/Products/Release/$(APP_NAME).app" /Applications/
+	@echo "→ Signing..."
+	@codesign --force --sign "$(SIGN_IDENTITY)" \
+		--entitlements $(ENTITLEMENTS) \
+		--options runtime \
+		--timestamp=none \
+		--deep \
+		"$(INSTALL_PATH)"
+	@./Scripts/flush-runningboard.sh
+	@echo "→ Restarting launchd service..."
+	@launchctl bootstrap gui/$(UID) $(LAUNCHD_PLIST)
 	@touch /tmp/.worldtree-updated
 	@echo "✓ Installed: $(INSTALL_PATH)"
 
 ## Full update cycle: build + install + relaunch
 update: install
-	@echo "→ Launching..."
-	@open "$(INSTALL_PATH)"
-	@echo "✓ $(APP_NAME) updated and running"
+	@echo "✓ $(APP_NAME) updated and running (via launchd)"
 
 ## Open the installed app
 open:
@@ -56,16 +71,23 @@ rebuild-now:
 		-derivedDataPath /tmp/worldtree-staged-build \
 		-quiet \
 		build
-	@echo "→ Swapping..."
+	@echo "→ Stopping launchd service..."
+	@launchctl bootout gui/$(UID)/$(LAUNCHD_LABEL) 2>/dev/null; true
 	@killall "$(APP_NAME)" 2>/dev/null; sleep 1; true
+	@echo "→ Swapping..."
+	@rm -rf "$(INSTALL_PATH)"
 	@ditto "/tmp/worldtree-staged-build/Build/Products/Debug/$(APP_NAME).app" "$(INSTALL_PATH)"
-	@codesign --force --sign "Apple Development" \
-		--entitlements WorldTree.entitlements \
+	@codesign --force --sign "$(SIGN_IDENTITY)" \
+		--entitlements $(ENTITLEMENTS) \
 		--options runtime \
 		--timestamp=none \
+		--deep \
 		"$(INSTALL_PATH)"
+	@./Scripts/flush-runningboard.sh
+	@echo "→ Restarting launchd service..."
+	@launchctl bootstrap gui/$(UID) $(LAUNCHD_PLIST)
 	@rm -f ~/.cortana/worldtree/rebuild.dirty
-	@echo "✓ $(APP_NAME) rebuilt and restarting (launchd)"
+	@echo "✓ $(APP_NAME) rebuilt and running (via launchd)"
 
 ## Clean build artifacts
 clean:

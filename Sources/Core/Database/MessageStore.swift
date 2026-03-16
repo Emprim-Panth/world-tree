@@ -463,12 +463,17 @@ final class MessageStore {
 
     /// Get the summary for a session (from existing summaries table)
     func getSessionSummary(sessionId: String) throws -> String? {
-        try db.read { db in
-            try String.fetchOne(
-                db,
-                sql: "SELECT summary FROM summaries WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
-                arguments: [sessionId]
-            )
+        do {
+            return try db.read { db in
+                try String.fetchOne(
+                    db,
+                    sql: "SELECT summary FROM summaries WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+                    arguments: [sessionId]
+                )
+            }
+        } catch let error as GRDB.DatabaseError
+            where error.message?.contains("no such table: summaries") == true {
+            return nil
         }
     }
 }

@@ -1,7 +1,7 @@
 # TASK-138: cortana-core Hook — Write agent_sessions Data
 
 **Priority**: critical
-**Status**: Todo
+**Status**: Done
 **Category**: backend
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 1

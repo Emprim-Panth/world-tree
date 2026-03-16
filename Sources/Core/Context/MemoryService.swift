@@ -63,6 +63,11 @@ final class MemoryService {
         "want", "need", "like", "look", "make", "get", "go",
     ]
 
+    /// Cached gateway enrichment from the last async fetch.
+    /// Available for the NEXT send — gateway results arrive asynchronously
+    /// and are included in subsequent context builds.
+    var lastGatewayEnrichment: String?
+
     private init() {}
 
     // MARK: - Primary API
@@ -429,9 +434,11 @@ final class MemoryService {
 
     /// Static implementation — callable from both the main actor and background queue.
     nonisolated static func buildFTSQuery(from message: String) -> String {
-        // Strip everything except letters, numbers, and whitespace.
+        // Strip apostrophes without splitting contractions, then remove everything
+        // except letters, numbers, and whitespace.
         // Whitelist approach — safer than blacklisting individual FTS5 operators.
         let cleaned = message.lowercased()
+            .replacingOccurrences(of: "['’]", with: "", options: .regularExpression)
             .replacingOccurrences(of: "[^a-z0-9\\s]", with: " ", options: .regularExpression)
 
         let words = cleaned
@@ -475,5 +482,51 @@ final class MemoryService {
         cacheLock.lock()
         tableExistsCache.removeAll()
         cacheLock.unlock()
+    }
+
+    // MARK: - Gateway Memory Enrichment
+
+    /// Enriches local memory recall with gateway knowledge base results.
+    /// Returns additional context from the Ark Gateway's unified knowledge base
+    /// (corrections, decisions, patterns from all devices/sessions).
+    ///
+    /// Called asynchronously after local recall — the gateway result is appended
+    /// to the context if it arrives within the timeout. Gateway being unavailable
+    /// is a no-op (graceful degradation).
+    func enrichFromGateway(
+        query: String,
+        project: String?,
+        maxChars: Int = 2000
+    ) async -> String {
+        guard let gateway = GatewayClient.fromLocalConfig() else { return "" }
+
+        do {
+            let entries = try await gateway.searchMemory(
+                query: query,
+                project: project,
+                category: nil,
+                limit: 5
+            )
+
+            guard !entries.isEmpty else { return "" }
+
+            var sections: [String] = []
+            var remaining = maxChars
+
+            for entry in entries {
+                guard remaining > 100 else { break }
+                let prefix = "- [\(entry.category)] "
+                let content = String(entry.content.prefix(min(400, max(0, remaining - prefix.count))))
+                let line = prefix + content
+                sections.append(line)
+                remaining -= line.count + 1
+            }
+
+            guard !sections.isEmpty else { return "" }
+            return "\n## Gateway Knowledge\n\(sections.joined(separator: "\n"))"
+        } catch {
+            // Gateway unavailable — this is expected when ark-gateway isn't running
+            return ""
+        }
     }
 }

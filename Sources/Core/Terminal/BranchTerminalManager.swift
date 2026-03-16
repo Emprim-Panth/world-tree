@@ -538,6 +538,61 @@ final class BranchTerminalManager: ObservableObject {
         tmuxNames[branchId]
     }
 
+    /// Resolve the terminal session that should represent this chat.
+    /// Project-backed conversations prefer the shared project terminal because that is
+    /// the pane World Tree actually presents to the user.
+    func preferredSessionName(branchId: String, project: String?) -> String? {
+        if let project {
+            return canonicalProjectSessionName(for: project)
+        }
+        return tmuxNames[branchId]
+    }
+
+    /// Materialize the preferred terminal for this chat and return the tmux session name.
+    /// Tool execution should call this before routing through tmux so project-backed chats
+    /// bind to the real `wt-*` session instead of racing the UI and falling back to `canvas-*`.
+    @discardableResult
+    func preparePreferredSession(
+        branchId: String,
+        project: String?,
+        workingDirectory: String,
+        knownTmuxSession: String? = nil
+    ) -> String? {
+        warmUpPreferred(
+            branchId: branchId,
+            project: project,
+            workingDirectory: workingDirectory,
+            knownTmuxSession: knownTmuxSession
+        )
+        return preferredSessionName(branchId: branchId, project: project)
+    }
+
+    /// Recent output from the terminal this chat actually owns.
+    /// Falls back to pipe-pane logs when the NSView-backed terminal is not materialized yet.
+    func preferredRecentOutput(branchId: String, project: String?) -> String {
+        if let project {
+            if let output = projectTerminals[project]?.recentOutput, !output.isEmpty {
+                return output
+            }
+            let sessionName = canonicalProjectSessionName(for: project)
+            let output = liveOutput(sessionName: sessionName)
+            if !output.isEmpty {
+                return output
+            }
+        }
+
+        if let output = terminals[branchId]?.recentOutput, !output.isEmpty {
+            return output
+        }
+        if let sessionName = tmuxNames[branchId] {
+            let output = liveOutput(sessionName: sessionName)
+            if !output.isEmpty {
+                return output
+            }
+        }
+        return ""
+    }
+
     // MARK: - Project-Level Terminals
 
     /// Project terminals keyed by project name — persistent across branches.
@@ -556,7 +611,7 @@ final class BranchTerminalManager: ObservableObject {
         env.removeValue(forKey: "CLAUDECODE")
         env["TERM"] = "xterm-256color"
 
-        let sessionName = projectTmuxNames[project] ?? "wt-\(project.lowercased().replacingOccurrences(of: " ", with: "-"))"
+        let sessionName = resolveProjectSessionName(project: project, workingDirectory: workingDirectory)
         projectTmuxNames[project] = sessionName
 
         if FileManager.default.fileExists(atPath: tmuxExecutable) {
@@ -595,7 +650,7 @@ final class BranchTerminalManager: ObservableObject {
 
     /// tmux session name for a project terminal.
     func projectSessionName(for project: String) -> String? {
-        projectTmuxNames[project]
+        projectTmuxNames[project] ?? canonicalProjectSessionName(for: project)
     }
 
     /// Recent output from a project terminal.
@@ -615,6 +670,235 @@ final class BranchTerminalManager: ObservableObject {
     func mirrorToProject(_ project: String, text: String) {
         guard let tv = projectTerminals[project] else { return }
         tv.feed(text: text)
+    }
+
+    private static func syntheticProjectSessionName(for project: String) -> String {
+        let normalized = project
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+        return "wt-\(normalized)"
+    }
+
+    private func canonicalProjectSessionName(for project: String) -> String {
+        if let existing = projectTmuxNames[project] {
+            return existing
+        }
+
+        let sessionName = Self.syntheticProjectSessionName(for: project)
+        projectTmuxNames[project] = sessionName
+        return sessionName
+    }
+
+    /// Resolve the best existing tmux session for a project working directory before
+    /// falling back to a synthetic `wt-*` name. This lets chats reattach to Evan's
+    /// real project shell instead of spawning a pristine side-session.
+    private func resolveProjectSessionName(project: String, workingDirectory: String) -> String {
+        let storedSession = projectTmuxNames[project]
+        let storedSessionAlive = storedSession.map(isTmuxSessionAlive(named:)) ?? false
+
+        let candidates: [ProjectSessionCandidate]
+        if let storedSession {
+            let synthetic = Self.syntheticProjectSessionName(for: project)
+            if storedSession == synthetic || !storedSessionAlive {
+                candidates = discoverProjectSessionCandidates()
+            } else {
+                candidates = []
+            }
+        } else {
+            candidates = discoverProjectSessionCandidates()
+        }
+
+        let resolved = Self.preferredProjectSessionName(
+            project: project,
+            for: workingDirectory,
+            storedSession: storedSession,
+            storedSessionIsAlive: storedSessionAlive,
+            candidates: candidates
+        )
+        projectTmuxNames[project] = resolved
+
+        if let storedSession, storedSession != resolved {
+            wtLog("[BranchTerminalManager] Switched project \(project) from '\(storedSession)' to '\(resolved)'")
+        } else if storedSession == nil && resolved != Self.syntheticProjectSessionName(for: project) {
+            wtLog("[BranchTerminalManager] Reusing existing tmux session '\(resolved)' for project \(project)")
+        }
+
+        return resolved
+    }
+
+    struct ProjectSessionCandidate {
+        let sessionName: String
+        let currentPath: String
+        let activity: Int
+        let currentCommand: String
+        let windowCount: Int
+    }
+
+    private func discoverProjectSessionCandidates() -> [ProjectSessionCandidate] {
+        guard FileManager.default.fileExists(atPath: tmuxExecutable) else { return [] }
+
+        let proc = Process()
+        let pipe = Pipe()
+        proc.executableURL = URL(fileURLWithPath: tmuxExecutable)
+        proc.arguments = [
+            "list-panes",
+            "-a",
+            "-F",
+            "#{session_name}||#{pane_current_path}||#{session_activity}||#{pane_current_command}||#{session_windows}"
+        ]
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            wtLog("[BranchTerminalManager] Failed to probe tmux sessions: \(error)")
+            return []
+        }
+
+        guard proc.terminationStatus == 0,
+              let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+        else {
+            return []
+        }
+
+        return output
+            .split(separator: "\n")
+            .compactMap { line -> ProjectSessionCandidate? in
+                let parts = String(line).components(separatedBy: "||")
+                guard parts.count >= 3 else { return nil }
+                return ProjectSessionCandidate(
+                    sessionName: parts[0],
+                    currentPath: parts[1],
+                    activity: Int(parts[2]) ?? .max,
+                    currentCommand: parts.count > 3 ? parts[3] : "",
+                    windowCount: parts.count > 4 ? (Int(parts[4]) ?? 1) : 1
+                )
+            }
+    }
+
+    static func bestProjectSessionMatch(
+        project: String,
+        for workingDirectory: String,
+        candidates: [ProjectSessionCandidate]
+    ) -> ProjectSessionCandidate? {
+        let normalizedWorkDir = URL(fileURLWithPath: workingDirectory).standardizedFileURL.path
+        let projectSlug = project
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+        let canonicalName = "wt-\(projectSlug)"
+
+        return candidates
+            .filter { candidate in
+                !candidate.sessionName.hasPrefix("canvas-") &&
+                !candidate.sessionName.hasPrefix("wt-agent-")
+            }
+            .compactMap { candidate -> (candidate: ProjectSessionCandidate, score: Int)? in
+                let normalizedCandidatePath = URL(fileURLWithPath: candidate.currentPath).standardizedFileURL.path
+                let relationScore: Int
+                if normalizedCandidatePath == normalizedWorkDir {
+                    relationScore = 3_000
+                } else if normalizedCandidatePath.hasPrefix(normalizedWorkDir + "/") {
+                    relationScore = 2_000 + normalizedCandidatePath.count
+                } else if normalizedWorkDir.hasPrefix(normalizedCandidatePath + "/") {
+                    relationScore = 1_000 + normalizedCandidatePath.count
+                } else if candidate.sessionName.caseInsensitiveCompare(project) == .orderedSame {
+                    relationScore = 900
+                } else {
+                    relationScore = 0
+                }
+
+                let normalizedSessionName = candidate.sessionName.lowercased()
+                let nameScore: Int
+                if normalizedSessionName == canonicalName {
+                    nameScore = 800
+                } else if normalizedSessionName == projectSlug {
+                    nameScore = 700
+                } else if normalizedSessionName.contains(projectSlug) {
+                    nameScore = 350
+                } else {
+                    nameScore = 0
+                }
+
+                guard relationScore > 0 || nameScore >= 700 else {
+                    return nil
+                }
+
+                let activeCommandScore = Self.isInteractiveShell(candidate.currentCommand) ? 0 : 300
+                let windowScore = min(candidate.windowCount, 6) * 35
+                let recencyScore = max(0, 500 - min(candidate.activity, 500))
+                return (candidate, relationScore + nameScore + activeCommandScore + windowScore + recencyScore)
+            }
+            .sorted { lhs, rhs in
+                if lhs.score != rhs.score { return lhs.score > rhs.score }
+                if lhs.candidate.activity != rhs.candidate.activity {
+                    return lhs.candidate.activity < rhs.candidate.activity
+                }
+                return lhs.candidate.sessionName.localizedCaseInsensitiveCompare(rhs.candidate.sessionName) == .orderedAscending
+            }
+            .first?
+            .candidate
+    }
+
+    static func preferredProjectSessionName(
+        project: String,
+        for workingDirectory: String,
+        storedSession: String?,
+        storedSessionIsAlive: Bool,
+        candidates: [ProjectSessionCandidate]
+    ) -> String {
+        let synthetic = syntheticProjectSessionName(for: project)
+        let discovered = bestProjectSessionMatch(
+            project: project,
+            for: workingDirectory,
+            candidates: candidates
+        )?.sessionName
+
+        if let storedSession, storedSessionIsAlive {
+            if storedSession == synthetic, let discovered, discovered != storedSession {
+                return discovered
+            }
+            return storedSession
+        }
+
+        if let discovered {
+            return discovered
+        }
+
+        return synthetic
+    }
+
+    private func isTmuxSessionAlive(named sessionName: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: tmuxExecutable) else { return false }
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: tmuxExecutable)
+        proc.arguments = ["has-session", "-t", sessionName]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            return proc.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    private static func isInteractiveShell(_ command: String) -> Bool {
+        ["zsh", "bash", "fish", "sh", "tmux"].contains(command.lowercased())
+    }
+
+    nonisolated static func workspacePathsMatch(_ lhs: String, _ rhs: String) -> Bool {
+        let normalizedLHS = URL(fileURLWithPath: lhs).standardizedFileURL.path
+        let normalizedRHS = URL(fileURLWithPath: rhs).standardizedFileURL.path
+        return normalizedLHS == normalizedRHS ||
+            normalizedLHS.hasPrefix(normalizedRHS + "/") ||
+            normalizedRHS.hasPrefix(normalizedLHS + "/")
     }
 
     // MARK: - Agent Terminals (Hidden)
@@ -688,6 +972,89 @@ final class BranchTerminalManager: ObservableObject {
         agentTerminals[jobId]?.recentOutput ?? ""
     }
 
+    // MARK: - Session Focus (One-Click Terminal Focus)
+
+    /// Focus a tmux session by agent session ID. Resolves the session to a tmux pane,
+    /// selects it, and brings the terminal emulator to front.
+    @discardableResult
+    func focusSession(agentSessionId: String, workingDirectory: String? = nil) async -> Bool {
+        guard FileManager.default.fileExists(atPath: tmuxExecutable) else { return false }
+
+        var targetSession: String?
+
+        // 1. Check branch terminals by working directory
+        if let workDir = workingDirectory {
+            for (_, name) in tmuxNames {
+                if let state = await querySessionState(sessionName: name),
+                   Self.workspacePathsMatch(state.currentPath, workDir) {
+                    targetSession = name
+                    break
+                }
+            }
+        }
+
+        // 2. Check project terminals
+        if targetSession == nil {
+            for (_, name) in projectTmuxNames {
+                if let state = await querySessionState(sessionName: name),
+                   workingDirectory == nil || Self.workspacePathsMatch(state.currentPath, workingDirectory!) {
+                    targetSession = name
+                    break
+                }
+            }
+        }
+
+        // 3. Fallback: list all tmux sessions and match by working directory
+        if targetSession == nil, let workDir = workingDirectory {
+            targetSession = await findTmuxSessionByPath(workDir)
+        }
+
+        guard let sessionName = targetSession else {
+            wtLog("[BranchTerminalManager] No tmux session found for agent \(agentSessionId.prefix(8))")
+            return false
+        }
+
+        let tmuxPath = tmuxExecutable
+        let focused = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: tmuxPath)
+            proc.arguments = ["select-window", "-t", sessionName]
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
+            proc.terminationHandler = { p in
+                continuation.resume(returning: p.terminationStatus == 0)
+            }
+            do { try proc.run() } catch { continuation.resume(returning: false) }
+        }
+
+        if focused { bringTerminalToFront() }
+        return focused
+    }
+
+    /// Bring the terminal emulator app to front — prefer Ghostty, then Terminal.app.
+    func bringTerminalToFront() {
+        let apps = NSWorkspace.shared.runningApplications
+        if let ghostty = apps.first(where: { $0.bundleIdentifier == "com.mitchellh.ghostty" }) {
+            ghostty.activate()
+        } else if let terminal = apps.first(where: { $0.bundleIdentifier == "com.apple.Terminal" }) {
+            terminal.activate()
+        }
+    }
+
+    /// Find a tmux session whose pane working directory matches the given path.
+    private func findTmuxSessionByPath(_ path: String) async -> String? {
+        let candidates = discoverProjectSessionCandidates()
+        return candidates
+            .filter { Self.workspacePathsMatch($0.currentPath, path) }
+            .sorted { lhs, rhs in
+                if lhs.activity != rhs.activity { return lhs.activity < rhs.activity }
+                if lhs.windowCount != rhs.windowCount { return lhs.windowCount > rhs.windowCount }
+                return lhs.sessionName.localizedCaseInsensitiveCompare(rhs.sessionName) == .orderedAscending
+            }
+            .first?
+            .sessionName
+    }
+
     // MARK: - Agent Windows
 
     /// Open a new named tmux window in the branch's session for an agent task.
@@ -739,6 +1106,31 @@ final class BranchTerminalManager: ObservableObject {
             tmuxNames[branchId] = name
         }
         _ = getOrCreate(branchId: branchId, workingDirectory: workingDirectory)
+    }
+
+    /// Pre-warm the terminal the user should actually see for this chat.
+    /// Project-backed conversations always bind to the shared project session.
+    func warmUpPreferred(
+        branchId: String,
+        project: String?,
+        workingDirectory: String,
+        knownTmuxSession: String? = nil
+    ) {
+        if let project, !project.isEmpty {
+            if let knownTmuxSession, Self.shouldAdoptProjectSession(named: knownTmuxSession) {
+                projectTmuxNames[project] = knownTmuxSession
+            }
+            _ = getOrCreateProjectTerminal(project: project, workingDirectory: workingDirectory)
+            if let sessionName = projectTmuxNames[project] {
+                persistTmuxSessionName(sessionName, for: branchId)
+            }
+            return
+        }
+        warmUp(branchId: branchId, workingDirectory: workingDirectory, knownTmuxSession: knownTmuxSession)
+    }
+
+    private static func shouldAdoptProjectSession(named sessionName: String) -> Bool {
+        !sessionName.hasPrefix("canvas-") && !sessionName.hasPrefix("wt-agent-")
     }
 
     /// Terminate a branch's terminal process (branch archived or deleted).

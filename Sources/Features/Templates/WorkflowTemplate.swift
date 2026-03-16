@@ -2,6 +2,27 @@ import Foundation
 
 // MARK: - Workflow Templates
 
+enum WorkflowReviewMode: String, Codable, Sendable {
+    case none
+    case qaChain
+    case challenge
+
+    var label: String {
+        switch self {
+        case .none:
+            return "Single Pass"
+        case .qaChain:
+            return "QA Chain"
+        case .challenge:
+            return "Challenge"
+        }
+    }
+
+    var runsAutomatically: Bool {
+        self != .none
+    }
+}
+
 /// Pre-built conversation structures for common dev tasks.
 /// Templates define branch configuration, initial system context, and suggested prompts.
 struct WorkflowTemplate: Identifiable {
@@ -14,11 +35,22 @@ struct WorkflowTemplate: Identifiable {
     let initialPrompt: String?
     let systemContext: String?
     let sandboxProfile: String  // "unrestricted", "workspace", "airgapped"
+    let reviewMode: WorkflowReviewMode
+    let recommendedAgentIds: [String]
 
     // MARK: - Built-in Templates
 
     static let all: [WorkflowTemplate] = [
-        bugFix, featureImpl, codeReview, refactor, exploration, documentation, debugging
+        fastTriage,
+        bugFix,
+        featureImpl,
+        implementReview,
+        architectChallenge,
+        codeReview,
+        refactor,
+        exploration,
+        documentation,
+        debugging,
     ]
 
     static let bugFix = WorkflowTemplate(
@@ -37,7 +69,9 @@ struct WorkflowTemplate: Identifiable {
             4. Verify fix works
             5. Check for regressions
             """,
-        sandboxProfile: "workspace"
+        sandboxProfile: "workspace",
+        reviewMode: .none,
+        recommendedAgentIds: ["geordi", "worf"]
     )
 
     static let featureImpl = WorkflowTemplate(
@@ -56,7 +90,70 @@ struct WorkflowTemplate: Identifiable {
             4. Write tests
             5. Build and verify
             """,
-        sandboxProfile: "workspace"
+        sandboxProfile: "workspace",
+        reviewMode: .none,
+        recommendedAgentIds: ["geordi", "data"]
+    )
+
+    static let implementReview = WorkflowTemplate(
+        id: "implement-review",
+        name: "Implement + QA",
+        description: "Build the feature, then queue a focused QA review before calling it done",
+        icon: "checkmark.shield.fill",
+        branchType: .implementation,
+        suggestedModel: "codex",
+        initialPrompt: nil,
+        systemContext: """
+            Delivery workflow:
+            1. Understand the requested app or feature boundary
+            2. Implement the smallest complete slice that works end-to-end
+            3. Add or update tests while building
+            4. Build and verify locally
+            5. Hand off to the QA chain with explicit risks and changed files
+            """,
+        sandboxProfile: "workspace",
+        reviewMode: .qaChain,
+        recommendedAgentIds: ["geordi", "worf", "data"]
+    )
+
+    static let architectChallenge = WorkflowTemplate(
+        id: "architect-challenge",
+        name: "Architect + Challenge",
+        description: "Plan with the deep-reasoning lane, then run a challenger pass against assumptions",
+        icon: "triangle.2.circlepath.circle.fill",
+        branchType: .exploration,
+        suggestedModel: "claude-opus-4-6",
+        initialPrompt: "Design the architecture, explain the tradeoffs, and identify the highest-risk assumptions before implementation starts.",
+        systemContext: """
+            Architecture workflow:
+            1. Define the target outcome and constraints
+            2. Propose the simplest viable architecture
+            3. Name the tradeoffs explicitly
+            4. Identify what could break under scale, complexity, or ambiguity
+            5. Prepare the design for an adversarial challenge pass
+            """,
+        sandboxProfile: "unrestricted",
+        reviewMode: .challenge,
+        recommendedAgentIds: ["spock", "data", "geordi"]
+    )
+
+    static let fastTriage = WorkflowTemplate(
+        id: "fast-triage",
+        name: "Fast Triage",
+        description: "Quick diagnosis, next step, and escalation path without a review chain",
+        icon: "bolt.circle.fill",
+        branchType: .conversation,
+        suggestedModel: "claude-haiku-4-5-20251001",
+        initialPrompt: "Triage the issue quickly. Identify the likely cause, the next diagnostic step, and whether this needs a deeper workflow.",
+        systemContext: """
+            Fast triage workflow:
+            1. Identify the symptom
+            2. Give the fastest useful next step
+            3. Escalate only if the problem is larger than a quick pass can safely resolve
+            """,
+        sandboxProfile: "workspace",
+        reviewMode: .none,
+        recommendedAgentIds: ["geordi", "uhura"]
     )
 
     static let codeReview = WorkflowTemplate(
@@ -75,7 +172,9 @@ struct WorkflowTemplate: Identifiable {
             - Readability: Clear names, reasonable complexity
             - Tests: Adequate coverage for changes
             """,
-        sandboxProfile: "unrestricted"
+        sandboxProfile: "unrestricted",
+        reviewMode: .challenge,
+        recommendedAgentIds: ["worf", "data"]
     )
 
     static let refactor = WorkflowTemplate(
@@ -94,7 +193,9 @@ struct WorkflowTemplate: Identifiable {
             4. Run tests after each change
             5. Verify behavior is preserved
             """,
-        sandboxProfile: "workspace"
+        sandboxProfile: "workspace",
+        reviewMode: .none,
+        recommendedAgentIds: ["geordi"]
     )
 
     static let exploration = WorkflowTemplate(
@@ -106,7 +207,9 @@ struct WorkflowTemplate: Identifiable {
         suggestedModel: nil,
         initialPrompt: "Explore this codebase. Map out the architecture, identify key patterns, dependencies, and potential issues.",
         systemContext: nil,
-        sandboxProfile: "unrestricted"
+        sandboxProfile: "unrestricted",
+        reviewMode: .none,
+        recommendedAgentIds: ["spock", "data"]
     )
 
     static let documentation = WorkflowTemplate(
@@ -124,7 +227,9 @@ struct WorkflowTemplate: Identifiable {
             - Architecture decisions documented with rationale
             - API docs with parameter descriptions
             """,
-        sandboxProfile: "unrestricted"
+        sandboxProfile: "unrestricted",
+        reviewMode: .none,
+        recommendedAgentIds: ["kim", "uhura"]
     )
 
     static let debugging = WorkflowTemplate(
@@ -144,6 +249,8 @@ struct WorkflowTemplate: Identifiable {
             5. Test hypothesis
             6. Fix and verify
             """,
-        sandboxProfile: "workspace"
+        sandboxProfile: "workspace",
+        reviewMode: .none,
+        recommendedAgentIds: ["geordi", "worf"]
     )
 }

@@ -27,17 +27,8 @@ final class AttentionStore: ObservableObject {
             return
         }
 
-        let obs = ValueObservation.trackingConstantRegion { db -> [AttentionEvent] in
+        let obs = ValueObservation.tracking { db -> [AttentionEvent] in
             guard try db.tableExists("agent_attention_events") else { return [] }
-
-            // Auto-acknowledge 'completed' events older than 1 hour
-            try db.execute(sql: """
-                UPDATE agent_attention_events
-                SET acknowledged = 1, acknowledged_at = datetime('now')
-                WHERE acknowledged = 0
-                  AND type = 'completed'
-                  AND created_at < datetime('now', '-1 hour')
-                """)
 
             return try AttentionEvent.fetchAll(db, sql: """
                 SELECT *
@@ -68,6 +59,8 @@ final class AttentionStore: ObservableObject {
                     self.unacknowledged = events
                     self.criticalCount = events.filter { $0.severity == .critical }.count
                     self.warningCount = events.filter { $0.severity == .warning }.count
+                    // Auto-acknowledge stale 'completed' events (write on separate queue)
+                    self.autoAcknowledgeStaleEvents()
                 }
             }
         )
@@ -113,6 +106,31 @@ final class AttentionStore: ObservableObject {
             }
         } catch {
             wtLog("[AttentionStore] Error acknowledging all events: \(error)")
+        }
+    }
+
+    // MARK: - Auto-Acknowledge
+
+    /// Acknowledge 'completed' events older than 1 hour.
+    /// Runs as an async write — never inside a ValueObservation read closure.
+    private func autoAcknowledgeStaleEvents() {
+        Task {
+            do {
+                try await DatabaseManager.shared.asyncWrite { db in
+                    guard try db.tableExists("agent_attention_events") else { return }
+                    try db.execute(sql: """
+                        UPDATE agent_attention_events
+                        SET acknowledged = 1, acknowledged_at = datetime('now')
+                        WHERE acknowledged = 0
+                          AND type = 'completed'
+                          AND created_at < datetime('now', '-1 hour')
+                        """)
+                }
+            } catch {
+                await MainActor.run {
+                    wtLog("[AttentionStore] Auto-acknowledge failed: \(error)")
+                }
+            }
         }
     }
 }

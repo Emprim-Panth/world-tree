@@ -26,9 +26,26 @@ struct AgentStatusCard: View {
         .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
         .contentShape(Rectangle())
         .onTapGesture { onTap?() }
+        .contextMenu {
+            Button {
+                onTap?()
+            } label: {
+                Label("Focus Terminal", systemImage: "terminal")
+            }
+            Button {
+                showMemory = true
+            } label: {
+                Label("Session Memory", systemImage: "brain")
+            }
+        }
+        .popover(isPresented: $showMemory) {
+            SessionMemoryView(session: session)
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
     }
+
+    @State private var showMemory = false
 
     // MARK: - Header
 

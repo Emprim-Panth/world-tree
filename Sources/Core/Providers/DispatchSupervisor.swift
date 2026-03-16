@@ -56,20 +56,93 @@ final class DispatchSupervisor {
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.checkActiveDispatches()
+                await self?.evaluateEventRules()
+            }
+        }
+    }
+
+    /// Evaluate event trigger rules on every heartbeat cycle.
+    private func evaluateEventRules() async {
+        let store = EventRuleStore.shared
+        let sessions = AgentStatusStore.shared.activeSessions + AgentStatusStore.shared.recentCompleted
+        let events = AttentionStore.shared.unacknowledged
+
+        let triggered = await store.evaluate(sessions: sessions, attentionEvents: events)
+        for action in triggered {
+            switch action.action {
+            case .dispatchAgent:
+                let agent = action.config["agent"] ?? "geordi"
+                var prompt = action.config["prompt_template"] ?? "Automated dispatch from rule: \(action.rule.name)"
+                // Variable substitution in prompt template
+                if let session = sessions.first(where: { $0.isActive }) {
+                    prompt = prompt.replacingOccurrences(of: "{project}", with: session.project)
+                    prompt = prompt.replacingOccurrences(of: "{session_id}", with: session.id)
+                    prompt = prompt.replacingOccurrences(of: "{error_count}", with: "\(session.consecutiveErrors)")
+                }
+                let project = action.rule.triggerConfigDict["project"]
+                    ?? sessions.first(where: { $0.isActive })?.project
+                    ?? "WorldTree"
+                let workDir = sessions.first(where: { $0.project == project })?.workingDirectory
+                    ?? NSHomeDirectory() + "/Development/" + project
+                wtLog("[DispatchSupervisor] Event rule '\(action.rule.name)' → dispatching \(agent) on \(project)")
+                let stream = ClaudeBridge.shared.dispatch(
+                    message: prompt,
+                    project: project,
+                    workingDirectory: workDir,
+                    origin: .eventRule
+                )
+                Task { for await _ in stream {} }
+
+            case .notify:
+                let message = action.config["message"] ?? "Event rule triggered: \(action.rule.name)"
+                do {
+                    try DatabaseManager.shared.write { db in
+                        try db.execute(sql: """
+                            INSERT INTO agent_attention_events (id, session_id, type, severity, message, acknowledged)
+                            VALUES (?, '', 'review_ready', 'info', ?, 0)
+                            """, arguments: [UUID().uuidString, message])
+                    }
+                } catch {
+                    wtLog("[DispatchSupervisor] Failed to create attention event: \(error)")
+                }
+
+            case .runCommand:
+                let command = action.config["command"] ?? ""
+                if !command.isEmpty {
+                    wtLog("[DispatchSupervisor] Event rule '\(action.rule.name)' — running: \(command)")
+                    Task.detached {
+                        let proc = Process()
+                        proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                        proc.arguments = ["-c", command]
+                        proc.standardOutput = FileHandle.nullDevice
+                        proc.standardError = FileHandle.nullDevice
+                        try? proc.run()
+                        proc.waitUntilExit()
+                    }
+                }
             }
         }
     }
 
     private func checkActiveDispatches() {
-        guard let provider = ProviderManager.shared.provider(withId: "agent-sdk") as? AgentSDKProvider else {
-            return
+        let sdkActiveIds: Set<String>
+        if let provider = ProviderManager.shared.provider(withId: "agent-sdk") as? AgentSDKProvider {
+            sdkActiveIds = Set(provider.activeDispatchIds)
+        } else {
+            sdkActiveIds = []
         }
 
-        let activeIds = Set(provider.activeDispatchIds)
+        let activeIds = sdkActiveIds.union(CortanaWorkflowDispatchService.shared.activeIds)
         // Update AppState task count for UI badge
         AppState.shared.activeTaskCount = activeIds.count
         // Refresh heartbeat data alongside dispatch checks
         HeartbeatStore.shared.refresh()
+
+        // Run conflict detector on every heartbeat cycle
+        ConflictDetector.shared.checkDebounced()
+
+        // Evaluate event trigger rules and execute triggered actions
+        Task { await evaluateEventRules() }
 
         // Cross-reference DB: find dispatches marked 'running' that aren't tracked in memory
         do {

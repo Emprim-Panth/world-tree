@@ -55,7 +55,18 @@ struct AgentStatusBoard: View {
         if !store.activeSessions.isEmpty {
             LazyVGrid(columns: columns, spacing: 8) {
                 ForEach(store.activeSessions, id: \.id) { session in
-                    AgentStatusCard(session: session, health: store.healthScores[session.id])
+                    AgentStatusCard(
+                        session: session,
+                        health: store.healthScores[session.id],
+                        onTap: {
+                            Task {
+                                await BranchTerminalManager.shared.focusSession(
+                                    agentSessionId: session.id,
+                                    workingDirectory: session.workingDirectory
+                                )
+                            }
+                        }
+                    )
                 }
             }
         }

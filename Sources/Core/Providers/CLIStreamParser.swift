@@ -271,8 +271,8 @@ final class CLIStreamParser {
         let content = json["content"] as? String ?? ""
         let isError = json["is_error"] as? Bool ?? false
 
-        // Truncate content for the UI event (full content stays on CLI side)
-        let displayContent = content.count > 4000 ? String(content.prefix(4000)) + "\n… (\(content.count - 4000) chars truncated)" : content
+        // Keep tool result previews compact for the UI layer.
+        let displayContent = content.count > 200 ? String(content.prefix(200)) + "..." : content
 
         return [.toolEnd(name: name, result: displayContent, isError: isError)]
     }

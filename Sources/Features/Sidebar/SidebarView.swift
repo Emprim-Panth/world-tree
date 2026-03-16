@@ -61,12 +61,24 @@ struct SidebarView: View {
         }
     }
 
+    private var recentProjectNames: Set<String> {
+        Set(viewModel.recentProjectGroups.map(\.project))
+    }
+
+    private var remainingProjectGroups: [(project: String, trees: [ConversationTree])] {
+        guard viewModel.searchText.isEmpty, !recentProjectNames.isEmpty else {
+            return viewModel.allProjectGroups
+        }
+        return viewModel.allProjectGroups.filter { !recentProjectNames.contains($0.project) }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Global nav — Command Center, Tickets
             HStack(spacing: 2) {
                 sidebarNavButton("Command Center", icon: "square.grid.2x2", dest: .commandCenter)
                 sidebarNavButton("Tickets", icon: "checklist", dest: .tickets)
+                sidebarNavButton("MCP Tools", icon: "puzzlepiece.extension", dest: .mcpTools)
             }
             .padding(.horizontal, 8)
             .padding(.top, 6)
@@ -239,7 +251,15 @@ struct SidebarView: View {
                             .padding(.horizontal, 16)
                         }
 
-                        ForEach(viewModel.allProjectGroups, id: \.project) { group in
+                        if viewModel.searchText.isEmpty && !viewModel.recentProjectGroups.isEmpty {
+                            recentProjectsSection
+                        }
+
+                        if viewModel.searchText.isEmpty && !viewModel.recentProjectGroups.isEmpty && !remainingProjectGroups.isEmpty {
+                            allProjectsSectionHeader
+                        }
+
+                        ForEach(remainingProjectGroups, id: \.project) { group in
                             let isActiveProject = viewModel.isActive(group.project, trees: group.trees)
                             let isDragTarget = dragOverProject == group.project && draggingProject != group.project
                             let isGroupExpanded = !collapsedProjects.contains(group.project)
@@ -270,6 +290,7 @@ struct SidebarView: View {
                                         gitInfo: viewModel.gitInfo(for: group.project),
                                         typeIcon: viewModel.typeIcon(for: group.project),
                                         treeCount: group.trees.count,
+                                        isDocsSelected: appState.selectedProjectName == group.project && appState.sidebarDestination == .projectDocs,
                                         isExpanded: isGroupExpanded,
                                         onToggle: {
                                             if isGroupExpanded {
@@ -285,6 +306,12 @@ struct SidebarView: View {
                                                 newTreeWorkingDir = path
                                             }
                                             showNewTreeSheet = true
+                                        },
+                                        onOpenDocs: {
+                                            appState.selectProjectDocs(
+                                                name: group.project,
+                                                path: viewModel.resolvedPath(for: group.project)
+                                            )
                                         },
                                         onRename: {
                                             renamingCategory = group.project
@@ -317,7 +344,7 @@ struct SidebarView: View {
                                         draggingProject = nil; dragOverProject = nil
                                         return false
                                     }
-                                    let groups = viewModel.allProjectGroups
+                                    let groups = remainingProjectGroups
                                     if let fromIdx = groups.firstIndex(where: { $0.project == source }),
                                        let toIdx   = groups.firstIndex(where: { $0.project == group.project }) {
                                         viewModel.moveProject(
@@ -488,6 +515,7 @@ struct SidebarView: View {
         return Button {
             appState.selectedTreeId = nil
             appState.selectedBranchId = nil
+            appState.clearProjectSelection()
             appState.sidebarDestination = dest
         } label: {
             Label(label, systemImage: icon)
@@ -502,6 +530,114 @@ struct SidebarView: View {
                 .cornerRadius(6)
         }
         .buttonStyle(.plain)
+    }
+
+    private var recentProjectsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Recent Projects")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .textCase(.uppercase)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+
+            VStack(spacing: 6) {
+                ForEach(viewModel.recentProjectGroups, id: \.project) { group in
+                    recentProjectRow(group)
+                }
+            }
+            .padding(.horizontal, 8)
+        }
+        .padding(.bottom, 8)
+    }
+
+    private var allProjectsSectionHeader: some View {
+        HStack {
+            Text("All Projects")
+                .font(.caption2)
+                .fontWeight(.semibold)
+                .textCase(.uppercase)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
+    }
+
+    private func recentProjectRow(_ group: (project: String, trees: [ConversationTree])) -> some View {
+        let latestTree = mostRecentTree(in: group.trees)
+        let isSelected = appState.selectedProjectName == group.project && appState.sidebarDestination == .projectDocs
+        let subtitle = latestTree?.lastMessageSnippet?.contextSnippet ?? "Open latest work"
+        let activity = viewModel.latestActivityLabel(for: group.project, trees: group.trees) ?? "recently"
+
+        return HStack(spacing: 10) {
+            Image(systemName: viewModel.typeIcon(for: group.project))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 14)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(group.project)
+                        .font(.callout)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+                    Text(activity)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Button {
+                appState.selectProjectDocs(name: group.project, path: viewModel.resolvedPath(for: group.project))
+            } label: {
+                Image(systemName: "book.closed")
+                    .font(.caption)
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                    .frame(width: 24, height: 24)
+                    .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .help("Open docs for \(group.project)")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            openLatestTree(in: group)
+        }
+    }
+
+    private func mostRecentTree(in trees: [ConversationTree]) -> ConversationTree? {
+        trees.max { lhs, rhs in
+            (lhs.lastMessageAt ?? lhs.updatedAt) < (rhs.lastMessageAt ?? rhs.updatedAt)
+        }
+    }
+
+    private func openLatestTree(in group: (project: String, trees: [ConversationTree])) {
+        guard let latestTree = mostRecentTree(in: group.trees) else {
+            appState.selectProjectDocs(name: group.project, path: viewModel.resolvedPath(for: group.project))
+            return
+        }
+        appState.clearProjectSelection()
+        appState.selectedBranchId = nil
+        appState.selectedTreeId = latestTree.id
+        loadTreeBranches(latestTree.id)
     }
 
     // MARK: - Content Search Result Row
@@ -599,6 +735,7 @@ struct SidebarView: View {
             // Reset branch selection so the new tree always opens at its root.
             // Without this, the previous tree's branchId stays in AppState and the
             // wrong conversation appears in the detail pane.
+            appState.clearProjectSelection()
             appState.selectedBranchId = nil
             appState.selectedTreeId = tree.id
             loadTreeBranches(tree.id)
@@ -928,9 +1065,11 @@ struct ProjectGroupHeader: View {
     let gitInfo: String?
     let typeIcon: String
     let treeCount: Int
+    let isDocsSelected: Bool
     let isExpanded: Bool
     let onToggle: () -> Void
     let onNewTree: () -> Void
+    let onOpenDocs: () -> Void
     let onRename: () -> Void
     let onPathChanged: (String) -> Void
     let onArchive: () -> Void
@@ -985,6 +1124,18 @@ struct ProjectGroupHeader: View {
                         .accessibilityLabel("\(treeCount) trees")
                 }
 
+                Button(action: onOpenDocs) {
+                    Image(systemName: "book.closed")
+                        .font(.caption2)
+                        .foregroundStyle(isDocsSelected ? Color.accentColor : Color.secondary)
+                        .frame(width: 18, height: 18)
+                        .background(isDocsSelected ? Color.accentColor.opacity(0.14) : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .help("Open docs for \(projectName)")
+                .accessibilityLabel("Open docs for \(projectName)")
+
                 Button(action: onNewTree) {
                     Image(systemName: "plus")
                         .font(.caption2)
@@ -1000,6 +1151,8 @@ struct ProjectGroupHeader: View {
         .padding(.top, 8)
         .padding(.bottom, 3)
         .contextMenu {
+            Button("Open Docs", action: onOpenDocs)
+            Divider()
             Button("Rename…", action: onRename)
             Button("Edit Path…") {
                 editingText = resolvedPath ?? ""

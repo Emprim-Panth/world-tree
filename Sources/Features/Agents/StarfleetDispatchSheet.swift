@@ -3,27 +3,24 @@ import SwiftUI
 // MARK: - Starfleet Dispatch Sheet
 
 /// Modal for dispatching a task to a specific Starfleet crew member.
-/// Compiles the agent's identity, then fires a dispatch through ClaudeBridge.
+/// Uses the same workflow planner as Command Center so Cortana owns model choice.
 struct StarfleetDispatchSheet: View {
     @Environment(\.dismiss) private var dismiss
     let agent: StarfleetAgent
 
     @State private var message = ""
     @State private var selectedProjectPath = ""
-    @State private var selectedModel: String
+    @State private var selectedModelId = Self.autoModelId
+    @State private var selectedTemplateId = ""
     @State private var compilationMode = "craft"
     @State private var isDispatching = false
     @State private var dispatchStatus: String?
 
     @StateObject private var roster = StarfleetRoster.shared
+    @StateObject private var providerManager = ProviderManager.shared
 
-    private let models = ["haiku", "sonnet", "opus"]
     private let modes = ["craft", "systems", "vocab", "full", "lean"]
-
-    init(agent: StarfleetAgent) {
-        self.agent = agent
-        _selectedModel = State(initialValue: agent.model)
-    }
+    private static let autoModelId = "auto"
 
     private var projects: [CachedProject] {
         (try? ProjectCache().getAll()) ?? []
@@ -33,26 +30,41 @@ struct StarfleetDispatchSheet: View {
         projects.first { $0.path == selectedProjectPath }
     }
 
+    private var selectedTemplate: WorkflowTemplate? {
+        WorkflowTemplate.all.first { $0.id == selectedTemplateId }
+    }
+
+    private var workflowPlan: CortanaWorkflowExecutionPlan {
+        CortanaWorkflowPlanner.plan(
+            message: message,
+            preferredModelId: selectedModelId == Self.autoModelId ? nil : selectedModelId,
+            template: selectedTemplate
+        )
+    }
+
+    private var modelOptions: [(id: String, label: String)] {
+        [(Self.autoModelId, "Auto")] + providerManager.availableModelOptions.map { ($0.id, $0.label) }
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             agentHeader
             Divider()
             projectPicker
-            modelAndModePickers
+            controlPickers
             promptEditor
+            workflowSummary
             directoryInfo
             actions
         }
         .padding(20)
-        .frame(width: 520, height: 440)
+        .frame(width: 560, height: 520)
         .onAppear {
             if selectedProjectPath.isEmpty, let first = projects.first {
                 selectedProjectPath = first.path
             }
         }
     }
-
-    // MARK: - Agent Header
 
     private var agentHeader: some View {
         HStack(spacing: 12) {
@@ -97,8 +109,6 @@ struct StarfleetDispatchSheet: View {
         }
     }
 
-    // MARK: - Project Picker
-
     private var projectPicker: some View {
         Picker("Project", selection: $selectedProjectPath) {
             ForEach(projects, id: \.path) { project in
@@ -112,20 +122,32 @@ struct StarfleetDispatchSheet: View {
         .pickerStyle(.menu)
     }
 
-    // MARK: - Model & Mode Pickers
-
-    private var modelAndModePickers: some View {
+    private var controlPickers: some View {
         HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Workflow")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Picker("Workflow", selection: $selectedTemplateId) {
+                    Text("None").tag("")
+                    ForEach(WorkflowTemplate.all) { template in
+                        Text(template.name).tag(template.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+
             VStack(alignment: .leading, spacing: 4) {
                 Text("Model")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
-                Picker("Model", selection: $selectedModel) {
-                    ForEach(models, id: \.self) { model in
-                        Text(model.capitalized).tag(model)
+                Picker("Model", selection: $selectedModelId) {
+                    ForEach(modelOptions, id: \.id) { option in
+                        Text(option.label).tag(option.id)
                     }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 .labelsHidden()
             }
 
@@ -143,8 +165,6 @@ struct StarfleetDispatchSheet: View {
             }
         }
     }
-
-    // MARK: - Prompt Editor
 
     private var promptEditor: some View {
         TextEditor(text: $message)
@@ -172,7 +192,46 @@ struct StarfleetDispatchSheet: View {
             }
     }
 
-    // MARK: - Directory Info
+    private var workflowSummary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let selectedTemplate {
+                HStack(spacing: 6) {
+                    Image(systemName: selectedTemplate.icon)
+                        .foregroundStyle(.cyan)
+                    Text(selectedTemplate.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 8) {
+                summaryBadge(title: "Primary", value: ModelCatalog.label(for: workflowPlan.primaryModelId), color: .blue)
+
+                if let reviewer = workflowPlan.reviewer {
+                    summaryBadge(
+                        title: reviewer.mode.label,
+                        value: ModelCatalog.label(for: reviewer.modelId),
+                        color: reviewer.mode == .qaChain ? .green : .orange
+                    )
+                }
+
+                Spacer()
+            }
+
+            Text(workflowPlan.primaryReason)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Agent default: \(ModelCatalog.label(for: ModelCatalog.canonicalModelId(for: agent.model) ?? "claude-sonnet-4-6"))")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.primary.opacity(0.05))
+        .cornerRadius(10)
+    }
 
     private var directoryInfo: some View {
         Group {
@@ -198,11 +257,8 @@ struct StarfleetDispatchSheet: View {
         }
     }
 
-    // MARK: - Actions
-
     private var actions: some View {
         HStack {
-            // Trigger hints
             if !agent.triggers.isEmpty {
                 HStack(spacing: 3) {
                     ForEach(agent.triggers.prefix(4), id: \.self) { trigger in
@@ -246,36 +302,46 @@ struct StarfleetDispatchSheet: View {
         }
     }
 
-    // MARK: - Dispatch
-
     private func dispatchTask() {
         guard let project = selectedProject,
-              !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+              !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
 
         isDispatching = true
         dispatchStatus = nil
 
         Task {
-            let stream = await roster.dispatchToAgent(
+            _ = await roster.dispatchToAgent(
                 agentId: agent.id,
                 message: message,
                 project: project.name,
                 workingDirectory: project.path,
-                model: selectedModel,
+                model: selectedModelId == Self.autoModelId ? nil : selectedModelId,
+                template: selectedTemplate,
                 mode: compilationMode
             )
 
             isDispatching = false
-            dispatchStatus = "Dispatched"
+            dispatchStatus = selectedTemplate?.reviewMode.runsAutomatically == true ? "QA chain armed" : "Dispatched"
 
-            // Consume stream in background — output tracked by JobOutputStreamStore
-            Task {
-                for await _ in stream {}
-            }
-
-            // Close sheet after brief delay so user sees the status
             try? await Task.sleep(for: .milliseconds(600))
             dismiss()
         }
+    }
+
+    private func summaryBadge(title: String, value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased())
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(color.opacity(0.1))
+        .cornerRadius(8)
     }
 }

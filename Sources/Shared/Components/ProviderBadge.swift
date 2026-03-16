@@ -19,6 +19,7 @@ struct ProviderBadge: View {
         switch providerManager.activeProvider?.identifier {
         case "claude-code": return .cyan
         case "anthropic-api": return .blue
+        case "codex-cli": return .indigo
         case "ollama": return .green
         default: return .secondary
         }

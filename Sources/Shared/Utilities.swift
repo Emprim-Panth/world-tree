@@ -54,18 +54,38 @@ func extractHTTPContentLength(from headers: String) -> Int {
     return 0
 }
 
-/// Escape a string for safe embedding in a JSON value.
-/// Uses JSONSerialization for correct handling of all Unicode control characters.
+/// Escape a string for safe embedding in a JSON string literal.
+/// JSONSerialization only accepts arrays/dictionaries at the top level and will
+/// throw an Objective-C exception for bare strings, so escape manually here.
 func escapeJSONString(_ s: String) -> String {
-    if let data = try? JSONSerialization.data(withJSONObject: s),
-       let json = String(data: data, encoding: .utf8) {
-        // JSONSerialization wraps in quotes — strip them
-        return String(json.dropFirst().dropLast())
+    var escaped = String()
+    escaped.reserveCapacity(s.count)
+
+    for scalar in s.unicodeScalars {
+        switch scalar {
+        case "\"":
+            escaped += "\\\""
+        case "\\":
+            escaped += "\\\\"
+        case "\u{08}":
+            escaped += "\\b"
+        case "\u{0C}":
+            escaped += "\\f"
+        case "\n":
+            escaped += "\\n"
+        case "\r":
+            escaped += "\\r"
+        case "\t":
+            escaped += "\\t"
+        default:
+            if scalar.value < 0x20 {
+                let hex = String(scalar.value, radix: 16, uppercase: true)
+                escaped += "\\u" + String(repeating: "0", count: max(0, 4 - hex.count)) + hex
+            } else {
+                escaped.unicodeScalars.append(scalar)
+            }
+        }
     }
-    // Fallback: manual escape for the common cases
-    return s.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-            .replacingOccurrences(of: "\t", with: "\\t")
+
+    return escaped
 }

@@ -39,14 +39,21 @@ final class ClaudeService {
 
     /// Set API key and save to Keychain
     func setAPIKey(_ key: String) {
-        apiKey = key
-        KeychainHelper.save(key: "anthropic_api_key", value: key)
-        wtLog("[ClaudeService] API key configured")
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        apiKey = trimmed.isEmpty ? nil : trimmed
+        if let apiKey {
+            KeychainHelper.save(key: "anthropic_api_key", value: apiKey)
+            wtLog("[ClaudeService] API key configured")
+        } else {
+            KeychainHelper.delete(key: "anthropic_api_key")
+            wtLog("[ClaudeService] API key cleared")
+        }
     }
 
     /// Check if API key is configured
     var isConfigured: Bool {
-        apiKey != nil
+        let trimmed = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !trimmed.isEmpty
     }
 
     /// Stream a completion from Claude
@@ -186,44 +193,5 @@ enum ClaudeServiceError: LocalizedError {
         case .apiError(let message):
             return "Claude API error: \(message)"
         }
-    }
-}
-
-// MARK: - Keychain Helper
-
-struct KeychainHelper {
-    static func save(key: String, value: String) {
-        guard let data = value.data(using: .utf8) else { return }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-            kSecValueData as String: data
-        ]
-
-        // Delete existing
-        SecItemDelete(query as CFDictionary)
-
-        // Add new
-        SecItemAdd(query as CFDictionary, nil)
-    }
-
-    static func load(key: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let string = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-
-        return string
     }
 }

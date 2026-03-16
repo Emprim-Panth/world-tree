@@ -35,6 +35,10 @@ struct MessageSearchResult: Identifiable {
 final class SidebarViewModel: ObservableObject {
     // MARK: - Project ordering
 
+    nonisolated static func visibleSidebarTrees(from trees: [ConversationTree]) -> [ConversationTree] {
+        trees.filter { !$0.isTelegramBridge }
+    }
+
     /// User's preferred project order — persisted across sessions.
     /// Active projects always float above this, but within inactive the user's order wins.
     private(set) var projectOrder: [String] {
@@ -48,7 +52,11 @@ final class SidebarViewModel: ObservableObject {
 
     func isActive(_ projectName: String, trees: [ConversationTree]) -> Bool {
         let cutoff = Date().addingTimeInterval(-Self.activeThreshold)
-        return trees.contains { $0.updatedAt > cutoff }
+        return Self.projectActivity(
+            for: projectName,
+            trees: trees,
+            cachedProject: cachedProject(named: projectName)
+        ) > cutoff
     }
 
     /// Move a project from one position to another in the persistent order.
@@ -93,6 +101,7 @@ final class SidebarViewModel: ObservableObject {
     /// Pre-computed project groups — recalculated only when trees, projects, or search changes.
     /// Avoids expensive Dictionary rebuilds on every SwiftUI body evaluation.
     @Published private(set) var allProjectGroups: [(project: String, trees: [ConversationTree])] = []
+    @Published private(set) var recentProjectGroups: [(project: String, trees: [ConversationTree])] = []
     @Published var searchScope: SearchScope = .trees {
         didSet {
             if searchScope == .content {
@@ -173,44 +182,81 @@ final class SidebarViewModel: ObservableObject {
     /// Sort order: most recently active project first, "General" always last.
     /// The latest tree.updatedAt across all trees in a project determines its rank.
     private func rebuildProjectGroups() {
-        let treesByProject = Dictionary(grouping: filteredTrees) {
-            let p = $0.project ?? ""
-            return p.isEmpty ? AppConstants.defaultProjectName : p
+        let visibleTrees = Self.visibleSidebarTrees(from: filteredTrees)
+        var treesByProject: [String: [ConversationTree]] = [:]
+        for tree in visibleTrees {
+            let rawProject = tree.project ?? ""
+            let projectName = rawProject.isEmpty ? AppConstants.defaultProjectName : rawProject
+            treesByProject[projectName, default: []].append(tree)
         }
 
         // Collect all known project names (union of ProjectCache + tree groups)
         var allNames: [String] = []
-        var seen: Set<String> = []
+        var seenLowercased: Set<String> = []
 
         let filteredCache = searchText.isEmpty
             ? cachedProjects
             : cachedProjects.filter { $0.name.lowercased().contains(searchText.lowercased()) }
         for p in filteredCache where p.name != AppConstants.defaultProjectName {
-            if seen.insert(p.name).inserted { allNames.append(p.name) }
+            let key = p.name.lowercased()
+            if seenLowercased.insert(key).inserted { allNames.append(p.name) }
         }
-        for project in treesByProject.keys where project != AppConstants.defaultProjectName && !seen.contains(project) {
-            seen.insert(project)
-            allNames.append(project)
-        }
-
-        let sorted = allNames.sorted { a, b in
-            switch sortOrder {
-            case .recentDesc:
-                let aDate = treesByProject[a]?.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
-                let bDate = treesByProject[b]?.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
-                return aDate > bDate
-            case .recentAsc:
-                let aDate = treesByProject[a]?.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantFuture
-                let bDate = treesByProject[b]?.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantFuture
-                return aDate < bDate
-            case .alphaAsc:
-                return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
-            case .alphaDesc:
-                return a.localizedCaseInsensitiveCompare(b) == .orderedDescending
+        for project in treesByProject.keys where project != AppConstants.defaultProjectName {
+            let key = project.lowercased()
+            if seenLowercased.insert(key).inserted {
+                allNames.append(project)
             }
         }
 
-        var result: [(project: String, trees: [ConversationTree])] = sorted.map {
+        var cachedProjectsByName: [String: CachedProject] = [:]
+        for project in cachedProjects {
+            let key = project.name.lowercased()
+            let existing = cachedProjectsByName[key]
+            if let existing {
+                cachedProjectsByName[key] = existing.lastModified >= project.lastModified ? existing : project
+            } else {
+                cachedProjectsByName[key] = project
+            }
+        }
+        func cachedProject(for projectName: String) -> CachedProject? {
+            cachedProjectsByName[projectName.lowercased()]
+        }
+
+        let cutoff = Date().addingTimeInterval(-Self.activeThreshold)
+        let activeNames = allNames.filter {
+            Self.projectActivity(
+                for: $0,
+                trees: treesByProject[$0] ?? [],
+                cachedProject: cachedProject(for: $0)
+            ) > cutoff
+        }
+            .sorted {
+                Self.projectActivity(
+                    for: $0,
+                    trees: treesByProject[$0] ?? [],
+                    cachedProject: cachedProject(for: $0)
+                ) > Self.projectActivity(
+                    for: $1,
+                    trees: treesByProject[$1] ?? [],
+                    cachedProject: cachedProject(for: $1)
+                )
+            }
+        let activeSet = Set(activeNames)
+        let inactiveNames = allNames.filter { !activeSet.contains($0) }
+
+        let sorted = Self.sortProjectNames(
+            inactiveNames,
+            sortOrder: sortOrder,
+            manualOrder: projectOrder
+        ) { projectName in
+            Self.projectActivity(
+                for: projectName,
+                trees: treesByProject[projectName] ?? [],
+                cachedProject: cachedProject(for: projectName)
+            )
+        }
+
+        var result: [(project: String, trees: [ConversationTree])] = (activeNames + sorted).map {
             (project: $0, trees: sortTrees(treesByProject[$0] ?? []))
         }
         if let general = treesByProject[AppConstants.defaultProjectName] {
@@ -218,6 +264,21 @@ final class SidebarViewModel: ObservableObject {
         }
 
         allProjectGroups = result
+        recentProjectGroups = result
+            .filter { $0.project != AppConstants.defaultProjectName }
+            .sorted {
+                Self.projectActivity(
+                    for: $0.project,
+                    trees: $0.trees,
+                    cachedProject: cachedProject(for: $0.project)
+                ) > Self.projectActivity(
+                    for: $1.project,
+                    trees: $1.trees,
+                    cachedProject: cachedProject(for: $1.project)
+                )
+            }
+            .prefix(4)
+            .map { $0 }
     }
 
     /// Sort an array of trees according to the current sortOrder.
@@ -234,6 +295,68 @@ final class SidebarViewModel: ObservableObject {
                 return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedDescending
             }
         }
+    }
+
+    nonisolated static func projectActivity(
+        for projectName: String,
+        trees: [ConversationTree],
+        cachedProject: CachedProject?
+    ) -> Date {
+        let treeActivity = trees.compactMap { $0.lastMessageAt ?? $0.updatedAt }.max() ?? .distantPast
+        let fileActivity = cachedProject?.lastModified ?? .distantPast
+        return max(treeActivity, fileActivity)
+    }
+
+    nonisolated static func sortProjectNames(
+        _ names: [String],
+        sortOrder: SidebarSortOrder,
+        manualOrder: [String],
+        activity: (String) -> Date
+    ) -> [String] {
+        names.sorted { a, b in
+            switch sortOrder {
+            case .recentDesc, .recentAsc:
+                let aDate = activity(a)
+                let bDate = activity(b)
+                if aDate != bDate {
+                    return sortOrder == .recentDesc ? aDate > bDate : aDate < bDate
+                }
+                return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+            case .alphaAsc, .alphaDesc:
+                let aManual = manualOrder.firstIndex(of: a)
+                let bManual = manualOrder.firstIndex(of: b)
+                switch (aManual, bManual) {
+                case let (lhs?, rhs?):
+                    if lhs != rhs { return lhs < rhs }
+                case (.some, nil):
+                    return true
+                case (nil, .some):
+                    return false
+                case (nil, nil):
+                    break
+                }
+
+                if sortOrder == .alphaAsc {
+                    return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+                }
+                return a.localizedCaseInsensitiveCompare(b) == .orderedDescending
+            }
+        }
+    }
+
+    func latestActivity(for projectName: String, trees: [ConversationTree]? = nil) -> Date? {
+        let sourceTrees = trees ?? allProjectGroups.first(where: { $0.project == projectName })?.trees ?? []
+        let activity = Self.projectActivity(
+            for: projectName,
+            trees: sourceTrees,
+            cachedProject: cachedProject(named: projectName)
+        )
+        return activity == .distantPast ? nil : activity
+    }
+
+    func latestActivityLabel(for projectName: String, trees: [ConversationTree]? = nil) -> String? {
+        guard let activity = latestActivity(for: projectName, trees: trees) else { return nil }
+        return RelativeDateTimeFormatter().localizedString(for: activity, relativeTo: Date())
     }
 
     deinit {
@@ -505,5 +628,9 @@ final class SidebarViewModel: ObservableObject {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private func cachedProject(named projectName: String) -> CachedProject? {
+        cachedProjects.first { $0.name.caseInsensitiveCompare(projectName) == .orderedSame }
     }
 }

@@ -1,7 +1,7 @@
 # TASK-154: Persistent UI State
 
 **Priority**: low
-**Status**: Todo
+**Status**: Done
 **Category**: feature
 **Epic**: Agent Orchestration Dashboard
 **Sprint**: 3

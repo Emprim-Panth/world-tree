@@ -70,7 +70,7 @@ final class AgentStatusStore: ObservableObject {
 
         self.observation = observation.start(
             in: dbPool,
-            scheduling: .immediate,
+            scheduling: .async(onQueue: .main),
             onError: { error in
                 Task { @MainActor in
                     wtLog("[AgentStatusStore] Observation error: \(error)")

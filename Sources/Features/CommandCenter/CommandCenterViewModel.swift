@@ -118,19 +118,15 @@ final class CommandCenterViewModel {
 
     // MARK: - Dispatch Actions
 
-    func dispatch(message: String, project: CachedProject, model: String?) {
-        let stream = ClaudeBridge.shared.dispatch(
+    func dispatch(message: String, project: CachedProject, model: String?, template: WorkflowTemplate?) {
+        CortanaWorkflowDispatchService.shared.dispatch(
             message: message,
             project: project.name,
             workingDirectory: project.path,
-            model: model,
-            origin: .ui
+            preferredModelId: model,
+            template: template,
+            origin: .workflow
         )
-
-        // Consume the stream — results are tracked in DB via AgentSDKProvider
-        Task {
-            for await _ in stream {}
-        }
     }
 
     func cancelDispatch(_ id: String) {
@@ -214,6 +210,48 @@ final class CommandCenterViewModel {
         for project in projects {
             ticketCounts[project.name] = ticketStore.openCount(for: project.name)
             blockedCounts[project.name] = ticketStore.blockedCount(for: project.name)
+        }
+    }
+
+    // MARK: - Gateway Handoffs
+
+    var pendingHandoffs: [Handoff] = []
+    var handoffError: String?
+    private var handoffTask: Task<Void, Never>?
+
+    func refreshHandoffs() {
+        handoffTask?.cancel()
+        handoffTask = Task { [weak self] in
+            guard let gateway = GatewayClient.fromLocalConfig() else {
+                self?.handoffError = nil
+                self?.pendingHandoffs = []
+                return
+            }
+            do {
+                let handoffs = try await gateway.checkHandoffs()
+                self?.pendingHandoffs = handoffs.filter { $0.status == "pending" || $0.status == "created" }
+                self?.handoffError = nil
+            } catch {
+                // Gateway unavailable is normal when ark-gateway isn't running
+                self?.pendingHandoffs = []
+                self?.handoffError = nil
+            }
+        }
+    }
+
+    func dismissHandoff(_ id: String) {
+        Task {
+            guard let gateway = GatewayClient.fromLocalConfig() else { return }
+            try? await gateway.updateHandoff(id: id, status: "viewed")
+            pendingHandoffs.removeAll { $0.id == id }
+        }
+    }
+
+    func pickUpHandoff(_ id: String) {
+        Task {
+            guard let gateway = GatewayClient.fromLocalConfig() else { return }
+            try? await gateway.updateHandoff(id: id, status: "picked_up")
+            pendingHandoffs.removeAll { $0.id == id }
         }
     }
 }

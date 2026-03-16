@@ -818,7 +818,7 @@ final class TreeStoreTests: XCTestCase {
                         updatedAt: Date(),
                         archived: false
                     )
-                    try? dbPool?.write { db in
+                    try? await dbPool?.write { db in
                         try tree.insert(db)
                     }
                 }

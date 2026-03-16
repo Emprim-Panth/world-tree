@@ -6,6 +6,7 @@ struct ForkMenu: View {
     @Binding var branchType: BranchType
     let branch: Branch?
     let onCreated: (String) -> Void
+    @StateObject private var providerManager = ProviderManager.shared
 
     @State private var title: String = ""
     @State private var selectedModel: String = AppConstants.defaultModel
@@ -14,12 +15,11 @@ struct ForkMenu: View {
     @State private var isCreating: Bool = false
     @State private var error: String?
 
-    private let models = [
-        ("Auto", AppConstants.defaultModel),
-        ("Opus", "claude-opus-4-6"),
-        ("Sonnet", "claude-sonnet-4-6"),
-        ("Haiku", "claude-haiku-4-5-20251001"),
-    ]
+    private var models: [(String, String)] {
+        let providerModels = ModelCatalog.models(for: providerManager.selectedProviderId)
+        return [("Auto", ModelCatalog.defaultModel(for: providerManager.selectedProviderId))]
+            + providerModels.map { ($0.label, $0.id) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -156,6 +156,12 @@ struct ForkMenu: View {
         }
         .padding(20)
         .frame(width: 420)
+        .onAppear {
+            selectedModel = ModelCatalog.resolveCompatibleModel(
+                selectedModel,
+                providerId: providerManager.selectedProviderId
+            )
+        }
     }
 
     private var branchTypeDescription: String {

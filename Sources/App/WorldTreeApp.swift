@@ -38,6 +38,10 @@ struct WorldTreeApp: App {
                             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
                         }
                     }
+                    guard !AppConstants.isRunningTests else {
+                        wtLog("[WorldTree] XCTest detected — skipping production startup side effects")
+                        return
+                    }
                     validateRestoredSelection()
                     startProjectRefresh()
                     Task {
@@ -54,6 +58,9 @@ struct WorldTreeApp: App {
                     }
                     DispatchSupervisor.shared.start()
                     DispatchSupervisor.shared.pruneOldDispatches()
+                    StreamRecoveryCoordinator.shared.activate()
+                    EventRuleStore.shared.loadRules()
+                    UIStateStore.shared.loadAll()
                     BranchTerminalManager.shared.recoverOrphanedSessions()
                     // Pre-warm terminals for all recently-active branches that have a persisted
                     // tmux session — instant terminal attach when navigating between branches.
@@ -70,9 +77,12 @@ struct WorldTreeApp: App {
                         }) {
                             await MainActor.run {
                                 for branch in branches {
-                                    BranchTerminalManager.shared.warmUp(
+                                    let tree = try? TreeStore.shared.getTree(branch.treeId)
+                                    let workingDirectory = tree?.workingDirectory ?? NSHomeDirectory()
+                                    BranchTerminalManager.shared.warmUpPreferred(
                                         branchId: branch.id,
-                                        workingDirectory: NSHomeDirectory(),
+                                        project: tree?.project,
+                                        workingDirectory: workingDirectory,
                                         knownTmuxSession: branch.tmuxSessionName
                                     )
                                 }
@@ -86,11 +96,20 @@ struct WorldTreeApp: App {
                     CompassStore.shared.refresh()
                     TicketStore.shared.scanAll()
                     HeartbeatStore.shared.refresh()
+                    // Gateway handoff check — surface pending cross-device work items
+                    Task {
+                        guard let gateway = GatewayClient.fromLocalConfig() else { return }
+                        if let handoffs = try? await gateway.checkHandoffs(),
+                           !handoffs.filter({ $0.status == "pending" || $0.status == "created" }).isEmpty {
+                            wtLog("[WorldTree] \(handoffs.count) pending handoff(s) from gateway")
+                        }
+                    }
                     if UserDefaults.standard.bool(forKey: AppConstants.daemonChannelEnabledKey) {
                         DaemonService.shared.startMonitoring()
                     }
                     startWorldTreeServerIfEnabled()
                     startPluginServerIfEnabled()
+                    syncCodexMCPIfEnabled()
                     if UserDefaults.standard.bool(forKey: "pencil.feature.enabled") {
                         launchPencilInBackground()
                         Task {
@@ -106,15 +125,21 @@ struct WorldTreeApp: App {
                     Task {
                         do {
                             // Recover any responses that were interrupted by a crash or SIGTERM.
-                            // Mark those sessions for auto-resume so the document view fires a
-                            // continuation prompt automatically — no user input required.
+                            // Keep the partial text in recovery state rather than persisting it as
+                            // a finished assistant message. Recovery will resume from that prefix
+                            // and persist a single merged reply when the stream actually completes.
                             let recovered = await StreamCacheManager.shared.recoverOrphanedStreams()
-                            for (sessionId, content) in recovered where !content.isEmpty {
+                            for (sessionId, content) in recovered {
                                 wtLog("[StreamCache] Recovering interrupted response for session \(sessionId)")
-                                let msg = "[Recovered — response was interrupted]\n\n\(content)"
-                                _ = try? MessageStore.shared.sendMessage(sessionId: sessionId, role: .assistant, content: msg)
                                 await MainActor.run {
-                                    DocumentEditorViewModel.pendingAutoResume.insert(sessionId)
+                                    StreamRecoveryStore.shared.markPending(
+                                        sessionId: sessionId,
+                                        partialContent: content
+                                    )
+                                    StreamRecoveryCoordinator.shared.scheduleRecoveryCheck(
+                                        sessionId: sessionId,
+                                        delay: .seconds(2)
+                                    )
                                 }
                             }
                         } catch {
@@ -128,7 +153,6 @@ struct WorldTreeApp: App {
                     }
                     if phase == .background {
                         DaemonService.shared.stopMonitoring()
-                        CrashSentinel.shared.markCleanExit()
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
@@ -218,8 +242,9 @@ struct WorldTreeApp: App {
                let branch = try? TreeStore.shared.getBranch(branchId),
                let tree = try? TreeStore.shared.getTree(branch.treeId) {
                 let workDir = tree.workingDirectory ?? NSHomeDirectory()
-                BranchTerminalManager.shared.warmUp(
+                BranchTerminalManager.shared.warmUpPreferred(
                     branchId: branchId,
+                    project: tree.project,
                     workingDirectory: workDir,
                     knownTmuxSession: branch.tmuxSessionName
                 )
@@ -289,6 +314,19 @@ struct WorldTreeApp: App {
         }
         guard defaults.bool(forKey: AppConstants.pluginServerEnabledKey) else { return }
         PluginServer.shared.start()
+    }
+
+    private func syncCodexMCPIfEnabled() {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: AppConstants.codexMCPSyncEnabledKey) == nil {
+            defaults.set(true, forKey: AppConstants.codexMCPSyncEnabledKey) // default on
+        }
+        guard defaults.bool(forKey: AppConstants.codexMCPSyncEnabledKey) else { return }
+
+        let includeWorldTree = defaults.bool(forKey: AppConstants.pluginServerEnabledKey)
+        Task {
+            await CodexMCPConfigManager.shared.syncFromClaudeAsync(includeWorldTree: includeWorldTree)
+        }
     }
 }
 

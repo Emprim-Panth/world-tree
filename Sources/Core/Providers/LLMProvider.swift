@@ -96,7 +96,7 @@ struct ProviderSendContext {
     let message: String
     let sessionId: String
     let branchId: String
-    let model: String?
+    var model: String?
     let workingDirectory: String?
     let project: String?
 
@@ -120,6 +120,10 @@ struct ProviderSendContext {
     /// when server-side --resume silently fails (session expiry, CLI restart, etc.).
     var recentContext: String?
 
+    /// Optional workflow/agent directive that should be appended to the provider's
+    /// normal identity prompt for this single request.
+    var systemPromptOverride: String?
+
     /// When true, extended thinking is enabled. Claude reasons internally before responding.
     /// Significantly improves quality on complex architectural and debugging tasks.
     var extendedThinking: Bool
@@ -136,6 +140,7 @@ struct ProviderSendContext {
         checkpointContext: String? = nil,
         attachments: [Attachment] = [],
         recentContext: String? = nil,
+        systemPromptOverride: String? = nil,
         extendedThinking: Bool = false
     ) {
         self.message = message
@@ -149,6 +154,7 @@ struct ProviderSendContext {
         self.checkpointContext = checkpointContext
         self.attachments = attachments
         self.recentContext = recentContext
+        self.systemPromptOverride = systemPromptOverride
         self.extendedThinking = extendedThinking
     }
 }

@@ -54,7 +54,7 @@ final class DatabaseManagerTests: XCTestCase {
         DatabaseManager.shared.setDatabasePoolForTesting(nil)
 
         XCTAssertThrowsError(try DatabaseManager.shared.read { _ in 42 }) { error in
-            XCTAssertTrue(error is DatabaseError,
+            XCTAssertTrue(error is WorldTree.DatabaseError,
                           "Should throw DatabaseError.notConnected")
         }
     }
@@ -63,7 +63,7 @@ final class DatabaseManagerTests: XCTestCase {
         DatabaseManager.shared.setDatabasePoolForTesting(nil)
 
         XCTAssertThrowsError(try DatabaseManager.shared.write { _ in 42 }) { error in
-            XCTAssertTrue(error is DatabaseError,
+            XCTAssertTrue(error is WorldTree.DatabaseError,
                           "Should throw DatabaseError.notConnected")
         }
     }
@@ -75,7 +75,7 @@ final class DatabaseManagerTests: XCTestCase {
             _ = try await DatabaseManager.shared.asyncRead { _ in 42 }
             XCTFail("asyncRead should throw when disconnected")
         } catch {
-            XCTAssertTrue(error is DatabaseError)
+            XCTAssertTrue(error is WorldTree.DatabaseError)
         }
     }
 
@@ -86,7 +86,7 @@ final class DatabaseManagerTests: XCTestCase {
             _ = try await DatabaseManager.shared.asyncWrite { _ in 42 }
             XCTFail("asyncWrite should throw when disconnected")
         } catch {
-            XCTAssertTrue(error is DatabaseError)
+            XCTAssertTrue(error is WorldTree.DatabaseError)
         }
     }
 
