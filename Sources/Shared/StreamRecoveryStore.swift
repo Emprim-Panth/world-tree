@@ -84,11 +84,18 @@ final class StreamRecoveryStore {
         reason: PendingStreamRecovery.Reason = .interruptedStream
     ) {
         var state = loadState()
+        // If a recovery already exists for this session with the same partial content,
+        // preserve the attemptCount so maxAttempts isn't reset on every app restart.
+        // Only reset the counter when the content changes (new/different interruption).
+        let existingCount = state[sessionId].map { existing in
+            existing.partialContent == partialContent ? existing.attemptCount : 0
+        } ?? 0
         state[sessionId] = PendingStreamRecovery(
             sessionId: sessionId,
-            createdAt: Date(),
+            createdAt: state[sessionId]?.createdAt ?? Date(),
             reason: reason,
-            partialContent: partialContent
+            partialContent: partialContent,
+            attemptCount: existingCount
         )
         saveState(state, changedSessionId: sessionId)
     }
