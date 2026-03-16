@@ -201,6 +201,20 @@ final class PenAssetStore: ObservableObject {
         }
     }
 
+    /// Fetch all frame links for a specific ticket ID.
+    func frameLinksForTicket(ticketId: String) async -> [PenFrameLink] {
+        guard let pool else { return [] }
+        do {
+            return try await pool.read { db in
+                try PenFrameLink.fetchAll(db, sql: """
+                    SELECT * FROM pen_frame_links WHERE ticket_id = ? ORDER BY frame_name ASC
+                    """, arguments: [ticketId])
+            }
+        } catch {
+            return []
+        }
+    }
+
     /// Re-resolve all annotation → ticket_id links for a given project.
     func resolveLinks(project: String) async throws {
         guard let pool else { return }

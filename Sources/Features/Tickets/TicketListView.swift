@@ -23,6 +23,9 @@ struct TicketListView: View {
             store.refresh()
             completedTickets = store.completedTickets(for: project)
         }
+        .onChange(of: store.tickets) { _ in
+            completedTickets = store.completedTickets(for: project)
+        }
         .sheet(item: $selectedTicket) { ticket in
             TicketDetailView(ticket: ticket)
         }
@@ -412,16 +415,14 @@ struct TicketDetailView: View {
 
     private func loadLinkedFrames() async {
         let ticketId = ticket.id
-        linkedFrames = await PenAssetStore.shared.frameLinks.filter { $0.ticketId == ticketId }
-        if linkedFrames.isEmpty {
-            // Also do a live DB query in case store hasn't loaded this project yet
-            linkedFrames = await withCheckedContinuation { continuation in
-                Task {
-                    let result = (try? await PenAssetStore.shared.frameLinksWithTickets(assetId: ""))?.filter { $0.link.ticketId == ticketId }.map { $0.link } ?? []
-                    continuation.resume(returning: result)
-                }
-            }
+        // Check in-memory cache first
+        let cached = PenAssetStore.shared.frameLinks.filter { $0.ticketId == ticketId }
+        if !cached.isEmpty {
+            linkedFrames = cached
+            return
         }
+        // Live DB query by ticket_id
+        linkedFrames = await PenAssetStore.shared.frameLinksForTicket(ticketId: ticketId)
     }
 
     private func metadataRow(label: String, value: String) -> some View {

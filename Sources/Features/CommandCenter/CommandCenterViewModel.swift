@@ -222,7 +222,7 @@ final class CommandCenterViewModel {
         compassStates = compassStore.snapshot(for: projects.map(\.name))
 
         let ticketStore = TicketStore.shared
-        ticketStore.scanAll()
+        ticketStore.refresh()
         for project in projects {
             ticketCounts[project.name] = ticketStore.openCount(for: project.name)
             blockedCounts[project.name] = ticketStore.blockedCount(for: project.name)
