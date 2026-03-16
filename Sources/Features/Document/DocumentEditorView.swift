@@ -1904,6 +1904,17 @@ class DocumentEditorViewModel: ObservableObject {
             isProcessing = false
             wtLog("[DocumentEditor] Provider error: \(msg)")
             mirrorToTerminal("\r\n\u{1B}[1;31m  ⚠ Error: \(msg)\u{1B}[0m\r\n")
+            // Persist and display the error inline in the chat so the user sees it
+            // even if they miss the alert (e.g. window not focused, alert dismissed).
+            do {
+                _ = try MessageStore.shared.sendMessage(
+                    sessionId: sessionId,
+                    role: .assistant,
+                    content: "⚠️ \(msg)"
+                )
+            } catch {
+                wtLog("[DocumentEditor] Failed to persist error message: \(error)")
+            }
             errorMessage = msg
             refreshRecoveryStatus()
         }

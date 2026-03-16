@@ -33,6 +33,9 @@ final class ActiveStreamRegistry {
         let initialContent: String
         var accumulatedContent: String = ""
         var receivedText = false
+        /// Last error message received — used by finishStream to surface the reason
+        /// in the persisted failure notice instead of the generic "no response" fallback.
+        var lastErrorMessage: String? = nil
         var task: Task<Void, Never>
         /// Registered event subscribers — keyed by UUID cookie.
         var subscribers: [UUID: (BridgeEvent) -> Void] = [:]
@@ -230,6 +233,12 @@ final class ActiveStreamRegistry {
             GlobalStreamRegistry.shared.appendContent(branchId: branchId, content: full)
             Task { await StreamCacheManager.shared.appendToStream(sessionId: sessionId, chunk: token) }
 
+        case .error(let msg):
+            // Store the error reason so finishStream can surface it in the persisted
+            // failure notice instead of the generic "no response" fallback.
+            handles[branchId]?.lastErrorMessage = msg
+            Task { await StreamCacheManager.shared.touchStream(sessionId: sessionId) }
+
         default:
             // Tool-only or thinking-only runs can be legitimately quiet for minutes.
             // Keep the recovery handle fresh so background work doesn't look orphaned.
@@ -270,6 +279,7 @@ final class ActiveStreamRegistry {
         let accumulated = handles[branchId]?.accumulatedContent ?? ""
         let initialContent = handles[branchId]?.initialContent ?? ""
         let receivedText = handles[branchId]?.receivedText ?? false
+        let lastError = handles[branchId]?.lastErrorMessage
 
         if Self.shouldPersistAccumulatedContent(
             accumulatedContent: accumulated,
@@ -277,10 +287,10 @@ final class ActiveStreamRegistry {
             receivedText: receivedText
         ) {
             persistAssistantContent(sessionId: sessionId, content: accumulated, phase: "completion")
-        } else if accumulated.isEmpty && initialContent.isEmpty {
-            // Stream ended with zero text — CLI/provider failed silently.
-            // Persist a failure notice so the user sees an explanation when they return
-            // to this chat rather than an unanswered user message with no assistant reply.
+        } else if accumulated.isEmpty && initialContent.isEmpty && lastError == nil {
+            // Stream ended with zero text and no error event — CLI/provider failed silently.
+            // When lastError != nil, the ViewModel's .error handler already persisted
+            // an inline error message, so we skip the duplicate notice here.
             wtLog("[ActiveStreamRegistry] Stream completed with no content for session \(sessionId.prefix(8)) — persisting failure notice")
             persistAssistantContent(
                 sessionId: sessionId,

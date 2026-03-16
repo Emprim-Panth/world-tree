@@ -259,7 +259,10 @@ struct SidebarView: View {
                         }
 
                         if viewModel.searchText.isEmpty && !viewModel.recentProjectGroups.isEmpty {
-                            recentProjectsSection
+                            // Only show the "Recent Projects" label when there are other
+                            // projects below it — otherwise it's the only section and the
+                            // label creates a false expectation of more content.
+                            recentProjectsSection(showLabel: !remainingProjectGroups.isEmpty)
                         }
 
                         if viewModel.searchText.isEmpty && !viewModel.recentProjectGroups.isEmpty && !remainingProjectGroups.isEmpty {
@@ -557,18 +560,20 @@ struct SidebarView: View {
         .buttonStyle(.plain)
     }
 
-    private var recentProjectsSection: some View {
+    private func recentProjectsSection(showLabel: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Recent Projects")
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .textCase(.uppercase)
-                    .foregroundStyle(.secondary)
-                Spacer()
+            if showLabel {
+                HStack {
+                    Text("Recent Projects")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .textCase(.uppercase)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
 
             VStack(spacing: 6) {
                 ForEach(viewModel.recentProjectGroups, id: \.project) { group in
