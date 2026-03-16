@@ -317,9 +317,22 @@ final class CompassStore: ObservableObject {
         }
     }
 
-    /// Get state for a specific project
+    /// Get state for a specific project (case-insensitive fallback).
     func state(for project: String) -> CompassState? {
-        states[project] ?? states.values.first { $0.project.lowercased() == project.lowercased() }
+        if let direct = states[project] { return direct }
+        let lower = project.lowercased()
+        return states.values.first { $0.project.lowercased() == lower }
+    }
+
+    /// Build a keyed snapshot for a specific set of project names, using
+    /// case-insensitive matching against the compass DB. Keys in the result
+    /// are exactly the provided names — safe for direct dictionary lookup.
+    func snapshot(for projectNames: [String]) -> [String: CompassState] {
+        var result: [String: CompassState] = [:]
+        for name in projectNames {
+            if let s = state(for: name) { result[name] = s }
+        }
+        return result
     }
 
     /// Get all states sorted by attention score (descending)

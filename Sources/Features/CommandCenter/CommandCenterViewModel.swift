@@ -217,7 +217,9 @@ final class CommandCenterViewModel {
     func refreshCompassAndTickets() {
         let compassStore = CompassStore.shared
         compassStore.refresh()
-        compassStates = compassStore.states
+        // Build snapshot keyed by exact CachedProject.name — case-insensitive matching
+        // ensures compass states are found even when DB uses different capitalization.
+        compassStates = compassStore.snapshot(for: projects.map(\.name))
 
         let ticketStore = TicketStore.shared
         ticketStore.scanAll()

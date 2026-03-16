@@ -7,21 +7,20 @@ struct DecisionReviewSection: View {
     @State private var isProcessing = false
 
     var body: some View {
-        if !pendingDecisions.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                sectionHeader
-                ForEach(pendingDecisions) { decision in
-                    DecisionReviewCard(decision: decision) { action in
-                        handleAction(action, for: decision)
+        Group {
+            if !pendingDecisions.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    sectionHeader
+                    ForEach(pendingDecisions) { decision in
+                        DecisionReviewCard(decision: decision) { action in
+                            handleAction(action, for: decision)
+                        }
                     }
                 }
+                .padding(.vertical, 8)
             }
-            .padding(.vertical, 8)
-            .onAppear { refresh() }
-        } else {
-            EmptyView()
-                .onAppear { refresh() }
         }
+        .onAppear { refresh() }
     }
 
     // MARK: - Header
