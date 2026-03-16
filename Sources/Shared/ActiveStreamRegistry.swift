@@ -139,9 +139,12 @@ final class ActiveStreamRegistry {
 
         // Watchdog: cancel and surface an error if the stream hasn't completed after the timeout.
         // Guards against hung CLI processes that never send .done or .error.
+        // IMPORTANT: do NOT use try? here — if the Task is cancelled (view teardown, etc.)
+        // try? swallows CancellationError and the guard below fires immediately, producing
+        // a false "stalled" error long before the real timeout has elapsed.
         let timeoutInterval = Self.streamTimeoutInterval
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(timeoutInterval))
+            do { try await Task.sleep(for: .seconds(timeoutInterval)) } catch { return }
             guard let self, self.handles[branchId] != nil else { return }
             wtLog("[ActiveStreamRegistry] ⚠️ Stream timeout for \(branchId.prefix(8)) after \(Int(timeoutInterval / 60))min — force-cancelling")
             let timeoutMinutes = Int(timeoutInterval / 60)
