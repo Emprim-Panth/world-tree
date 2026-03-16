@@ -273,12 +273,32 @@ actor ToolExecutor {
         let assessment = ToolGuard.assess(toolName: "bash", input: plainInput)
         if assessment.requiresApproval {
             wtLog("[ToolGuard] Approval required: \(assessment.reason) — command: \(command.prefix(100))")
-            let approved = await ApprovalCoordinator.shared.requestApproval(
-                assessment: assessment,
-                command: command
-            )
-            guard approved else {
-                return ToolResult(content: "[Security Gate] Operation denied.", isError: true)
+            if assessment.riskLevel == .critical {
+                // High-risk: show full proposal card with goal, steps, risk, and access mode
+                let artifact = ProposedWorkArtifact.fromToolAssessment(
+                    assessment: assessment,
+                    command: command,
+                    primaryModel: "claude-sonnet-4-5"
+                )
+                let decision = await ApprovalCoordinator.shared.requestProposalApproval(artifact: artifact)
+                switch decision {
+                case .approved:
+                    break // proceed
+                case .rejected:
+                    return ToolResult(content: "[Security Gate] Operation denied.", isError: true)
+                case .revised(let revisedGoal):
+                    wtLog("[ToolGuard] Proposal revised: \(revisedGoal)")
+                    return ToolResult(content: "[Security Gate] Operation revised — re-send with updated goal: \(revisedGoal)", isError: false)
+                }
+            } else {
+                // Caution/destructive: simpler approval sheet
+                let approved = await ApprovalCoordinator.shared.requestApproval(
+                    assessment: assessment,
+                    command: command
+                )
+                guard approved else {
+                    return ToolResult(content: "[Security Gate] Operation denied.", isError: true)
+                }
             }
         }
 
@@ -381,12 +401,29 @@ actor ToolExecutor {
         let assessment = ToolGuard.assess(toolName: "bash", input: plainInput)
         if assessment.requiresApproval {
             wtLog("[ToolGuard] Approval required: \(assessment.reason) — command: \(command.prefix(100))")
-            let approved = await ApprovalCoordinator.shared.requestApproval(
-                assessment: assessment,
-                command: command
-            )
-            guard approved else {
-                return ToolResult(content: "[Security Gate] Operation denied.", isError: true)
+            if assessment.riskLevel == .critical {
+                let artifact = ProposedWorkArtifact.fromToolAssessment(
+                    assessment: assessment,
+                    command: command,
+                    primaryModel: "claude-sonnet-4-5"
+                )
+                let decision = await ApprovalCoordinator.shared.requestProposalApproval(artifact: artifact)
+                switch decision {
+                case .approved:
+                    break
+                case .rejected:
+                    return ToolResult(content: "[Security Gate] Operation denied.", isError: true)
+                case .revised(let revisedGoal):
+                    wtLog("[ToolGuard] Proposal revised: \(revisedGoal)")
+                    return ToolResult(content: "[Security Gate] Operation revised — re-send with updated goal: \(revisedGoal)", isError: false)
+                }
+            } else {
+                let approved = await ApprovalCoordinator.shared.requestApproval(
+                    assessment: assessment,
+                    command: command
+                )
+                guard approved else {
+                    return ToolResult(content: "[Security Gate] Operation denied.", isError: true)
             }
         }
 
