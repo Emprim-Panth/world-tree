@@ -47,10 +47,14 @@ struct SidebarView: View {
     @State private var draggingProject: String?
     @State private var dragOverProject: String?
 
-    // Project collapse state (expanded by default)
-    @State private var collapsedProjects: Set<String> = []
-    // Branch disclosure state per tree (collapsed by default)
-    @State private var expandedBranchTrees: Set<String> = []
+    // Project collapse state (expanded by default) — persisted across restarts
+    @State private var collapsedProjects: Set<String> = Set(
+        UserDefaults.standard.stringArray(forKey: "sidebar.collapsedProjects") ?? []
+    )
+    // Branch disclosure state per tree (collapsed by default) — persisted across restarts
+    @State private var expandedBranchTrees: Set<String> = Set(
+        UserDefaults.standard.stringArray(forKey: "sidebar.expandedBranchTrees") ?? []
+    )
 
     private var sortIcon: String {
         switch viewModel.sortOrder {
@@ -505,6 +509,12 @@ struct SidebarView: View {
                 errorMessage = msg
                 showErrorAlert = true
             }
+        }
+        .onChange(of: collapsedProjects) { _, newValue in
+            UserDefaults.standard.set(Array(newValue), forKey: "sidebar.collapsedProjects")
+        }
+        .onChange(of: expandedBranchTrees) { _, newValue in
+            UserDefaults.standard.set(Array(newValue), forKey: "sidebar.expandedBranchTrees")
         }
     }
 

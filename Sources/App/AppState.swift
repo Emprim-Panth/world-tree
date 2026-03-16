@@ -69,6 +69,15 @@ final class AppState {
     }
 
     func selectBranch(_ branchId: String, in treeId: String) {
+        // Notify the old branch's ViewModel it's being replaced — allows clean detach
+        // before SwiftUI destroys the view. The stream keeps running; only the subscriber is removed.
+        if let oldBranch = selectedBranchId, oldBranch != branchId {
+            NotificationCenter.default.post(
+                name: .branchWillSwitch,
+                object: nil,
+                userInfo: ["oldBranchId": oldBranch, "newBranchId": branchId]
+            )
+        }
         clearProjectSelection()
         selectedTreeId = treeId
         selectedBranchId = branchId

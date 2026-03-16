@@ -461,6 +461,7 @@ class DocumentEditorViewModel: ObservableObject {
     private var streamRecoveryObserver: NSObjectProtocol?
     private var activeStreamStartObserver: NSObjectProtocol?
     private var activeStreamCompleteObserver: NSObjectProtocol?
+    private var branchWillSwitchObserver: NSObjectProtocol?
 
     /// Whether the conversation scroll view is at (or near) the bottom.
     /// False when the user has manually scrolled up — suppresses auto-scroll.
@@ -635,6 +636,7 @@ class DocumentEditorViewModel: ObservableObject {
         if let obs = streamRecoveryObserver { NotificationCenter.default.removeObserver(obs) }
         if let obs = activeStreamStartObserver { NotificationCenter.default.removeObserver(obs) }
         if let obs = activeStreamCompleteObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = branchWillSwitchObserver { NotificationCenter.default.removeObserver(obs) }
     }
 
     init(sessionId: String, branchId: String, workingDirectory: String) {
@@ -851,6 +853,27 @@ class DocumentEditorViewModel: ObservableObject {
                       noteBranchId == self.branchId else { return }
                 self.activeSubscriptionId = nil
                 self.refreshRecoveryStatus()
+            }
+        }
+
+        branchWillSwitchObserver = NotificationCenter.default.addObserver(
+            forName: .branchWillSwitch,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let oldBranchId = note.userInfo?["oldBranchId"] as? String,
+                      oldBranchId == self.branchId else { return }
+                // Write snapshot eagerly before SwiftUI destroys this view.
+                // Without this, the snapshot only fires in onDisappear which can
+                // race with the new ViewModel's init.
+                self.writeSnapshotCheckpoint()
+                // Detach from the stream so the new ViewModel can re-subscribe cleanly.
+                if let subId = self.activeSubscriptionId {
+                    ActiveStreamRegistry.shared.unsubscribe(branchId: self.branchId, id: subId)
+                    self.activeSubscriptionId = nil
+                }
             }
         }
 

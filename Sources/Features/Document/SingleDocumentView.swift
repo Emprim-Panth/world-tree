@@ -243,7 +243,7 @@ class SingleDocumentViewModel: ObservableObject {
             // Last resort fallback
             let fallbackBranchId = UUID().uuidString
             let sessionId = UUID().uuidString
-            try? DatabaseManager.shared.write { db in
+            do { try DatabaseManager.shared.write { db in
                 try db.execute(
                     sql: """
                         INSERT INTO sessions (id, terminal_id, working_directory, description, started_at)
@@ -259,6 +259,8 @@ class SingleDocumentViewModel: ObservableObject {
                         """,
                     arguments: [fallbackBranchId, treeId, sessionId]
                 )
+            } } catch {
+                wtLog("[SingleDocumentView] Last-resort fallback DB write failed for tree \(treeId): \(error)")
             }
             self.mainBranchId = fallbackBranchId
             self.mainBranchSessionId = sessionId

@@ -62,18 +62,21 @@ final class ActiveStreamRegistry {
     /// `.activeStreamStarted` fires).
     /// Unsubscribing does NOT cancel the stream; the Task keeps running.
     func subscribe(branchId: String, onEvent: @escaping (BridgeEvent) -> Void) -> UUID? {
-        guard handles[branchId] != nil else {
+        guard var handle = handles[branchId] else {
             wtLog("[ActiveStreamRegistry] subscribe called for \(branchId.prefix(8)) but no active handle — returning nil")
             return nil
         }
         let id = UUID()
-        handles[branchId]?.subscribers[id] = onEvent
+        handle.subscribers[id] = onEvent
+        handles[branchId] = handle
         return id
     }
 
     /// Remove a subscriber. The stream continues unaffected.
     func unsubscribe(branchId: String, id: UUID) {
-        handles[branchId]?.subscribers.removeValue(forKey: id)
+        guard var handle = handles[branchId] else { return }
+        handle.subscribers.removeValue(forKey: id)
+        handles[branchId] = handle
     }
 
     /// Start a new stream Task owned by the registry.
@@ -326,4 +329,8 @@ extension Notification.Name {
     /// Posted when an ActiveStreamRegistry-owned stream completes naturally (done or error).
     /// userInfo: ["branchId": String, "sessionId": String]
     static let activeStreamComplete = Notification.Name("activeStreamComplete")
+
+    /// Posted by AppState.selectBranch() before switching to a different branch.
+    /// userInfo: ["oldBranchId": String, "newBranchId": String]
+    static let branchWillSwitch = Notification.Name("branchWillSwitch")
 }
