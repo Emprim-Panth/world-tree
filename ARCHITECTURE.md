@@ -519,7 +519,7 @@ MessageStore + [NEW] JobQueue + [NEW] ProjectCache updates
 ┌───────────────────────────────────────────────────────────┐
 │ Top Bar: Project Switcher | Active Jobs (3) | Daemon (●) │
 ├─────────────────────┬─────────────────────────────────────┤
-│ Sidebar (25%)       │  Canvas (50%)  │  Inspector (25%)  │
+│ Sidebar (25%)       │  Document (50%) │  Inspector (25%) │
 │                     │                │                   │
 │ Projects            │  Messages      │  Active Job       │
 │  - World Tree       │   - User       │   ┌─────────────┐ │
