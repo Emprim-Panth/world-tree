@@ -109,7 +109,7 @@ struct ProposedWorkArtifact: Identifiable, Sendable {
 struct ProposalRequest: Identifiable {
     let id = UUID()
     let artifact: ProposedWorkArtifact
-    fileprivate let continuation: CheckedContinuation<ProposalDecision, Never>
+    let continuation: CheckedContinuation<ProposalDecision, Never>
 }
 
 enum ProposalDecision: Sendable {
