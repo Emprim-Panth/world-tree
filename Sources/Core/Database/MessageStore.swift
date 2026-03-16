@@ -259,8 +259,12 @@ final class MessageStore {
                 for row in rows {
                     let content: String = row["content"] ?? ""
                     let wd: String = row["working_directory"] ?? ""
+                    // Use safe optional access — GRDB's non-optional typed subscript calls
+                    // fatalError when the value is null or can't be decoded (EXC_BREAKPOINT).
+                    let rawId: Int64? = row["id"]
+                    let msgId = rawId.map { String($0) } ?? (row["id"] as String? ?? "0")
                     results.append(GlobalSearchResult(
-                        id: "msg-\(row["id"] as Int64)",
+                        id: "msg-\(msgId)",
                         source: .message,
                         title: row["role"] as String? ?? "message",
                         snippet: String(content.prefix(200)),
@@ -281,12 +285,15 @@ final class MessageStore {
                     SELECT session_id, id, tree_id FROM canvas_branches
                     WHERE session_id IN (\(placeholders))
                     """, arguments: StatementArguments(msgSessionIds)) {
-                    let branchMap = Dictionary(uniqueKeysWithValues: branchRows.compactMap { row -> (String, (String, String))? in
+                    // Build map with subscript to handle duplicate session_ids safely.
+                    // Dictionary(uniqueKeysWithValues:) crashes on duplicates.
+                    var branchMap: [String: (String, String)] = [:]
+                    for row in branchRows {
                         guard let sid: String = row["session_id"],
                               let bid: String = row["id"],
-                              let tid: String = row["tree_id"] else { return nil }
-                        return (sid, (bid, tid))
-                    })
+                              let tid: String = row["tree_id"] else { continue }
+                        branchMap[sid] = (bid, tid)
+                    }
                     results = results.map { r in
                         guard r.source == .message, let sid = r.sessionId, let (bid, tid) = branchMap[sid] else { return r }
                         var updated = r
@@ -315,7 +322,7 @@ final class MessageStore {
                     for row in rows {
                         let content: String = row["content"] ?? ""
                         results.append(GlobalSearchResult(
-                            id: "kb-\(row["id"] as String)",
+                            id: "kb-\(row["id"] as String? ?? "unknown")",
                             source: .knowledge,
                             title: row["title"] as String? ?? "knowledge",
                             snippet: String(content.prefix(200)),
@@ -347,7 +354,7 @@ final class MessageStore {
                     for row in rows {
                         let summary: String = row["compressed_summary"] ?? ""
                         results.append(GlobalSearchResult(
-                            id: "archive-\(row["session_id"] as String)",
+                            id: "archive-\(row["session_id"] as String? ?? "unknown")",
                             source: .archive,
                             title: "Session (\(row["message_count"] as Int? ?? 0) msgs)",
                             snippet: String(summary.prefix(200)),
@@ -377,7 +384,7 @@ final class MessageStore {
                     for row in rows {
                         let content: String = row["content"] ?? ""
                         results.append(GlobalSearchResult(
-                            id: "graph-\(row["id"] as String)",
+                            id: "graph-\(row["id"] as String? ?? "unknown")",
                             source: .graph,
                             title: row["label"] as String? ?? "node",
                             snippet: String(content.prefix(200)),
