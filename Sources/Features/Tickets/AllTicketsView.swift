@@ -62,6 +62,16 @@ struct AllTicketsView: View {
                 }
                 .foregroundStyle(.secondary)
 
+                // Last scan time / scanning indicator
+                if store.isScanning {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else if let date = store.lastScanDate {
+                    Text(date, style: .relative)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+
                 Button {
                     store.scanAll()
                     store.refresh()
@@ -69,8 +79,11 @@ struct AllTicketsView: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 12))
+                        .rotationEffect(store.isScanning ? .degrees(360) : .zero)
+                        .animation(store.isScanning ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: store.isScanning)
                 }
                 .buttonStyle(.bordered)
+                .disabled(store.isScanning)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
