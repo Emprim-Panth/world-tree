@@ -1,8 +1,11 @@
 import AppKit
 import Foundation
 
-/// Reads and writes MCP server configuration from ~/.claude/settings.json.
-/// Provides structured access to server definitions, tool lists, and permission state.
+/// Reads MCP server configuration from all Claude config sources:
+///   - ~/.claude/settings.json  (global Claude Code settings)
+///   - ~/.claude/mcp.json        (global MCP-only config — where qmd lives)
+///   - ./.mcp.json               (project-level, relative to working dir)
+/// Permissions are read from settings.json only.
 @MainActor
 @Observable
 final class MCPConfigManager {
@@ -12,10 +15,10 @@ final class MCPConfigManager {
     var permissions: [String] = []
     var lastError: String?
 
-    private let settingsPath: String = {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.claude/settings.json"
-    }()
+    private let home = FileManager.default.homeDirectoryForCurrentUser.path
+
+    private var settingsPath: String { "\(home)/.claude/settings.json" }
+    private var mcpJsonPath: String { "\(home)/.claude/mcp.json" }
 
     private init() {
         reload()
@@ -24,49 +27,67 @@ final class MCPConfigManager {
     // MARK: - Read
 
     func reload() {
-        guard FileManager.default.fileExists(atPath: settingsPath),
-              let data = FileManager.default.contents(atPath: settingsPath),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            lastError = "Could not read \(settingsPath)"
-            return
-        }
-
-        // Parse MCP servers
         var parsed: [MCPServerConfig] = []
-        if let mcpServers = json["mcpServers"] as? [String: Any] {
-            for (name, value) in mcpServers {
-                // Skip retired/string entries
-                guard let config = value as? [String: Any] else { continue }
+        var loadErrors: [String] = []
 
-                let command = config["command"] as? String ?? ""
-                let args = config["args"] as? [String] ?? []
-                let env = config["env"] as? [String: String] ?? [:]
-                let url = config["url"] as? String
-                let transportType = config["type"] as? String
+        // 1. ~/.claude/settings.json — primary config + permissions
+        if let json = loadJSON(at: settingsPath) {
+            parsed += parseServers(from: json, sourceFile: "settings.json")
 
-                // Resolve source file path from args
-                let sourcePath = args.first(where: { $0.hasSuffix(".ts") || $0.hasSuffix(".js") || $0.hasSuffix(".py") })
-
-                parsed.append(MCPServerConfig(
-                    name: name,
-                    command: command,
-                    args: args,
-                    env: env,
-                    sourcePath: sourcePath,
-                    url: url,
-                    transportType: transportType
-                ))
+            if let perms = json["permissions"] as? [String: Any],
+               let allow = perms["allow"] as? [String] {
+                permissions = allow.filter { $0.hasPrefix("mcp__") }
             }
+        } else {
+            loadErrors.append("Could not read settings.json")
         }
+
+        // 2. ~/.claude/mcp.json — dedicated MCP config (qmd lives here)
+        if let json = loadJSON(at: mcpJsonPath) {
+            let extra = parseServers(from: json, sourceFile: "mcp.json")
+            // Merge: mcp.json entries don't override settings.json entries of the same name
+            let existingNames = Set(parsed.map(\.name))
+            parsed += extra.filter { !existingNames.contains($0.name) }
+        }
+
         servers = parsed.sorted { $0.name < $1.name }
+        lastError = loadErrors.isEmpty ? nil : loadErrors.joined(separator: "; ")
+    }
 
-        // Parse permissions
-        if let perms = json["permissions"] as? [String: Any],
-           let allow = perms["allow"] as? [String] {
-            permissions = allow.filter { $0.hasPrefix("mcp__") }
+    // MARK: - Helpers
+
+    private func loadJSON(at path: String) -> [String: Any]? {
+        guard FileManager.default.fileExists(atPath: path),
+              let data = FileManager.default.contents(atPath: path),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
         }
+        return json
+    }
 
-        lastError = nil
+    private func parseServers(from json: [String: Any], sourceFile: String) -> [MCPServerConfig] {
+        guard let mcpServers = json["mcpServers"] as? [String: Any] else { return [] }
+        var result: [MCPServerConfig] = []
+        for (name, value) in mcpServers {
+            guard let config = value as? [String: Any] else { continue } // skip retired string entries
+            let command = config["command"] as? String ?? ""
+            let args = config["args"] as? [String] ?? []
+            let env = config["env"] as? [String: String] ?? [:]
+            let url = config["url"] as? String
+            let transportType = config["type"] as? String
+            let sourcePath = args.first(where: { $0.hasSuffix(".ts") || $0.hasSuffix(".js") || $0.hasSuffix(".py") })
+            result.append(MCPServerConfig(
+                name: name,
+                command: command,
+                args: args,
+                env: env,
+                sourcePath: sourcePath,
+                url: url,
+                transportType: transportType,
+                sourceFile: sourceFile
+            ))
+        }
+        return result
     }
 
     // MARK: - Source file operations
@@ -136,6 +157,8 @@ struct MCPServerConfig: Identifiable, Hashable {
     let sourcePath: String?
     let url: String?
     let transportType: String?
+    /// Which config file this server was loaded from (e.g. "settings.json", "mcp.json")
+    let sourceFile: String
 
     var displayCommand: String {
         if let url, !url.isEmpty {

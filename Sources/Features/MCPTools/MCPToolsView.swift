@@ -107,6 +107,16 @@ struct MCPToolsView: View {
 
             Spacer()
 
+            if server.sourceFile != "settings.json" {
+                Text(server.sourceFile)
+                    .font(.caption2.weight(.medium))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(.purple.opacity(0.12))
+                    .foregroundStyle(.purple)
+                    .cornerRadius(4)
+            }
+
             if config.isAutoAllowed(server.name) {
                 Image(systemName: "checkmark.shield.fill")
                     .font(.caption)
@@ -359,12 +369,15 @@ struct MCPToolsView: View {
 
     private func serverIcon(_ server: MCPServerConfig) -> String {
         switch server.name {
-        case "cortana": return "brain.head.profile"
+        case "cortana", "cortana-core": return "brain.head.profile"
         case "scout": return "binoculars"
         case "qmd": return "doc.text.magnifyingglass"
         case "pencil": return "pencil.and.outline"
         case "codex": return "books.vertical"
         case "forge-workflow": return "hammer"
+        case "context7": return "globe"
+        case "probe": return "magnifyingglass.circle"
+        case "xcodebuildmcp": return "hammer.circle"
         default:
             if server.isNPX { return "shippingbox" }
             if server.isLocal { return "desktopcomputer" }
@@ -374,12 +387,15 @@ struct MCPToolsView: View {
 
     private func serverColor(_ server: MCPServerConfig) -> Color {
         switch server.name {
-        case "cortana": return .purple
+        case "cortana", "cortana-core": return .purple
         case "scout": return .orange
         case "qmd": return .cyan
         case "pencil": return .pink
         case "codex": return .indigo
         case "forge-workflow": return .yellow
+        case "context7": return .teal
+        case "probe": return .mint
+        case "xcodebuildmcp": return .blue
         default: return .secondary
         }
     }
