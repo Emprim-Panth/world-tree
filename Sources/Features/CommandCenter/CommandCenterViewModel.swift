@@ -49,6 +49,7 @@ final class CommandCenterViewModel {
     var blockedCounts: [String: Int] = [:]  // project → blocked ticket count
 
     private var observationTask: Task<Void, Never>?
+    private var compassRefreshTask: Task<Void, Never>?
     /// Fingerprint of the last rebuild — skip if dispatches + jobs haven't changed.
     private var lastRebuildFingerprint: String = ""
 
@@ -60,6 +61,17 @@ final class CommandCenterViewModel {
         // Load projects + Compass/Ticket state
         loadProjects()
         refreshCompassAndTickets()
+
+        // Auto-refresh Compass + Ticket sensors every 2 minutes so git state,
+        // ticket counts, and blockers stay current without manual interaction.
+        compassRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(120))
+                guard !Task.isCancelled else { break }
+                self?.loadProjects()
+                self?.refreshCompassAndTickets()
+            }
+        }
 
         // Build initial project activities immediately — don't wait for dispatch observation
         rebuildProjectActivities()
@@ -104,6 +116,8 @@ final class CommandCenterViewModel {
     func stopObserving() {
         observationTask?.cancel()
         observationTask = nil
+        compassRefreshTask?.cancel()
+        compassRefreshTask = nil
     }
 
     // MARK: - Project Loading
