@@ -41,15 +41,11 @@ struct HeartbeatIndicator: View {
     @State private var isPulsing = false
 
     private var status: HeartbeatStatus {
-        // Error if no heartbeat in over an hour
-        if let last = lastHeartbeat, Date().timeIntervalSince(last) > 3600 {
-            return .error
-        }
         if activeTaskCount > 0 { return .active }
-        if let last = lastHeartbeat, Date().timeIntervalSince(last) < 1800 {
-            return .healthy
-        }
-        return .idle
+        guard let last = lastHeartbeat else { return .idle }
+        let age = Date().timeIntervalSince(last)
+        if age < 1800 { return .healthy }   // < 30 min: healthy
+        return .idle                         // stale/absent: idle, not error
     }
 
     private var statusText: String {

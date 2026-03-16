@@ -56,6 +56,14 @@ struct CommandCenterView: View {
             cortanaOpsStore.start()
             EventRuleStore.shared.loadRules()
             UIStateStore.shared.loadAll()
+            Task { await heartbeatStore.refreshAsync() }
+        }
+        .task {
+            // Refresh heartbeat every 30s while Command Center is visible
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                await heartbeatStore.refreshAsync()
+            }
         }
         .onDisappear {
             viewModel.stopObserving()
