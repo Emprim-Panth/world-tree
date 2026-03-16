@@ -869,6 +869,10 @@ class DocumentEditorViewModel: ObservableObject {
                 // Without this, the snapshot only fires in onDisappear which can
                 // race with the new ViewModel's init.
                 self.writeSnapshotCheckpoint()
+                // Stop the flush timer so it doesn't keep calling GlobalStreamRegistry
+                // after the branch loses focus. pendingTokenBuffer is drained here too.
+                self.stopStreamBatching()
+                self.pendingTokenBuffer = ""
                 // Detach from the stream so the new ViewModel can re-subscribe cleanly.
                 if let subId = self.activeSubscriptionId {
                     ActiveStreamRegistry.shared.unsubscribe(branchId: self.branchId, id: subId)
