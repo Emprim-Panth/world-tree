@@ -107,9 +107,15 @@ struct ProposedWorkArtifact: Identifiable, Sendable {
 
 /// Suspend-until-reviewed request for a complex action proposal.
 struct ProposalRequest: Identifiable {
-    let id = UUID()
+    let id: UUID
     let artifact: ProposedWorkArtifact
     let continuation: CheckedContinuation<ProposalDecision, Never>
+
+    init(artifact: ProposedWorkArtifact, continuation: CheckedContinuation<ProposalDecision, Never>) {
+        self.id = UUID()
+        self.artifact = artifact
+        self.continuation = continuation
+    }
 }
 
 enum ProposalDecision: Sendable {

@@ -1,7 +1,7 @@
 # TASK-160: HIGH — Inline Proposal Cards + Sign-Off Workflow
 
 **Priority**: high
-**Status**: Pending
+**Status**: Done
 **Category**: ui
 **Epic**: Audit Follow-Up
 **Sprint**: 4

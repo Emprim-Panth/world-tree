@@ -18,6 +18,7 @@ extension EnvironmentValues {
 struct DocumentEditorView: View {
     @StateObject private var viewModel: DocumentEditorViewModel
     @ObservedObject private var provenanceStore = ContextProvenanceStore.shared
+    @ObservedObject private var approvalCoordinator = ApprovalCoordinator.shared
     @FocusState private var isFocused: Bool
     @State private var hoveredSectionId: UUID?
     @State private var selectedSuggestionIndex = 0
@@ -267,6 +268,12 @@ struct DocumentEditorView: View {
 
             // Input box — direct VStack sibling so scroll view is height-constrained above it
             VStack(alignment: .leading, spacing: 0) {
+                // Proposal card — appears above input when a risky action needs sign-off
+                if let proposal = approvalCoordinator.pendingProposal {
+                    ProposalCardView(request: proposal) { decision in
+                        ApprovalCoordinator.shared.resolveProposal(decision)
+                    }
+                }
                 Divider()
                 VStack(alignment: .leading, spacing: 8) {
                     UserInputArea(
