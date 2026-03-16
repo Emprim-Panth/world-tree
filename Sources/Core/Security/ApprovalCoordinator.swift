@@ -31,6 +31,7 @@ final class ApprovalCoordinator: ObservableObject {
 
     @Published var pendingRequest: ApprovalRequest?
     @Published var pendingFileDiff: FileDiffRequest?
+    @Published var pendingProposal: ProposalRequest?
 
     private init() {}
 
@@ -75,6 +76,23 @@ final class ApprovalCoordinator: ObservableObject {
                 continuation: continuation
             )
         }
+    }
+
+    // MARK: - Proposal Review
+
+    /// Present a proposal card inline and suspend until the user makes a decision.
+    func requestProposalApproval(artifact: ProposedWorkArtifact) async -> ProposalDecision {
+        return await withCheckedContinuation { continuation in
+            pendingProposal = ProposalRequest(artifact: artifact, continuation: continuation)
+        }
+    }
+
+    /// Called by the proposal card when the user acts.
+    func resolveProposal(_ decision: ProposalDecision) {
+        guard let request = pendingProposal else { return }
+        pendingProposal = nil
+        wtLog("[ApprovalCoordinator] Proposal \(decision) for: \(request.artifact.goal.prefix(60))")
+        request.continuation.resume(returning: decision)
     }
 
     /// Called by the diff review sheet.
