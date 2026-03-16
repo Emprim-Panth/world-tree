@@ -35,7 +35,7 @@ final class CodexMCPConfigManagerTests: XCTestCase {
             includeWorldTree: true
         )
 
-        XCTAssertEqual(desired.map { $0.name }, ["context7", "world-tree"])
+        XCTAssertEqual(desired.map { $0.name }, ["context7", "cortana-core", "world-tree"])
 
         guard case let .stdio(command, args, env, _) = desired[0].transport else {
             return XCTFail("Expected stdio transport for mirrored Claude MCP server")
@@ -44,10 +44,15 @@ final class CodexMCPConfigManagerTests: XCTestCase {
         XCTAssertEqual(args, ["-y", "@upstash/context7-mcp"])
         XCTAssertEqual(env["CONTEXT7_API_KEY"], "test-key")
 
-        guard case let .http(url) = desired[1].transport else {
+        guard case let .http(cortanaURL) = desired[1].transport else {
+            return XCTFail("Expected http transport for cortana-core MCP server")
+        }
+        XCTAssertEqual(cortanaURL, CodexMCPConfigManager.cortanaMCPURL)
+
+        guard case let .http(wtURL) = desired[2].transport else {
             return XCTFail("Expected http transport for World Tree MCP server")
         }
-        XCTAssertEqual(url, CodexMCPConfigManager.worldTreeMCPURL)
+        XCTAssertEqual(wtURL, CodexMCPConfigManager.worldTreeMCPURL)
     }
 
     func testWorldTreeRegistrationMatchRecognizesEquivalentHTTPServer() {
