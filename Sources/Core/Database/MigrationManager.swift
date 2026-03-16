@@ -943,6 +943,54 @@ enum MigrationManager {
                 """)
         }
 
+        // Migration 28: Coordinator workflow — local-model-orchestrated multi-task plans.
+        // coordinator_plans holds high-level goals; coordinator_tasks holds the decomposed steps.
+        // CoordinatorActor drives execution: Ollama decomposes → dispatches to claude-code → observes completions.
+        migrator.registerMigration("v28_coordinator_workflow") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS coordinator_plans (
+                    id TEXT PRIMARY KEY,
+                    project TEXT NOT NULL,
+                    working_directory TEXT NOT NULL,
+                    goal TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'planning'
+                        CHECK(status IN ('planning','running','paused','completed','failed','cancelled')),
+                    ollama_model TEXT NOT NULL DEFAULT 'llama3.2',
+                    task_count INTEGER DEFAULT 0,
+                    completed_task_count INTEGER DEFAULT 0,
+                    state_summary TEXT,
+                    error TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_coord_plans_status ON coordinator_plans(status)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_coord_plans_project ON coordinator_plans(project)")
+
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS coordinator_tasks (
+                    id TEXT PRIMARY KEY,
+                    plan_id TEXT NOT NULL REFERENCES coordinator_plans(id) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'queued'
+                        CHECK(status IN ('queued','dispatched','running','completed','failed','skipped')),
+                    dispatch_id TEXT,
+                    depends_on TEXT DEFAULT '[]',
+                    result_summary TEXT,
+                    error TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    started_at TIMESTAMP,
+                    completed_at TIMESTAMP
+                )
+                """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_coord_tasks_plan ON coordinator_tasks(plan_id, sequence)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_coord_tasks_status ON coordinator_tasks(status)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_coord_tasks_dispatch ON coordinator_tasks(dispatch_id)")
+        }
+
         try migrator.migrate(dbPool)
     }
 }

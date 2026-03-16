@@ -29,6 +29,7 @@ struct CommandCenterView: View {
                     )
                 }
                 CortanaOpsSection()
+                CoordinatorSection()
                 ForEach(conflictDetector.activeConflicts, id: \.filePath) { conflict in
                     ConflictWarningBanner(conflict: conflict)
                 }
