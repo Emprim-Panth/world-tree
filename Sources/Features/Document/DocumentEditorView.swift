@@ -1487,25 +1487,56 @@ class DocumentEditorViewModel: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "draft.\(branchId)")
         pendingAttachments = []
 
-        // Build display text for the section — show filename if text-only attachment
-        let displayText: String
-        if inputText.isEmpty && !attachmentSnapshot.isEmpty {
-            displayText = attachmentSnapshot.map { "[\($0.filename)]" }.joined(separator: " ")
-        } else {
-            displayText = inputText
+        Task { @MainActor in
+            var finalText = inputText
+
+            // Proposal card gate — when "Review file writes" is enabled, show an inline
+            // sign-off card above the input bar before execution begins.
+            // User can approve (proceed as-is), revise (edit goal then send), or cancel (restore input).
+            if UserDefaults.standard.bool(forKey: AppConstants.fileWriteReviewEnabledKey),
+               !inputText.isEmpty {
+                let plan = CortanaWorkflowPlanner.plan(message: inputText)
+                let artifact = ProposedWorkArtifact.fromWorkflowPlan(
+                    goal: inputText.count > 120 ? String(inputText.prefix(120)) + "…" : inputText,
+                    plan: plan
+                )
+                let decision = await ApprovalCoordinator.shared.requestProposalApproval(artifact: artifact)
+                switch decision {
+                case .approved:
+                    break
+                case .revised(let newText):
+                    finalText = newText
+                case .rejected:
+                    currentInput = inputText  // restore so the user doesn't lose their work
+                    return
+                }
+            }
+
+            // Build display text for the section — show filename if text-only attachment
+            let displayText: String
+            if finalText.isEmpty && !attachmentSnapshot.isEmpty {
+                displayText = attachmentSnapshot.map { "[\($0.filename)]" }.joined(separator: " ")
+            } else {
+                displayText = finalText
+            }
+
+            let userSection = DocumentSection(
+                content: AttributedString(displayText),
+                author: .user(name: "You"),
+                timestamp: Date(),
+                branchPoint: true,
+                metadata: SectionMetadata(attachments: attachmentSnapshot.isEmpty ? nil : attachmentSnapshot),
+                isEditable: true
+            )
+
+            document.sections.append(userSection)
+            processUserInput(
+                userSection,
+                sectionUUID: userSection.id,
+                messageText: finalText.isEmpty ? nil : finalText,
+                attachments: attachmentSnapshot
+            )
         }
-
-        let userSection = DocumentSection(
-            content: AttributedString(displayText),
-            author: .user(name: "You"),
-            timestamp: Date(),
-            branchPoint: true,
-            metadata: SectionMetadata(attachments: attachmentSnapshot.isEmpty ? nil : attachmentSnapshot),
-            isEditable: true
-        )
-
-        document.sections.append(userSection)
-        processUserInput(userSection, sectionUUID: userSection.id, messageText: inputText, attachments: attachmentSnapshot)
     }
 
     private func processUserInput(_ section: DocumentSection, sectionUUID: UUID? = nil, messageText: String? = nil, attachments: [Attachment] = []) {
