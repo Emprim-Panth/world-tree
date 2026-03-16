@@ -135,11 +135,33 @@ final class AppState {
     var canGoBack: Bool { branchHistoryIndex > 0 }
     var canGoForward: Bool { branchHistoryIndex < branchHistory.count - 1 }
     
+    /// Select a tree from the sidebar. Fires branchWillSwitch for the old branch so
+    /// its ViewModel can detach from the stream and write a snapshot before teardown.
+    func selectTree(_ treeId: String) {
+        if let oldBranch = selectedBranchId {
+            NotificationCenter.default.post(
+                name: .branchWillSwitch,
+                object: nil,
+                userInfo: ["oldBranchId": oldBranch, "newBranchId": ""]
+            )
+        }
+        clearProjectSelection()
+        selectedBranchId = nil
+        selectedTreeId = treeId
+    }
+
     func selectProject(_ path: String) {
         selectedProjectPath = path
     }
 
     func selectProjectDocs(name: String, path: String?) {
+        if let old = selectedBranchId {
+            NotificationCenter.default.post(
+                name: .branchWillSwitch,
+                object: nil,
+                userInfo: ["oldBranchId": old, "newBranchId": ""]
+            )
+        }
         selectedTreeId = nil
         selectedBranchId = nil
         selectedProjectName = name

@@ -531,6 +531,13 @@ struct SidebarView: View {
     private func sidebarNavButton(_ label: String, icon: String, dest: SidebarDestination) -> some View {
         let isActive = appState.selectedTreeId == nil && appState.sidebarDestination == dest
         return Button {
+            if let old = appState.selectedBranchId {
+                NotificationCenter.default.post(
+                    name: .branchWillSwitch,
+                    object: nil,
+                    userInfo: ["oldBranchId": old, "newBranchId": ""]
+                )
+            }
             appState.selectedTreeId = nil
             appState.selectedBranchId = nil
             appState.clearProjectSelection()
@@ -714,9 +721,7 @@ struct SidebarView: View {
             appState.selectProjectDocs(name: group.project, path: viewModel.resolvedPath(for: group.project))
             return
         }
-        appState.clearProjectSelection()
-        appState.selectedBranchId = nil
-        appState.selectedTreeId = latestTree.id
+        appState.selectTree(latestTree.id)
         loadTreeBranches(latestTree.id)
     }
 
@@ -812,12 +817,9 @@ struct SidebarView: View {
         .padding(.horizontal, 4)
         .contentShape(Rectangle())
         .onTapGesture {
-            // Reset branch selection so the new tree always opens at its root.
-            // Without this, the previous tree's branchId stays in AppState and the
-            // wrong conversation appears in the detail pane.
-            appState.clearProjectSelection()
-            appState.selectedBranchId = nil
-            appState.selectedTreeId = tree.id
+            // selectTree fires branchWillSwitch for the old branch before switching,
+            // giving the outgoing ViewModel a chance to detach and write a snapshot.
+            appState.selectTree(tree.id)
             loadTreeBranches(tree.id)
         }
         .accessibilityElement(children: .combine)
