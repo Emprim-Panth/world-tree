@@ -39,6 +39,10 @@ final class ActiveStreamRegistry {
         var task: Task<Void, Never>
         /// Registered event subscribers — keyed by UUID cookie.
         var subscribers: [UUID: (BridgeEvent) -> Void] = [:]
+        /// Unique token minted per startStream call. The watchdog Task captures this so
+        /// it can verify the handle it sees at T+15min belongs to the same stream that
+        /// spawned it — not a later stream that reused the same branchId.
+        let generation: UUID
     }
 
     /// Hard timeout per stream — cancels and surfaces an error if a stream is still active
@@ -104,6 +108,7 @@ final class ActiveStreamRegistry {
         }
 
         let subscriberId = onEvent.map { _ in UUID() }
+        let generation = UUID()
 
         // Consume the provider stream off the UI actor. MainActor hops are limited to registry
         // bookkeeping and subscriber delivery, so the stream keeps moving even when the window
@@ -129,7 +134,8 @@ final class ActiveStreamRegistry {
             subscribers: {
                 guard let subscriberId, let onEvent else { return [:] }
                 return [subscriberId: onEvent]
-            }()
+            }(),
+            generation: generation
         )
 
         if !initialContent.isEmpty {
@@ -139,13 +145,20 @@ final class ActiveStreamRegistry {
 
         // Watchdog: cancel and surface an error if the stream hasn't completed after the timeout.
         // Guards against hung CLI processes that never send .done or .error.
-        // IMPORTANT: do NOT use try? here — if the Task is cancelled (view teardown, etc.)
-        // try? swallows CancellationError and the guard below fires immediately, producing
-        // a false "stalled" error long before the real timeout has elapsed.
+        //
+        // IMPORTANT — two failure modes guarded here:
+        // 1. do/catch instead of try?: if this Task is cancelled (view teardown, etc.)
+        //    CancellationError causes an early return instead of silently falling through
+        //    to fire the stall banner immediately.
+        // 2. Generation token: each startStream call mints a UUID stored on the handle.
+        //    The watchdog captures that UUID and verifies the current handle still belongs
+        //    to this stream before firing. Without this, a watchdog from stream A could
+        //    fire 15 min later against stream B's handle on the same branchId.
         let timeoutInterval = Self.streamTimeoutInterval
+        let watchdogGeneration = generation
         Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .seconds(timeoutInterval)) } catch { return }
-            guard let self, self.handles[branchId] != nil else { return }
+            guard let self, self.handles[branchId]?.generation == watchdogGeneration else { return }
             wtLog("[ActiveStreamRegistry] ⚠️ Stream timeout for \(branchId.prefix(8)) after \(Int(timeoutInterval / 60))min — force-cancelling")
             let timeoutMinutes = Int(timeoutInterval / 60)
             // Deliver error to all current subscribers before cancelling
