@@ -937,6 +937,9 @@ class DocumentEditorViewModel: ObservableObject {
                     ActiveStreamRegistry.shared.unsubscribe(branchId: self.branchId, id: subId)
                     self.activeSubscriptionId = nil
                 }
+                // Unblock any tool awaiting sign-off — continuation leak would hang the
+                // tool loop indefinitely, making the old chat appear stuck after switching.
+                ApprovalCoordinator.shared.rejectAll()
             }
         }
 

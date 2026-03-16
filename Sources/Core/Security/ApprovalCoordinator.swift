@@ -102,4 +102,24 @@ final class ApprovalCoordinator: ObservableObject {
         wtLog("[ApprovalCoordinator] File diff \(approved ? "accepted" : "rejected"): \(request.filePath)")
         request.continuation.resume(returning: approved)
     }
+
+    /// Reject all pending approvals so in-flight tool tasks can exit cleanly.
+    /// Called when switching branches — prevents continuation leaks that hang the tool loop.
+    func rejectAll() {
+        if let request = pendingRequest {
+            pendingRequest = nil
+            wtLog("[ApprovalCoordinator] Branch switched — auto-rejecting pending approval")
+            request.continuation.resume(returning: false)
+        }
+        if let diff = pendingFileDiff {
+            pendingFileDiff = nil
+            wtLog("[ApprovalCoordinator] Branch switched — auto-rejecting pending file diff")
+            diff.continuation.resume(returning: false)
+        }
+        if let proposal = pendingProposal {
+            pendingProposal = nil
+            wtLog("[ApprovalCoordinator] Branch switched — auto-rejecting pending proposal")
+            proposal.continuation.resume(returning: .rejected)
+        }
+    }
 }
