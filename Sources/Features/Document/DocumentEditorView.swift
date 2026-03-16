@@ -17,12 +17,14 @@ extension EnvironmentValues {
 /// Google Docs-style collaborative document editor for conversations
 struct DocumentEditorView: View {
     @StateObject private var viewModel: DocumentEditorViewModel
+    @ObservedObject private var provenanceStore = ContextProvenanceStore.shared
     @FocusState private var isFocused: Bool
     @State private var hoveredSectionId: UUID?
     @State private var selectedSuggestionIndex = 0
     @State private var forkBranchType: BranchType = .conversation
     @State private var showSearch = false
     @State private var searchQuery = ""
+    @State private var showContextInspector = false
     @Environment(\.scenePhase) private var scenePhase
 
     // Error alert
@@ -310,6 +312,26 @@ struct DocumentEditorView: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 12)
+
+                // Context provenance button — shows what was injected in the last send
+                if let provenance = provenanceStore.latest(for: branchId) {
+                    HStack {
+                        Spacer()
+                        Button {
+                            showContextInspector.toggle()
+                        } label: {
+                            Label("Context", systemImage: "info.circle")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .popover(isPresented: $showContextInspector, arrowEdge: .top) {
+                            ContextInspectorView(provenance: provenance)
+                        }
+                        .padding(.trailing, 24)
+                        .padding(.bottom, 4)
+                    }
+                }
             }
             .background(.bar)
             // Hidden cancel button — Cmd+. stops the active stream

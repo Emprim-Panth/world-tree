@@ -132,6 +132,21 @@ enum SendContextBuilder {
         )
         ctx.checkpointContext = checkpointContext
 
+        // Capture provenance so the UI can surface what was actually injected
+        let provenance = ContextProvenance(
+            timestamp: Date(),
+            model: routedModel,
+            blocks: [
+                ContextProvenance.Block(label: "Gameplan",         icon: "map",                   content: gameplan ?? ""),
+                ContextProvenance.Block(label: "Recent Messages",  icon: "bubble.left.and.right",  content: recentMessages ?? ""),
+                ContextProvenance.Block(label: "Checkpoint",       icon: "clock.arrow.circlepath", content: checkpointContext ?? ""),
+                ContextProvenance.Block(label: "Scored Context",   icon: "star.leadinghalf.filled", content: scoredContext ?? ""),
+                ContextProvenance.Block(label: "Memory Recall",    icon: "brain",                  content: memoryBlock),
+                ContextProvenance.Block(label: "Project Context",  icon: "folder",                 content: projectContext),
+            ]
+        )
+        ContextProvenanceStore.shared.record(provenance, for: branchId)
+
         return ctx
     }
 

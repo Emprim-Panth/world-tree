@@ -1,7 +1,7 @@
 # TASK-159: HIGH — Context + Memory Provenance Surface
 
 **Priority**: high
-**Status**: Pending
+**Status**: Done
 **Category**: knowledge
 **Epic**: Audit Follow-Up
 **Sprint**: 4
