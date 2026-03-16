@@ -433,6 +433,15 @@ class DocumentEditorViewModel: ObservableObject {
     @Published var isProcessing = false {
         didSet {
             streaming.isProcessing = isProcessing
+            // Track per-branch whether a stream was live when we last left.
+            // autoResumeIfNeeded uses this to distinguish crash-interrupted
+            // sessions from deliberate mid-conversation navigation.
+            let key = "wasStreaming.\(branchId)"
+            if isProcessing {
+                UserDefaults.standard.set(true, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
         }
     }
     /// Guard against rapid double-sends — true while processUserInput is executing.
@@ -1001,11 +1010,16 @@ class DocumentEditorViewModel: ObservableObject {
 
     static func shouldAutoResumeUnansweredTurn(
         lastMessageRole: MessageRole?,
-        messageCount: Int,
+        branchId: String,
         hasCheckpointContext: Bool
     ) -> Bool {
         guard lastMessageRole == .user else { return false }
-        return hasCheckpointContext || messageCount > 1
+        // Only auto-resume if there's evidence the session was interrupted mid-stream:
+        // either a rotation checkpoint exists (session was active long enough to rotate)
+        // or the wasStreaming flag was set (isProcessing was true when we last left).
+        // Avoids firing on deliberate mid-conversation navigation.
+        let wasStreaming = UserDefaults.standard.bool(forKey: "wasStreaming.\(branchId)")
+        return hasCheckpointContext || wasStreaming
     }
 
     /// Automatically continue a conversation that was interrupted (crash, force-quit, or
@@ -1043,7 +1057,7 @@ class DocumentEditorViewModel: ObservableObject {
         guard let lastMsg = messages.last,
               Self.shouldAutoResumeUnansweredTurn(
                 lastMessageRole: lastMsg.role,
-                messageCount: messages.count,
+                branchId: branchId,
                 hasCheckpointContext: checkpointContext != nil
               ) else { return }
 
