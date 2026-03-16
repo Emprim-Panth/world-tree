@@ -3,7 +3,7 @@ import GRDB
 
 // MARK: - Ticket Model
 
-struct Ticket: Codable, FetchableRecord, PersistableRecord, Identifiable {
+struct Ticket: Codable, FetchableRecord, PersistableRecord, Identifiable, Equatable {
     static let databaseTableName = "canvas_tickets"
 
     let id: String              // "TASK-261"

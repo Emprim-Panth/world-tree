@@ -7,7 +7,7 @@ struct DecisionReviewSection: View {
     @State private var isProcessing = false
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
             if !pendingDecisions.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     sectionHeader
