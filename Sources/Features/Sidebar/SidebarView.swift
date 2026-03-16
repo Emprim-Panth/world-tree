@@ -47,6 +47,9 @@ struct SidebarView: View {
     @State private var draggingProject: String?
     @State private var dragOverProject: String?
 
+    // Dormant projects (no chats) — collapsed by default
+    @State private var dormantExpanded: Bool = false
+
     // Project collapse state (expanded by default) — persisted across restarts
     @State private var collapsedProjects: Set<String> = Set(
         UserDefaults.standard.stringArray(forKey: "sidebar.collapsedProjects") ?? []
@@ -380,6 +383,11 @@ struct SidebarView: View {
                                 .padding(.horizontal, 12)
                                 .padding(.top, 2)
                         }
+
+                        // Dormant projects — no chats, collapsed by default
+                        if viewModel.searchText.isEmpty && !viewModel.dormantProjectGroups.isEmpty {
+                            dormantProjectsSection
+                        }
                     }
                 }
                 .padding(.bottom, 8)
@@ -563,6 +571,68 @@ struct SidebarView: View {
             .padding(.horizontal, 8)
         }
         .padding(.bottom, 8)
+    }
+
+    private var dormantProjectsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                dormantExpanded.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: dormantExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text("No Chats")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .textCase(.uppercase)
+                        .foregroundStyle(.tertiary)
+                    Text("(\(viewModel.dormantProjectGroups.count))")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+            }
+            .buttonStyle(.plain)
+
+            if dormantExpanded {
+                ForEach(viewModel.dormantProjectGroups, id: \.project) { group in
+                    ProjectGroupHeader(
+                        projectName: group.project,
+                        resolvedPath: viewModel.resolvedPath(for: group.project),
+                        gitInfo: viewModel.gitInfo(for: group.project),
+                        typeIcon: viewModel.typeIcon(for: group.project),
+                        treeCount: 0,
+                        isDocsSelected: false,
+                        isExpanded: false,
+                        onToggle: {},
+                        onNewTree: {
+                            newTreeProject = group.project
+                            newTreeName = ""
+                            if let path = viewModel.resolvedPath(for: group.project) {
+                                newTreeWorkingDir = path
+                            }
+                            showNewTreeSheet = true
+                        },
+                        onOpenDocs: {
+                            appState.selectProjectDocs(
+                                name: group.project,
+                                path: viewModel.resolvedPath(for: group.project)
+                            )
+                        },
+                        onRename: {},
+                        onPathChanged: { newPath in
+                            viewModel.updateProjectPath(projectName: group.project, path: newPath)
+                        },
+                        onArchive: {},
+                        onDelete: {}
+                    )
+                }
+            }
+        }
     }
 
     private var allProjectsSectionHeader: some View {

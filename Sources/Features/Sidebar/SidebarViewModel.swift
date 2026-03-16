@@ -102,6 +102,8 @@ final class SidebarViewModel: ObservableObject {
     /// Avoids expensive Dictionary rebuilds on every SwiftUI body evaluation.
     @Published private(set) var allProjectGroups: [(project: String, trees: [ConversationTree])] = []
     @Published private(set) var recentProjectGroups: [(project: String, trees: [ConversationTree])] = []
+    /// Projects from ProjectCache that have no chats — shown collapsed at the bottom of the sidebar.
+    @Published private(set) var dormantProjectGroups: [(project: String, trees: [ConversationTree])] = []
     @Published var searchScope: SearchScope = .trees {
         didSet {
             if searchScope == .content {
@@ -191,22 +193,28 @@ final class SidebarViewModel: ObservableObject {
         }
 
         // Collect all known project names (union of ProjectCache + tree groups)
-        var allNames: [String] = []
+        // Projects with chats (trees) always appear in the main list.
+        // Projects from ProjectCache with NO chats are shown in a collapsed "dormant" section.
+        var chatNames: [String] = []     // has at least one tree
+        var dormantNames: [String] = []  // only in ProjectCache, no trees
         var seenLowercased: Set<String> = []
 
         let filteredCache = searchText.isEmpty
             ? cachedProjects
             : cachedProjects.filter { $0.name.lowercased().contains(searchText.lowercased()) }
-        for p in filteredCache where p.name != AppConstants.defaultProjectName {
-            let key = p.name.lowercased()
-            if seenLowercased.insert(key).inserted { allNames.append(p.name) }
-        }
+
+        // First pass: names that appear in treesByProject (have chats)
         for project in treesByProject.keys where project != AppConstants.defaultProjectName {
             let key = project.lowercased()
-            if seenLowercased.insert(key).inserted {
-                allNames.append(project)
-            }
+            if seenLowercased.insert(key).inserted { chatNames.append(project) }
         }
+        // Second pass: cached projects that have no trees → dormant
+        for p in filteredCache where p.name != AppConstants.defaultProjectName {
+            let key = p.name.lowercased()
+            if seenLowercased.insert(key).inserted { dormantNames.append(p.name) }
+        }
+
+        let allNames = chatNames
 
         var cachedProjectsByName: [String: CachedProject] = [:]
         for project in cachedProjects {
@@ -262,6 +270,11 @@ final class SidebarViewModel: ObservableObject {
         if let general = treesByProject[AppConstants.defaultProjectName] {
             result.append((project: AppConstants.defaultProjectName, trees: sortTrees(general)))
         }
+
+        // Build dormant list — chat-less projects, sorted alphabetically, hidden by default
+        dormantProjectGroups = dormantNames
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            .map { (project: $0, trees: []) }
 
         allProjectGroups = result
         recentProjectGroups = result
