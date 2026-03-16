@@ -199,19 +199,34 @@ final class TokenBroadcaster {
                 )
             }
 
-            // Persist assistant message; fall back to a generated id on failure
+            // Persist assistant message; retry once on transient failure before ghost ID fallback.
+            // SQLite busy_timeout=5000ms handles lock contention; a second attempt catches
+            // the rare case where the first write raced with a migration or WAL checkpoint.
             let savedId: String
+            var persistedSuccessfully = false
             do {
                 let msg = try MessageStore.shared.sendMessage(sessionId: sessionId, role: .assistant, content: accumulated)
                 savedId = msg.id
+                persistedSuccessfully = true
                 // Bump tree timestamp so the sidebar refreshes
                 if let branch = try? TreeStore.shared.getBranchBySessionId(sessionId) {
                     try? TreeStore.shared.updateTreeTimestamp(branch.treeId)
                 }
             } catch {
-                wtLog("[TokenBroadcaster] sendMessage(.done) failed for session \(sessionId): \(error) — using ghost ID")
-                savedId = UUID().uuidString
+                wtLog("[TokenBroadcaster] sendMessage(.done) failed for session \(sessionId): \(error) — retrying")
+                do {
+                    let msg = try MessageStore.shared.sendMessage(sessionId: sessionId, role: .assistant, content: accumulated)
+                    savedId = msg.id
+                    persistedSuccessfully = true
+                    if let branch = try? TreeStore.shared.getBranchBySessionId(sessionId) {
+                        try? TreeStore.shared.updateTreeTimestamp(branch.treeId)
+                    }
+                } catch {
+                    wtLog("[TokenBroadcaster] sendMessage(.done) retry failed for session \(sessionId): \(error) — using ghost ID, message may be lost on restart")
+                    savedId = UUID().uuidString
+                }
             }
+            _ = persistedSuccessfully  // available for future use (e.g. persisted: flag on WSMessage)
 
             // Use output tokens when available; estimate from content length otherwise
             let tokenCount = usage.totalOutputTokens > 0

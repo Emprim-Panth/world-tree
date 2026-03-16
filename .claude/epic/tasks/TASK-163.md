@@ -1,7 +1,7 @@
 # TASK-163: HIGH — TokenBroadcaster silent sendMessage failure causes ghost message IDs
 
 **Priority**: high
-**Status**: Pending
+**Status**: Done
 **Category**: reliability
 **Epic**: Chat Hardening
 **Sprint**: 5
