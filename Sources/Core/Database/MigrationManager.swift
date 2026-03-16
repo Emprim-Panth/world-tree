@@ -895,6 +895,27 @@ enum MigrationManager {
             }
         }
 
+        // Fix 3: trees still orphaned (no working_directory) → use tree name as project.
+        // Excludes Telegram bridge sessions and trees with generic/empty names.
+        migrator.registerMigration("v26_name_fallback_for_no_wd_orphans") { db in
+            let remaining = try Row.fetchAll(db, sql: """
+                SELECT id, name FROM canvas_trees
+                WHERE (project IS NULL OR TRIM(project) = '')
+                  AND (working_directory IS NULL OR TRIM(working_directory) = '')
+                  AND name NOT LIKE 'Telegram%'
+                  AND TRIM(COALESCE(name, '')) != ''
+                """)
+            for row in remaining {
+                let id: String = row["id"]
+                let name: String = row["name"] ?? ""
+                guard !name.isEmpty else { continue }
+                try db.execute(
+                    sql: "UPDATE canvas_trees SET project = ? WHERE id = ?",
+                    arguments: [name, id]
+                )
+            }
+        }
+
         try migrator.migrate(dbPool)
     }
 }
