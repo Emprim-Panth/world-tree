@@ -15,6 +15,7 @@ final class CrashSentinel {
     private let sentinelPath: String
     private let logPath: String
     private var heartbeatTimer: Timer?
+    private let launchedAt: String = ISO8601DateFormatter().string(from: Date())
 
     private init() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -87,9 +88,7 @@ final class CrashSentinel {
         let sentinel = SentinelData(
             state: state,
             pid: ProcessInfo.processInfo.processIdentifier,
-            launchedAt: state == "running" && !FileManager.default.fileExists(atPath: sentinelPath)
-                ? ISO8601DateFormatter().string(from: Date())
-                : readCurrentLaunchDate() ?? ISO8601DateFormatter().string(from: Date()),
+            launchedAt: launchedAt,
             updatedAt: ISO8601DateFormatter().string(from: Date()),
             version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
         )
@@ -100,14 +99,6 @@ final class CrashSentinel {
         } catch {
             wtLog("[CrashSentinel] Failed to write sentinel: \(error)")
         }
-    }
-
-    private func readCurrentLaunchDate() -> String? {
-        guard let data = FileManager.default.contents(atPath: sentinelPath),
-              let json = try? JSONDecoder().decode(SentinelData.self, from: data) else {
-            return nil
-        }
-        return json.launchedAt
     }
 
     private func logCrash(_ info: CrashInfo) {
