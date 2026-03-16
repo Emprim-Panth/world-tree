@@ -43,8 +43,8 @@ If a concept preview is available, the card should be able to attach it without 
 
 ## Acceptance Criteria
 
-- [ ] Complex actions can produce a proposal artifact instead of immediately executing
-- [ ] Proposal renders inline in the conversation, not buried in Settings
-- [ ] User can approve, revise, or cancel from the proposal card
-- [ ] Dispatch routing summary and reviewer plan are visible in the same artifact
-- [ ] Existing file-diff approval remains intact and complements the higher-level proposal flow
+- [x] Complex actions can produce a proposal artifact instead of immediately executing
+- [x] Proposal renders inline in the conversation, not buried in Settings
+- [x] User can approve, revise, or cancel from the proposal card
+- [x] Dispatch routing summary and reviewer plan are visible in the same artifact
+- [x] Existing file-diff approval remains intact and complements the higher-level proposal flow

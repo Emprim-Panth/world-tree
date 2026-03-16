@@ -210,7 +210,7 @@ final class SidebarViewModel: ObservableObject {
         }
 
         // First pass: names that appear in treesByProject (have chats)
-        for project in treesByProject.keys where project != AppConstants.defaultProjectName {
+        for project in treesByProject.keys where !project.isEmpty && project != AppConstants.defaultProjectName {
             if seenNormalized.insert(normalizedKey(project)).inserted { chatNames.append(project) }
         }
         // Second pass: cached projects that have no trees → dormant
