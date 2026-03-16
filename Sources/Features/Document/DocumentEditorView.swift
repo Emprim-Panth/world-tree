@@ -21,8 +21,6 @@ struct DocumentEditorView: View {
     @ObservedObject private var approvalCoordinator = ApprovalCoordinator.shared
     @FocusState private var isFocused: Bool
     @State private var hoveredSectionId: UUID?
-    @State private var selectedSuggestionIndex = 0
-    @State private var forkBranchType: BranchType = .conversation
     @State private var showSearch = false
     @State private var searchQuery = ""
     @State private var showContextInspector = false
@@ -34,15 +32,12 @@ struct DocumentEditorView: View {
 
     let branchId: String
     let sessionId: String
-    var parentBranchLayout: BranchLayoutViewModel?
 
     init(sessionId: String,
          branchId: String,
-         workingDirectory: String,
-         parentBranchLayout: BranchLayoutViewModel? = nil) {
+         workingDirectory: String) {
         self.sessionId = sessionId
         self.branchId = branchId
-        self.parentBranchLayout = parentBranchLayout
         _viewModel = StateObject(wrappedValue: DocumentEditorViewModel(
             sessionId: sessionId,
             branchId: branchId,
@@ -104,15 +99,7 @@ struct DocumentEditorView: View {
                                 DocumentSectionView(
                                     section: section,
                                     isHovered: hoveredSectionId == section.id,
-                                    showInferButton: !viewModel.isRootBranch,
-                                    onEdit: { newContent in viewModel.updateSection(section.id, content: newContent) },
-                                    onBranch: { viewModel.requestFork(from: section.id) },
-                                    onInfer: { viewModel.inferFinding(from: section.id) },
-                                    onNavigateToBranch: { branchId in
-                                        if let treeId = viewModel.treeId {
-                                            AppState.shared.selectBranch(branchId, in: treeId)
-                                        }
-                                    }
+                                    onEdit: { newContent in viewModel.updateSection(section.id, content: newContent) }
                                 )
                                 .onHover { hovered in hoveredSectionId = hovered ? section.id : nil }
                                 .id(section.id)
@@ -150,22 +137,6 @@ struct DocumentEditorView: View {
                     // mid-generation. The stream keeps running in the background; the user gets
                     // a notification when done. Only deinit (true deallocation) performs cleanup.
                     viewModel.writeSnapshotCheckpoint()
-                }
-                .sheet(item: $viewModel.pendingForkMessage) { message in
-                    ForkMenu(
-                        sourceMessage: message,
-                        branchType: $forkBranchType,
-                        branch: viewModel.currentBranch,
-                        onCreated: { newBranchId in
-                            viewModel.pendingForkMessage = nil
-                            guard !newBranchId.isEmpty,
-                                  let treeId = viewModel.treeId else { return }
-                            AppState.shared.selectBranch(newBranchId, in: treeId)
-                            if let branch = try? TreeStore.shared.getBranch(newBranchId) {
-                                viewModel.parentBranchLayout?.visibleBranches.append(branch)
-                            }
-                        }
-                    )
                 }
                 // Mark initial scroll complete after ScrollView's first layout pass.
                 // Because we gate ScrollView creation on initialLoadDone, the content
@@ -226,17 +197,11 @@ struct DocumentEditorView: View {
                     viewModel.currentInput = choice
                     viewModel.submitInput()
                 }
-                .onReceive(NotificationCenter.default.publisher(for: .forkLastMessage)) { note in
-                    guard let targetBranchId = note.object as? String,
-                          targetBranchId == branchId else { return }
-                    viewModel.forkFromLastMessage()
-                }
                 }  // closes else (ScrollView branch)
             }  // closes ScrollViewReader
             .onAppear {
                 viewModel.claimWindowOwnership()
                 viewModel.loadDocument()
-                viewModel.parentBranchLayout = parentBranchLayout
                 // Delay focus so the view is fully in the responder chain before we request it.
                 // Without this, the focus request races with SwiftUI's layout pass and gets dropped.
                 Task { @MainActor in
@@ -281,41 +246,9 @@ struct DocumentEditorView: View {
                         attachments: $viewModel.pendingAttachments,
                         isProcessing: viewModel.isProcessing,
                         onSubmit: { viewModel.submitInput() },
-                        onCancel: { viewModel.cancelStream() },
-                        onTabKey: {
-                            if viewModel.branchOpportunity != nil {
-                                selectedSuggestionIndex = (selectedSuggestionIndex + 1) % (viewModel.branchOpportunity?.suggestions.count ?? 1)
-                                return true
-                            }
-                            return false
-                        },
-                        onShiftTabKey: {
-                            if let opportunity = viewModel.branchOpportunity {
-                                viewModel.acceptSuggestion(opportunity.suggestions[selectedSuggestionIndex])
-                                selectedSuggestionIndex = 0
-                                return true
-                            }
-                            return false
-                        },
-                        onCmdReturnKey: {
-                            if viewModel.branchOpportunity != nil {
-                                viewModel.spawnParallelBranches()
-                                return true
-                            }
-                            return false
-                        }
+                        onCancel: { viewModel.cancelStream() }
                     )
                     .focused($isFocused)
-
-                    if let opportunity = viewModel.branchOpportunity {
-                        BranchSuggestionChips(
-                            suggestions: opportunity.suggestions,
-                            selectedIndex: selectedSuggestionIndex,
-                            onAccept: { suggestion in viewModel.acceptSuggestion(suggestion) },
-                            onAcceptAll: { viewModel.spawnParallelBranches() },
-                            onDismiss: { viewModel.branchOpportunity = nil }
-                        )
-                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 12)
@@ -437,11 +370,8 @@ final class StreamingState: ObservableObject {
 @MainActor
 class DocumentEditorViewModel: ObservableObject {
     @Published var document: ConversationDocument
-    private var branchAnalysisTask: Task<Void, Never>?
     @Published var currentInput = "" {
         didSet {
-            branchAnalysisTask?.cancel()
-            branchAnalysisTask = Task { await analyzeForBranchOpportunities() }
             // Persist draft so it survives branch switches and window changes
             UserDefaults.standard.set(currentInput, forKey: "draft.\(branchId)")
             refreshRecoveryStatus()
@@ -475,7 +405,6 @@ class DocumentEditorViewModel: ObservableObject {
     }
     /// Guard against rapid double-sends — true while processUserInput is executing.
     private var isSending = false
-    @Published var branchOpportunity: BranchOpportunity?
     /// Live token stream content — backed by StreamingState so updates at 10fps
     /// don't trigger full document re-renders via viewModel.objectWillChange.
     var streamingContent: String? {
@@ -489,7 +418,6 @@ class DocumentEditorViewModel: ObservableObject {
     }
 
     @Published var errorMessage: String?
-    @Published var pendingForkMessage: Message?
 
     /// Message IDs from external sources (e.g. Telegram) — shown with 📱 indicator
     private var externalSourceMessages: Set<String> = []
@@ -645,7 +573,6 @@ class DocumentEditorViewModel: ObservableObject {
     private var activeSubscriptionId: UUID?
     /// Routes messages through daemon channel when available, falls back to ProviderManager.
     private let claudeBridge = ClaudeBridge()
-    weak var parentBranchLayout: BranchLayoutViewModel?
 
     deinit {
         // Unsubscribe from the active stream — does NOT cancel it.
@@ -1364,52 +1291,6 @@ class DocumentEditorViewModel: ObservableObject {
             MessageStore.shared.updateMessageContent(id: messageId, content: String(content.characters))
         }
 
-        // If editing user message, potentially create a branch
-        if case .user = document.sections[index].author {
-            if let sectionId = document.sections.indices.contains(index) ? document.sections[index].id : nil {
-                requestFork(from: sectionId)
-            }
-        }
-    }
-
-    /// Fork from the last message that has a messageId — used by Cmd+B / menu bar "New Branch".
-    func forkFromLastMessage() {
-        guard let last = document.sections.last(where: { $0.messageId != nil }) else { return }
-        requestFork(from: last.id)
-    }
-
-    /// Open ForkMenu for the message at this section.
-    func requestFork(from sectionId: UUID) {
-        guard let section = document.sections.first(where: { $0.id == sectionId }),
-              let messageId = section.messageId else { return }
-        Task {
-            do {
-                let messages = try MessageStore.shared.getMessages(sessionId: self.sessionId)
-                if let message = messages.first(where: { $0.id == messageId }) {
-                    self.pendingForkMessage = message
-                }
-            } catch {
-                wtLog("[DocumentEditor] requestFork: failed to load messages: \(error)")
-            }
-        }
-    }
-
-    /// Push a message from this branch up to the parent as a Finding.
-    func inferFinding(from sectionId: UUID) {
-        guard let section = document.sections.first(where: { $0.id == sectionId }),
-              let messageId = section.messageId,
-              let parentId = parentBranchId else { return }
-        Task {
-            do {
-                try TreeStore.shared.inferFinding(
-                    fromBranchId: self.branchId,
-                    messageId: messageId,
-                    toParentBranchId: parentId
-                )
-            } catch {
-                wtLog("[DocumentEditor] inferFinding failed: \(error)")
-            }
-        }
     }
 
     /// One-click error recovery: inject structured error context + auto-submit.
@@ -2045,54 +1926,6 @@ class DocumentEditorViewModel: ObservableObject {
             return false
         }).map { String($0.content.characters) }
         return lastAssistantContent != content
-    }
-
-    // MARK: - Organic Branching (Phase 8)
-
-    func analyzeForBranchOpportunities() async {
-        guard !currentInput.isEmpty else {
-            branchOpportunity = nil
-            return
-        }
-
-        // Analyze after user pauses (debounce)
-        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-
-        // Check if input still matches (user might have kept typing)
-        let analyzedText = currentInput
-        guard analyzedText == currentInput else { return }
-
-        // Detect branch opportunities
-        let opportunity = await SuggestionEngine.shared.analyzeBranchOpportunity(analyzedText)
-        branchOpportunity = opportunity
-    }
-
-    func acceptSuggestion(_ suggestion: BranchSuggestion) {
-        wtLog("[DocumentEditor] Accepting branch suggestion: \(suggestion.title)")
-
-        // Clear the opportunity
-        branchOpportunity = nil
-
-        // Notify parent to create branch
-        parentBranchLayout?.createBranchFromSuggestion(suggestion, userInput: currentInput)
-
-        // Clear input
-        currentInput = ""
-    }
-
-    func spawnParallelBranches() {
-        guard let opportunity = branchOpportunity else { return }
-
-        wtLog("[DocumentEditor] Spawning \(opportunity.suggestions.count) parallel branches")
-
-        // Clear the opportunity
-        branchOpportunity = nil
-
-        // Notify parent to create multiple branches
-        parentBranchLayout?.spawnParallelBranches(opportunity.suggestions, userInput: currentInput)
-
-        // Clear input
-        currentInput = ""
     }
 
 }

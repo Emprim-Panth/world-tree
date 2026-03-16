@@ -5,7 +5,6 @@ struct SingleDocumentView: View {
     let treeId: String
     @StateObject private var viewModel: SingleDocumentViewModel
     @Environment(AppState.self) private var appState
-    @State private var showTreeMap = false
 
     /// branchId: if provided, loads that specific branch as the main document.
     /// If nil (or the branch isn't found), falls back to the tree's root branch.
@@ -27,63 +26,12 @@ struct SingleDocumentView: View {
 
     var body: some View {
         VSplitView {
-            // ── Document + branch columns ────────────────────────────────
-            ZStack(alignment: .topTrailing) {
-                // Main document - full screen
-                DocumentEditorView(
-                    sessionId: viewModel.mainBranchSessionId,
-                    branchId: viewModel.mainBranchId,
-                    workingDirectory: viewModel.workingDirectory,
-                    parentBranchLayout: viewModel.branchLayout
-                )
-
-                // Branch columns slide in from right when created
-                if !viewModel.branchLayout.visibleBranches.isEmpty {
-                    HStack(spacing: 0) {
-                        Spacer()
-
-                        // Side-by-side branch columns
-                        ForEach(viewModel.branchLayout.visibleBranches) { branch in
-                            VStack(spacing: 0) {
-                                // Branch header
-                                HStack {
-                                    Image(systemName: "arrow.triangle.branch")
-                                        .foregroundColor(.blue)
-                                    Text(branch.displayTitle)
-                                        .font(.headline)
-                                    Spacer()
-                                    Button(action: { viewModel.closeBranch(branch.id) }) {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel("Close branch")
-                                    .accessibilityHint("Closes this branch column")
-                                }
-                                .padding(12)
-                                .background(Color(nsColor: .controlBackgroundColor))
-
-                                Divider()
-
-                                // Branch document
-                                if let sessionId = branch.sessionId {
-                                    DocumentEditorView(
-                                        sessionId: sessionId,
-                                        branchId: branch.id,
-                                        workingDirectory: viewModel.workingDirectory,
-                                        parentBranchLayout: viewModel.branchLayout
-                                    )
-                                }
-                            }
-                            .frame(width: 500)
-                            .background(Color(nsColor: .textBackgroundColor))
-                            .shadow(color: .black.opacity(0.2), radius: 12, x: -4, y: 0)
-                            .transition(.move(edge: .trailing))
-                        }
-                    }
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.branchLayout.visibleBranches.count)
-                }
-            }
+            // ── Main document ────────────────────────────────────────────
+            DocumentEditorView(
+                sessionId: viewModel.mainBranchSessionId,
+                branchId: viewModel.mainBranchId,
+                workingDirectory: viewModel.workingDirectory
+            )
             .frame(minHeight: 200)
 
             // ── Terminal panel (project-bound when available, else branch-bound) ──
@@ -125,17 +73,6 @@ struct SingleDocumentView: View {
                 ModelPickerButton()
             }
 
-            // Tree map — visualize conversation branches
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showTreeMap = true
-                } label: {
-                    Label("Tree Map", systemImage: "arrow.triangle.branch")
-                }
-                .keyboardShortcut("t", modifiers: [.command, .shift])
-                .help("View conversation tree (⌘⇧T)")
-            }
-
             // Terminal toggle
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -148,15 +85,6 @@ struct SingleDocumentView: View {
                 .keyboardShortcut("`", modifiers: .command)
                 .help("Open Claude terminal (⌘`)")
             }
-        }
-        .sheet(isPresented: $showTreeMap) {
-            ConversationTreeMapView(
-                treeId: treeId,
-                currentBranchId: viewModel.mainBranchId,
-                onNavigate: { branchId in
-                    AppState.shared.selectBranch(branchId, in: treeId)
-                }
-            )
         }
         .onAppear {
             BranchTerminalManager.shared.warmUpPreferred(
@@ -175,17 +103,10 @@ struct SingleDocumentView: View {
                 }
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .createNewBranch)) { _ in
-            // Route to the main document editor to fork from its last message
-            NotificationCenter.default.post(
-                name: .forkLastMessage,
-                object: viewModel.mainBranchId
-            )
-        }
         // NOTE: Terminals are intentionally NOT terminated on disappear.
         // BranchTerminalManager owns the PTY processes for their full lifetime —
         // they survive branch switching, sidebar navigation, and view recreation.
-        // Terminals are only killed by explicit user action (closeBranch, archive, delete)
+        // Terminals are only killed by explicit user action (archive, delete)
         // or at app quit via NSApplication.willTerminateNotification.
 
     }
@@ -203,7 +124,6 @@ class SingleDocumentViewModel: ObservableObject {
     /// Project name from the tree — nil for workspace trees.
     /// When set, terminal binds to project-level tmux session instead of branch-level.
     let projectName: String?
-    var branchLayout: BranchLayoutViewModel
 
     init(treeId: String, branchId: String? = nil) {
         self.treeId = treeId
@@ -269,13 +189,6 @@ class SingleDocumentViewModel: ObservableObject {
 
         self.workingDirectory = workDir
         self.projectName = existingTree?.project
-        self.branchLayout = BranchLayoutViewModel(treeId: treeId)
-    }
-
-    func closeBranch(_ branchId: String) {
-        branchLayout.visibleBranches.removeAll { $0.id == branchId }
-        // Terminate the PTY process so the zsh doesn't accumulate indefinitely
-        BranchTerminalManager.shared.terminate(branchId: branchId)
     }
 }
 

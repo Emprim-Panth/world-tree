@@ -6,7 +6,6 @@ enum SidebarDestination: String, Hashable {
     case projectDocs
     case tickets
     case timeline
-    case graph
     case mcpTools
 }
 
@@ -37,9 +36,6 @@ final class AppState {
     var sidebarDestination: SidebarDestination = .commandCenter
     var showGlobalSearch: Bool = false
     var daemonConnected: Bool = false
-    var simpleMode: Bool = false {
-        didSet { UserDefaults.standard.set(simpleMode, forKey: AppConstants.simpleModeKey) }
-    }
     /// Non-nil if the database failed to initialize — surfaced as an alert in WorldTreeApp.
     var dbSetupError: Error? = nil
     /// Number of active tasks across all projects (dispatches + jobs)
@@ -66,7 +62,6 @@ final class AppState {
             dbSetupError = error
         }
 
-        simpleMode = UserDefaults.standard.bool(forKey: AppConstants.simpleModeKey)
         terminalVisible = UserDefaults.standard.bool(forKey: "terminalVisible")
 
         // Restore last selected conversation from previous session

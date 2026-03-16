@@ -4,11 +4,7 @@ import SwiftUI
 struct DocumentSectionView: View {
     let section: DocumentSection
     let isHovered: Bool
-    var showInferButton: Bool = false
     let onEdit: (AttributedString) -> Void
-    let onBranch: () -> Void
-    var onInfer: (() -> Void)?
-    var onNavigateToBranch: ((String) -> Void)?
     var onFixError: ((ToolCall) -> Void)?
 
     @State private var isEditing = false
@@ -17,20 +13,12 @@ struct DocumentSectionView: View {
     init(
         section: DocumentSection,
         isHovered: Bool,
-        showInferButton: Bool = false,
         onEdit: @escaping (AttributedString) -> Void,
-        onBranch: @escaping () -> Void,
-        onInfer: (() -> Void)? = nil,
-        onNavigateToBranch: ((String) -> Void)? = nil,
         onFixError: ((ToolCall) -> Void)? = nil
     ) {
         self.section = section
         self.isHovered = isHovered
-        self.showInferButton = showInferButton
         self.onEdit = onEdit
-        self.onBranch = onBranch
-        self.onInfer = onInfer
-        self.onNavigateToBranch = onNavigateToBranch
         self.onFixError = onFixError
         _editedContent = State(initialValue: section.content)
     }
@@ -119,47 +107,10 @@ struct DocumentSectionView: View {
                 }
                 .padding(.top, 4)
 
-                // Inline fork badge — shows when child branches exist
-                if section.hasBranches, let messageId = section.messageId {
-                    BranchBadgeView(messageId: messageId, onTap: onNavigateToBranch)
-                        .padding(.top, 2)
-                }
             }
             .padding(.vertical, 8)
 
             Spacer()
-        }
-        .overlay(alignment: .topTrailing) {
-            // Action buttons — overlaid so they never shift text layout
-            if isHovered && section.branchPoint {
-                VStack(spacing: 4) {
-                    Button(action: onBranch) {
-                        Image(systemName: "arrow.turn.up.right")
-                            .font(.system(size: 12))
-                            .foregroundColor(.blue)
-                            .frame(width: 28, height: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Branch from here")
-                    .accessibilityLabel("Branch from here")
-
-                    if showInferButton {
-                        Button(action: { onInfer?() }) {
-                            Image(systemName: "arrow.up.to.line")
-                                .font(.system(size: 12))
-                                .foregroundColor(.purple)
-                                .frame(width: 28, height: 28)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Infer finding to parent branch")
-                        .accessibilityLabel("Infer finding to parent branch")
-                    }
-                }
-                .padding(.top, 8)
-                .transition(.opacity.animation(.easeInOut(duration: 0.15)))
-            }
         }
         .padding(.horizontal, 0)
         .background {
@@ -188,22 +139,6 @@ struct DocumentSectionView: View {
                 }
             }
 
-            if section.branchPoint {
-                Divider()
-                Button {
-                    onBranch()
-                } label: {
-                    Label("Branch from here", systemImage: "arrow.triangle.branch")
-                }
-            }
-
-            if showInferButton {
-                Button {
-                    onInfer?()
-                } label: {
-                    Label("Infer to parent", systemImage: "arrow.up.to.line")
-                }
-            }
         }
 
         // Finding messages get a purple left border + tinted background

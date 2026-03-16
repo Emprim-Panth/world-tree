@@ -54,11 +54,6 @@ struct SidebarView: View {
     @State private var collapsedProjects: Set<String> = Set(
         UserDefaults.standard.stringArray(forKey: "sidebar.collapsedProjects") ?? []
     )
-    // Branch disclosure state per tree (collapsed by default) — persisted across restarts
-    @State private var expandedBranchTrees: Set<String> = Set(
-        UserDefaults.standard.stringArray(forKey: "sidebar.expandedBranchTrees") ?? []
-    )
-
     private var sortIcon: String {
         switch viewModel.sortOrder {
         case .recentDesc: return "arrow.down.circle"
@@ -369,15 +364,8 @@ struct SidebarView: View {
 
                                 if isGroupExpanded {
                                     ForEach(group.trees) { tree in
-                                        VStack(spacing: 0) {
-                                            treeRow(tree)
-                                                .contextMenu { treeContextMenu(tree) }
-
-                                            // Branch disclosure — appears once branches are loaded for this tree
-                                            if tree.branches.count > 1 {
-                                                treeBranchDisclosure(tree)
-                                            }
-                                        }
+                                        treeRow(tree)
+                                            .contextMenu { treeContextMenu(tree) }
                                     }
                                 }
                             }
@@ -523,9 +511,6 @@ struct SidebarView: View {
         }
         .onChange(of: collapsedProjects) { _, newValue in
             UserDefaults.standard.set(Array(newValue), forKey: "sidebar.collapsedProjects")
-        }
-        .onChange(of: expandedBranchTrees) { _, newValue in
-            UserDefaults.standard.set(Array(newValue), forKey: "sidebar.expandedBranchTrees")
         }
     }
 
@@ -872,40 +857,6 @@ struct SidebarView: View {
     }
 
     // MARK: - Branch Disclosure
-
-    private func treeBranchDisclosure(_ tree: ConversationTree) -> some View {
-        let binding = Binding<Bool>(
-            get: { expandedBranchTrees.contains(tree.id) },
-            set: { expanded in
-                if expanded {
-                    expandedBranchTrees.insert(tree.id)
-                } else {
-                    expandedBranchTrees.remove(tree.id)
-                }
-            }
-        )
-        let rootBranches = tree.branches.filter { $0.parentBranchId == nil }
-        return DisclosureGroup(isExpanded: binding) {
-            ForEach(rootBranches) { root in
-                TreeNodeView(branch: root, treeId: tree.id)
-                    .padding(.leading, 4)
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.branch")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-                Text("\(tree.branches.count) branches")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.leading, 14)
-            .padding(.vertical, 2)
-        }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 2)
-        .accessibilityLabel("\(tree.branches.count) branches")
-    }
 
     /// Load full tree with branches when selected — always selects root branch.
     private func loadTreeBranches(_ treeId: String) {

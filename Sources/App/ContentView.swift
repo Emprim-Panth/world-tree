@@ -6,13 +6,7 @@ struct ContentView: View {
     @StateObject private var approvalCoordinator = ApprovalCoordinator.shared
 
     var body: some View {
-        Group {
-            if appState.simpleMode {
-                SimpleModeView()
-            } else {
-                advancedView
-            }
-        }
+        advancedView
         .sheet(item: $approvalCoordinator.pendingRequest) { request in
             ApprovalSheet(
                 assessment: request.assessment,
@@ -57,8 +51,6 @@ struct ContentView: View {
                     AllTicketsView()
                 case .timeline:
                     EventTimelineView()
-                case .graph:
-                    GraphView()
                 case .mcpTools:
                     MCPToolsView()
                 }

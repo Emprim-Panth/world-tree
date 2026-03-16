@@ -188,15 +188,6 @@ struct SettingsView: View {
     private var generalTab: some View {
         @Bindable var appState = appState
         return Form {
-            Section("View Mode") {
-                Toggle("Simple Mode", isOn: $appState.simpleMode)
-                Text(appState.simpleMode
-                     ? "One conversation per project. Context auto-injected."
-                     : "Full tree browser with manual project and branch management.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("Default Model") {
                 Picker("Model", selection: modelSelectionBinding) {
                     ForEach(providerManager.availableModelOptions, id: \.id) { model in
