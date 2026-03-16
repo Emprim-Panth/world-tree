@@ -998,7 +998,12 @@ class DocumentEditorViewModel: ObservableObject {
         guard activeSubscriptionId == nil else { return }
 
         isProcessing = true
-        streamingContent = ActiveStreamRegistry.shared.currentContent(for: branchId) ?? ""
+        // Only restore accumulated content if we haven't received any live tokens yet.
+        // Prevents re-stamping initialContent (old partial text already rendered as a section)
+        // on top of tokens already flowing into streamingContent from a prior subscription.
+        if streamingContent == nil || streamingContent?.isEmpty == true {
+            streamingContent = ActiveStreamRegistry.shared.currentContent(for: branchId) ?? ""
+        }
         startStreamBatching()
         guard let id = ActiveStreamRegistry.shared.subscribe(branchId: branchId, onEvent: { [weak self] event in
             Task { @MainActor [weak self] in
@@ -1769,34 +1774,10 @@ class DocumentEditorViewModel: ObservableObject {
                 }
             }
 
-            // Reload persisted section from DB — registry already wrote it
-            if !displayResponse.isEmpty {
-                do {
-                    // Fetch the last assistant message from DB (just persisted by registry)
-                    let msgs = try MessageStore.shared.getMessages(sessionId: sessionId)
-                    if let lastAssistant = msgs.last(where: { $0.role == .assistant }) {
-                        appendAssistantSectionIfNeeded(
-                            messageId: lastAssistant.id,
-                            content: lastAssistant.content,
-                            timestamp: lastAssistant.createdAt,
-                            hasFindingSignal: !isRootBranch && scanForFindingSignals(lastAssistant.content)
-                        )
-                    } else {
-                        // No assistant message in DB yet — the registry is persisting the failure notice
-                        // asynchronously. GRDB observation will deliver it with the real messageId
-                        // once written, avoiding any deduplication race. Nothing to do here.
-                        wtLog("[DocumentEditor] No DB assistant message found after stream completion — waiting for GRDB observation")
-                    }
-                } catch {
-                    wtLog("[DocumentEditor] Failed to load persisted assistant response: \(error)")
-                    appendAssistantSectionIfNeeded(
-                        messageId: nil,
-                        content: displayResponse,
-                        timestamp: Date(),
-                        hasFindingSignal: !isRootBranch && scanForFindingSignals(displayResponse)
-                    )
-                }
-            }
+            // GRDB ValueObservation delivers the persisted message as a section automatically.
+            // Do NOT read from DB and append here — that creates a duplicate section when
+            // the observation fires moments later with the same messageId.
+            // StreamRecoveryCoordinator owns recovery; DocumentEditorView only observes.
 
             writeSnapshotCheckpoint()
 
