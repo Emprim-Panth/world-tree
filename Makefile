@@ -10,35 +10,6 @@ UID           = $(shell id -u)
 
 .PHONY: generate build install update open clean rebuild rebuild-now
 
-define WRITE_LAUNCHD_PLIST
-	@mkdir -p "$(HOME)/Library/LaunchAgents" "$(HOME)/.cortana/logs"
-	@cat > "$(LAUNCHD_PLIST)" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>$(LAUNCHD_LABEL)</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$(INSTALL_PATH)/Contents/MacOS/$(APP_NAME)</string>
-    </array>
-    <key>KeepAlive</key>
-    <true/>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>ThrottleInterval</key>
-    <integer>5</integer>
-    <key>ProcessType</key>
-    <string>Interactive</string>
-    <key>StandardOutPath</key>
-    <string>$(HOME)/.cortana/logs/world-tree-launchd.log</string>
-    <key>StandardErrorPath</key>
-    <string>$(HOME)/.cortana/logs/world-tree-launchd.log</string>
-</dict>
-</plist>
-EOF
-endef
 
 ## Regenerate .xcodeproj from project.yml
 generate:
@@ -55,26 +26,8 @@ build: generate
 		| grep -E "^error:|BUILD (SUCCEEDED|FAILED)"
 
 ## Install to /Applications (build first)
-install: build
-	@echo "→ Stopping launchd service..."
-	@launchctl bootout gui/$(UID)/$(LAUNCHD_LABEL) 2>/dev/null; true
-	@killall "$(APP_NAME)" 2>/dev/null; sleep 1; true
-	@echo "→ Installing to /Applications..."
-	@rm -rf "$(INSTALL_PATH)"
-	@cp -R "$(BUILD_DIR)/Build/Products/Release/$(APP_NAME).app" /Applications/
-	@echo "→ Signing..."
-	@codesign --force --sign "$(SIGN_IDENTITY)" \
-		--entitlements $(ENTITLEMENTS) \
-		--options runtime \
-		--timestamp=none \
-		--deep \
-		"$(INSTALL_PATH)"
-	$(WRITE_LAUNCHD_PLIST)
-	@./Scripts/flush-runningboard.sh
-	@echo "→ Restarting launchd service..."
-	@launchctl bootstrap gui/$(UID) $(LAUNCHD_PLIST)
-	@touch /tmp/.worldtree-updated
-	@echo "✓ Installed: $(INSTALL_PATH)"
+install:
+	@./Scripts/install.sh
 
 ## Full update cycle: build + install + relaunch
 update: install
@@ -93,33 +46,7 @@ rebuild:
 
 ## Rebuild immediately (skip quiet window, still staged)
 rebuild-now:
-	@echo "→ Building staged..."
-	@WT_STAGED_BUILD=1 xcodebuild \
-		-project WorldTree.xcodeproj \
-		-scheme $(SCHEME) \
-		-configuration Debug \
-		-destination 'platform=macOS' \
-		-derivedDataPath /tmp/worldtree-staged-build \
-		-quiet \
-		build
-	@echo "→ Stopping launchd service..."
-	@launchctl bootout gui/$(UID)/$(LAUNCHD_LABEL) 2>/dev/null; true
-	@killall "$(APP_NAME)" 2>/dev/null; sleep 1; true
-	@echo "→ Swapping..."
-	@rm -rf "$(INSTALL_PATH)"
-	@ditto "/tmp/worldtree-staged-build/Build/Products/Debug/$(APP_NAME).app" "$(INSTALL_PATH)"
-	@codesign --force --sign "$(SIGN_IDENTITY)" \
-		--entitlements $(ENTITLEMENTS) \
-		--options runtime \
-		--timestamp=none \
-		--deep \
-		"$(INSTALL_PATH)"
-	$(WRITE_LAUNCHD_PLIST)
-	@./Scripts/flush-runningboard.sh
-	@echo "→ Restarting launchd service..."
-	@launchctl bootstrap gui/$(UID) $(LAUNCHD_PLIST)
-	@rm -f ~/.cortana/worldtree/rebuild.dirty
-	@echo "✓ $(APP_NAME) rebuilt and running (via launchd)"
+	@./Scripts/install.sh
 
 ## Clean build artifacts
 clean:
