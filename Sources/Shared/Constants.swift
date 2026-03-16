@@ -78,6 +78,8 @@ enum AppConstants {
     // Navigation / selection (AppState)
     static let lastSelectedTreeIdKey = "lastSelectedTreeId"
     static let lastSelectedBranchIdKey = "lastSelectedBranchId"
+    /// Dictionary: treeId → branchId for the last-viewed branch per tree.
+    static let lastBranchPerTreeKey = "lastBranchPerTree"
     static let simpleModeKey = "worldtree.simpleMode"
 
     // Sidebar (SidebarViewModel)

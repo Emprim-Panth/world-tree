@@ -908,10 +908,14 @@ struct SidebarView: View {
             if let fullTree = try TreeStore.shared.getTree(treeId) {
                 // Cache branches so they survive GRDB observation refreshes.
                 viewModel.cacheBranches(fullTree.branches, for: treeId)
-                // Always select root branch when switching trees so the canvas
-                // opens the correct conversation (not a leftover from the previous tree).
-                if let root = fullTree.rootBranch {
-                    appState.selectBranch(root.id, in: treeId)
+                // Restore the last-visited branch for this tree so the user returns
+                // to where they left off. Fall back to root branch on first visit.
+                let allBranchIds = Set(fullTree.branches.map(\.id))
+                let lastBranchId = appState.lastBranch(for: treeId)
+                let targetBranchId = lastBranchId.flatMap { allBranchIds.contains($0) ? $0 : nil }
+                    ?? fullTree.rootBranch?.id
+                if let branchId = targetBranchId {
+                    appState.selectBranch(branchId, in: treeId)
                 }
             }
         } catch {

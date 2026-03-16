@@ -26,6 +26,12 @@ final class AppState {
     var selectedBranchId: String? {
         didSet { UserDefaults.standard.set(selectedBranchId, forKey: AppConstants.lastSelectedBranchIdKey) }
     }
+    /// Per-tree last-viewed branch — restored when opening a tree so the user
+    /// returns to where they left off rather than always opening the root branch.
+    private(set) var lastBranchPerTree: [String: String] = {
+        UserDefaults.standard.dictionary(forKey: AppConstants.lastBranchPerTreeKey) as? [String: String] ?? [:]
+    }()
+
     var selectedProjectName: String?
     var selectedProjectPath: String?
     var sidebarDestination: SidebarDestination = .commandCenter
@@ -82,6 +88,11 @@ final class AppState {
         selectedTreeId = treeId
         selectedBranchId = branchId
 
+        // Remember the last-viewed branch for this tree so navigating back to it
+        // restores the user's position instead of always opening the root branch.
+        lastBranchPerTree[treeId] = branchId
+        UserDefaults.standard.set(lastBranchPerTree, forKey: AppConstants.lastBranchPerTreeKey)
+
         // Trim forward history and push
         if branchHistoryIndex < branchHistory.count - 1 {
             branchHistory = Array(branchHistory.prefix(branchHistoryIndex + 1))
@@ -134,6 +145,11 @@ final class AppState {
 
     var canGoBack: Bool { branchHistoryIndex > 0 }
     var canGoForward: Bool { branchHistoryIndex < branchHistory.count - 1 }
+
+    /// Returns the last-viewed branch for a given tree, or nil if not recorded.
+    func lastBranch(for treeId: String) -> String? {
+        lastBranchPerTree[treeId]
+    }
     
     /// Select a tree from the sidebar. Fires branchWillSwitch for the old branch so
     /// its ViewModel can detach from the stream and write a snapshot before teardown.
