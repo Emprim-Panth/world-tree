@@ -920,10 +920,15 @@ class DocumentEditorViewModel: ObservableObject {
         isProcessing = true
         streamingContent = ActiveStreamRegistry.shared.currentContent(for: branchId) ?? ""
         startStreamBatching()
-        let id = ActiveStreamRegistry.shared.subscribe(branchId: branchId) { [weak self] event in
+        guard let id = ActiveStreamRegistry.shared.subscribe(branchId: branchId, onEvent: { [weak self] event in
             Task { @MainActor [weak self] in
                 await self?.handleStreamEvent(event)
             }
+        }) else {
+            wtLog("[DocumentEditor] subscribe returned nil for \(branchId.prefix(8)) — stream handle vanished between isActive check and subscribe")
+            isProcessing = false
+            stopStreamBatching()
+            return
         }
         activeSubscriptionId = id
         refreshRecoveryStatus()

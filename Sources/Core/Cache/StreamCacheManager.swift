@@ -76,8 +76,16 @@ actor StreamCacheManager {
     // MARK: - Directory setup
 
     private func ensureDirs() {
-        try? FileManager.default.createDirectory(at: streamsDir, withIntermediateDirectories: true)
-        try? FileManager.default.createDirectory(at: contextDir,  withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: streamsDir, withIntermediateDirectories: true)
+        } catch {
+            wtLog("[StreamCache] Failed to create streams dir: \(error)")
+        }
+        do {
+            try FileManager.default.createDirectory(at: contextDir, withIntermediateDirectories: true)
+        } catch {
+            wtLog("[StreamCache] Failed to create context dir: \(error)")
+        }
     }
 
     // MARK: - Stream temp files
@@ -138,16 +146,31 @@ actor StreamCacheManager {
     /// be auto-resumed even though there are no assistant tokens to restore yet.
     /// Deletes all orphaned files after reading — they've served their purpose.
     func recoverOrphanedStreams() -> [String: String] {
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: streamsDir, includingPropertiesForKeys: nil
-        ) else { return [:] }
+        let files: [URL]
+        do {
+            files = try FileManager.default.contentsOfDirectory(
+                at: streamsDir, includingPropertiesForKeys: nil
+            )
+        } catch {
+            wtLog("[StreamCache] Failed to scan streams dir for recovery: \(error)")
+            return [:]
+        }
 
         var recovered: [String: String] = [:]
         for url in files where url.pathExtension == "tmp" {
             let sessionId = url.deletingPathExtension().lastPathComponent
-            let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-            recovered[sessionId] = text
-            try? FileManager.default.removeItem(at: url)
+            do {
+                let text = try String(contentsOf: url, encoding: .utf8)
+                recovered[sessionId] = text
+            } catch {
+                wtLog("[StreamCache] Failed to read orphaned stream \(sessionId.prefix(8)): \(error)")
+                recovered[sessionId] = ""  // Still signal that recovery is needed
+            }
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch {
+                wtLog("[StreamCache] Failed to delete recovered stream file \(sessionId.prefix(8)): \(error)")
+            }
         }
         return recovered
     }
@@ -220,8 +243,11 @@ actor StreamCacheManager {
     func updateContextCache(sessionId: String, messages: [CachedMessage]) {
         ensureDirs()
         let trimmed = Array(messages.suffix(contextMessageLimit))
-        if let data = try? JSONEncoder().encode(trimmed) {
-            try? data.write(to: contextURL(sessionId), options: .atomic)
+        do {
+            let data = try JSONEncoder().encode(trimmed)
+            try data.write(to: contextURL(sessionId), options: .atomic)
+        } catch {
+            wtLog("[StreamCache] Failed to write context cache for \(sessionId.prefix(8)): \(error)")
         }
         // Prune in background if over budget
         Task { pruneIfNeeded() }
@@ -290,10 +316,15 @@ actor StreamCacheManager {
             FileManager.default.createFile(atPath: url.path, contents: nil)
         }
 
-        let handle = try? FileHandle(forWritingTo: url)
-        handles[sessionId] = handle
-        chunkCounts[sessionId] = chunkCounts[sessionId] ?? 0
-        lastWriteTime[sessionId] = Date()
-        return handle
+        do {
+            let handle = try FileHandle(forWritingTo: url)
+            handles[sessionId] = handle
+            chunkCounts[sessionId] = chunkCounts[sessionId] ?? 0
+            lastWriteTime[sessionId] = Date()
+            return handle
+        } catch {
+            wtLog("[StreamCache] Failed to open write handle for \(sessionId.prefix(8)): \(error)")
+            return nil
+        }
     }
 }

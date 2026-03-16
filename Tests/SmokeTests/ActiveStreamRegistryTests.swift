@@ -65,10 +65,13 @@ final class ActiveStreamRegistryTests: XCTestCase {
         }
         await fulfillment(of: [replayedContent], timeout: 1.5)
 
-        let subscriptionId = ActiveStreamRegistry.shared.subscribe(branchId: branchId) { event in
+        guard let subscriptionId = ActiveStreamRegistry.shared.subscribe(branchId: branchId, onEvent: { event in
             if case .text(let token) = event, token == " stream" {
                 futureToken.fulfill()
             }
+        }) else {
+            XCTFail("subscribe returned nil — stream handle should exist")
+            return
         }
         defer { ActiveStreamRegistry.shared.unsubscribe(branchId: branchId, id: subscriptionId) }
 

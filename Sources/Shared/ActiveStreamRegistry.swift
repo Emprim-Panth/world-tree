@@ -58,8 +58,14 @@ final class ActiveStreamRegistry {
     /// Subscribe to events from an active stream.
     ///
     /// Returns a UUID cookie — pass it to `unsubscribe` when the ViewModel deallocates.
+    /// Returns `nil` if no stream handle exists for `branchId` (caller should retry after
+    /// `.activeStreamStarted` fires).
     /// Unsubscribing does NOT cancel the stream; the Task keeps running.
-    func subscribe(branchId: String, onEvent: @escaping (BridgeEvent) -> Void) -> UUID {
+    func subscribe(branchId: String, onEvent: @escaping (BridgeEvent) -> Void) -> UUID? {
+        guard handles[branchId] != nil else {
+            wtLog("[ActiveStreamRegistry] subscribe called for \(branchId.prefix(8)) but no active handle — returning nil")
+            return nil
+        }
         let id = UUID()
         handles[branchId]?.subscribers[id] = onEvent
         return id
