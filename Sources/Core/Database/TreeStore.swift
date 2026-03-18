@@ -112,7 +112,7 @@ final class TreeStore {
                 return nil
             }
 
-            var branches = try Branch.filter(Column("tree_id") == id)
+            var branches = try Branch.filter(Column("tree_id") == id && Column("status") != "archived")
                 .order(Column("created_at"))
                 .fetchAll(db)
 
@@ -625,7 +625,7 @@ final class TreeStore {
             let placeholders = sqlPlaceholders(count: treeIds.count)
             let rows = try Row.fetchAll(
                 db,
-                sql: "SELECT * FROM canvas_branches WHERE tree_id IN (\(placeholders)) ORDER BY created_at",
+                sql: "SELECT * FROM canvas_branches WHERE tree_id IN (\(placeholders)) AND status <> 'archived' ORDER BY created_at",
                 arguments: StatementArguments(treeIds)
             )
             var result: [String: [Branch]] = [:]

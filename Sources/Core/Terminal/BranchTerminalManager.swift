@@ -641,7 +641,12 @@ final class BranchTerminalManager: ObservableObject {
             guard let self else { return }
             try? await Task.sleep(for: .milliseconds(100))
 
-            let sessionName = self.resolveProjectSessionName(project: project, workingDirectory: workingDirectory)
+            // Fall back to ~/Development if the tree has no working directory set
+            let effectiveWorkDir = workingDirectory.isEmpty
+                ? "\(FileManager.default.homeDirectoryForCurrentUser.path)/Development"
+                : workingDirectory
+
+            let sessionName = self.resolveProjectSessionName(project: project, workingDirectory: effectiveWorkDir)
             self.projectTmuxNames[project] = sessionName
 
             if FileManager.default.fileExists(atPath: tmuxExecutable) {
@@ -655,12 +660,12 @@ final class BranchTerminalManager: ObservableObject {
                     args: ["new-session", "-A", "-s", sessionName],
                     environment: envList,
                     execName: "tmux",
-                    currentDirectory: workingDirectory
+                    currentDirectory: effectiveWorkDir
                 )
                 wtLog("[BranchTerminalManager] project tmux '\(sessionName)' \(sessionWasNew ? "created" : "reattached") for \(project)")
 
                 if sessionWasNew {
-                    self.initializeProjectSession(name: sessionName, workingDirectory: workingDirectory)
+                    self.initializeProjectSession(name: sessionName, workingDirectory: effectiveWorkDir)
                 }
             } else {
                 tv.startProcess(
@@ -668,13 +673,13 @@ final class BranchTerminalManager: ObservableObject {
                     args: ["-i"],
                     environment: envList,
                     execName: "zsh",
-                    currentDirectory: workingDirectory
+                    currentDirectory: effectiveWorkDir
                 )
             }
 
             // Apply tmux enhancements to project terminals too
             if FileManager.default.fileExists(atPath: tmuxExecutable) {
-                self.enhanceTmuxSession(name: sessionName, branchId: "project-\(project)", workingDirectory: workingDirectory)
+                self.enhanceTmuxSession(name: sessionName, branchId: "project-\(project)", workingDirectory: effectiveWorkDir)
             }
         }
 
