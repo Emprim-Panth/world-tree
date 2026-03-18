@@ -13,15 +13,10 @@ struct SingleDocumentView: View {
         _viewModel = StateObject(wrappedValue: SingleDocumentViewModel(treeId: treeId, branchId: branchId))
     }
 
-    /// The branch whose terminal to show at the bottom (fallback when no project).
+    /// The branch whose terminal to show at the bottom.
     /// Prefers the sidebar-selected branch; falls back to this tree's main branch.
     private var activeTerminalBranchId: String {
         appState.selectedBranchId ?? viewModel.mainBranchId
-    }
-
-    /// Whether this tree is bound to a project (and should use a project-level terminal).
-    private var hasProjectTerminal: Bool {
-        viewModel.projectName != nil
     }
 
     /// Persisted terminal panel height — survives branch switches.
@@ -64,35 +59,19 @@ struct SingleDocumentView: View {
                             }
                     )
 
-                if let project = viewModel.projectName {
-                    // Project terminal — persists across branch switches
-                    TerminalPanelView(
-                        project: project,
-                        workingDirectory: viewModel.workingDirectory,
-                        onClose: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                appState.terminalVisible = false
-                            }
+                // Branch terminal — always shows live chat log for this conversation
+                TerminalPanelView(
+                    branchId: activeTerminalBranchId,
+                    workingDirectory: viewModel.workingDirectory,
+                    onClose: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            appState.terminalVisible = false
                         }
-                    )
-                    .id("project-\(project)")
-                    .frame(height: terminalHeight)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else {
-                    // Branch terminal — fallback for workspace trees without a project
-                    TerminalPanelView(
-                        branchId: activeTerminalBranchId,
-                        workingDirectory: viewModel.workingDirectory,
-                        onClose: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                appState.terminalVisible = false
-                            }
-                        }
-                    )
-                    .id(activeTerminalBranchId)
-                    .frame(height: terminalHeight)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
+                    }
+                )
+                .id(activeTerminalBranchId)
+                .frame(height: terminalHeight)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .onAppear {
