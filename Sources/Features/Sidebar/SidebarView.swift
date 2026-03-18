@@ -298,6 +298,7 @@ struct SidebarView: View {
                                         treeCount: group.trees.count,
                                         isDocsSelected: appState.selectedProjectName == group.project && appState.sidebarDestination == .projectDocs,
                                         isExpanded: isGroupExpanded,
+                                        isSelected: group.trees.contains { $0.id == appState.selectedTreeId },
                                         phase: viewModel.compassStates[group.project]?.currentPhase,
                                         blockerCount: viewModel.compassStates[group.project]?.blockers.count ?? 0,
                                         onToggle: {
@@ -307,6 +308,7 @@ struct SidebarView: View {
                                                 collapsedProjects.remove(group.project)
                                             }
                                         },
+                                        onSelect: { openLatestTree(in: group) },
                                         onNewTree: {
                                             quickNewTreeProject = group.project
                                             newTreeProject = group.project
@@ -608,9 +610,18 @@ struct SidebarView: View {
                         treeCount: 0,
                         isDocsSelected: false,
                         isExpanded: false,
+                        isSelected: false,
                         phase: viewModel.compassStates[group.project]?.currentPhase,
                         blockerCount: viewModel.compassStates[group.project]?.blockers.count ?? 0,
                         onToggle: {},
+                        onSelect: {
+                            newTreeProject = group.project
+                            newTreeName = ""
+                            if let path = viewModel.resolvedPath(for: group.project) {
+                                newTreeWorkingDir = path
+                            }
+                            showNewTreeSheet = true
+                        },
                         onNewTree: {
                             newTreeProject = group.project
                             newTreeName = ""
@@ -1124,9 +1135,11 @@ struct ProjectGroupHeader: View {
     let treeCount: Int
     let isDocsSelected: Bool
     let isExpanded: Bool
+    let isSelected: Bool
     let phase: String?
     let blockerCount: Int
     let onToggle: () -> Void
+    let onSelect: () -> Void
     let onNewTree: () -> Void
     let onOpenDocs: () -> Void
     let onRename: () -> Void
@@ -1152,49 +1165,56 @@ struct ProjectGroupHeader: View {
                 .accessibilityLabel(isExpanded ? "Collapse \(projectName)" : "Expand \(projectName)")
                 .accessibilityHint("Toggles project group visibility")
 
-                Image(systemName: typeIcon)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 13)
+                Button(action: onSelect) {
+                    HStack(spacing: 5) {
+                        Image(systemName: typeIcon)
+                            .font(.caption2)
+                            .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                            .frame(width: 13)
 
-                Text(projectName)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+                        Text(projectName)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                            .lineLimit(1)
 
-                if let git = gitInfo {
-                    Text(git)
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(.quaternary)
-                        .cornerRadius(3)
-                        .accessibilityLabel("Git branch: \(git)")
+                        if let git = gitInfo {
+                            Text(git)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(.quaternary)
+                                .cornerRadius(3)
+                                .accessibilityLabel("Git branch: \(git)")
+                        }
+
+                        if let phase = phase {
+                            Text(phase)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.accentColor.opacity(0.12))
+                                .cornerRadius(3)
+                                .accessibilityLabel("Phase: \(phase)")
+                        }
+
+                        if blockerCount > 0 {
+                            Text("\(blockerCount)!")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.red.opacity(0.8))
+                                .cornerRadius(3)
+                                .accessibilityLabel("\(blockerCount) blocker\(blockerCount == 1 ? "" : "s")")
+                        }
+                    }
                 }
-
-                if let phase = phase {
-                    Text(phase)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color.accentColor.opacity(0.12))
-                        .cornerRadius(3)
-                        .accessibilityLabel("Phase: \(phase)")
-                }
-
-                if blockerCount > 0 {
-                    Text("\(blockerCount)!")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color.red.opacity(0.8))
-                        .cornerRadius(3)
-                        .accessibilityLabel("\(blockerCount) blocker\(blockerCount == 1 ? "" : "s")")
-                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open \(projectName)")
+                .accessibilityHint("Opens the most recent conversation in this project")
 
                 Spacer()
 
@@ -1202,7 +1222,7 @@ struct ProjectGroupHeader: View {
                     Text("\(treeCount)")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
-                        .accessibilityLabel("\(treeCount) trees")
+                        .accessibilityLabel("\(treeCount) conversations")
                 }
 
                 Button(action: onOpenDocs) {
