@@ -28,11 +28,10 @@ struct BranchTerminalView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: CapturingTerminalView, context: Context) {
-        DispatchQueue.main.async {
-            if nsView.window != nil {
-                nsView.window?.makeFirstResponder(nsView)
-            }
-        }
+        // Do NOT steal focus here — updateNSView fires on every SwiftUI render cycle,
+        // so calling makeFirstResponder here would intercept every toolbar click,
+        // sidebar tap, and keyboard shortcut, making the rest of the UI unresponsive.
+        // Focus is given to the terminal only once in makeNSView (initial appearance).
     }
 }
 
@@ -57,10 +56,8 @@ struct ProjectTerminalView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: CapturingTerminalView, context: Context) {
-        DispatchQueue.main.async {
-            if nsView.window != nil {
-                nsView.window?.makeFirstResponder(nsView)
-            }
-        }
+        // Same as BranchTerminalView — do NOT call makeFirstResponder here.
+        // updateNSView fires on every render; stealing focus on every cycle
+        // breaks toolbar buttons, sidebar navigation, and keyboard shortcuts.
     }
 }
