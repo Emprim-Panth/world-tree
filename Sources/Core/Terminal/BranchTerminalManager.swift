@@ -339,7 +339,10 @@ final class BranchTerminalManager: ObservableObject {
             ("hook after-send-keys", ["set-hook", "-t", name, "after-send-keys",
                                       "run-shell \"date '+%Y-%m-%dT%H:%M:%S #{pane_current_command} #{pane_current_path}' >> \(auditDir)/\(name).audit\""]),
 
-            // ── 6. Pane border labels — identify panes at a glance ──
+            // ── 6. Mouse support — enable scroll, click, and resize via trackpad/mouse ──
+            ("mouse on", ["set-option", "-t", name, "mouse", "on"]),
+
+            // ── 7. Pane border labels — identify panes at a glance ──
             ("pane-border-status", ["set-option", "-t", name, "pane-border-status", "top"]),
             ("pane-border-format", ["set-option", "-t", name, "pane-border-format",
                                     "#[fg=#64ffda] #{pane_current_command} #[fg=#555]│ #{pane_current_path}"]),
