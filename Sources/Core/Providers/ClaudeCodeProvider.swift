@@ -46,6 +46,11 @@ final class ClaudeCodeProvider: LLMProvider {
     /// Tracks when each session was last successfully used (CLI returned output).
     /// Sessions older than this TTL are not resumed — the server has likely expired them.
     private var cliSessionLastUsed: [String: Date] = [:]
+    /// Tracks the working directory used when each CLI session was created.
+    /// Claude CLI stores sessions per-project based on cwd (in ~/.claude/projects/<cwd-encoded>/).
+    /// Resuming from a different cwd causes --resume to silently fail and start a new session.
+    /// By replaying the original cwd we guarantee the CLI finds the session file.
+    private var cliSessionWorkDir: [String: String] = [:]
     private static let sessionTTL: TimeInterval = 30 * 60  // 30 minutes
     private let mapLock = NSLock()
 
@@ -186,11 +191,17 @@ final class ClaudeCodeProvider: LLMProvider {
             proc.arguments = args
 
             let fallbackDir = "\(home)/Development"
-            if let cwd = context.workingDirectory,
-               FileManager.default.fileExists(atPath: cwd) {
+            // When resuming, use the working directory from when the session was CREATED.
+            // Claude CLI stores sessions per-project based on cwd (in ~/.claude/projects/<path>/).
+            // If we run --resume from a different cwd the CLI looks in the wrong project directory,
+            // can't find the session file, and silently starts a fresh session.
+            // The stored workDir ensures --resume always hits the correct project directory.
+            let resumeWorkDir: String? = cliSessionId != nil ? self.getCliWorkDir(for: context.sessionId) : nil
+            let preferredCwd = resumeWorkDir ?? context.workingDirectory
+            if let cwd = preferredCwd, FileManager.default.fileExists(atPath: cwd) {
                 proc.currentDirectoryURL = URL(fileURLWithPath: cwd)
             } else {
-                if let cwd = context.workingDirectory {
+                if let cwd = context.workingDirectory, resumeWorkDir == nil {
                     wtLog("[ClaudeCodeProvider] ⚠️ Working directory missing: \(cwd) — falling back to ~/Development")
                 }
                 proc.currentDirectoryURL = URL(fileURLWithPath: fallbackDir)
@@ -247,7 +258,9 @@ final class ClaudeCodeProvider: LLMProvider {
                     let events = parser.feed(data)
                     for event in events {
                         // Track content yield so termination handler can detect silent empty runs.
+                        // Tool calls count as content — a tool-only response is not an empty run.
                         if case .text = event { yieldedContent = true }
+                        if case .toolStart = event { yieldedContent = true }
                         continuation.yield(event)
                     }
                     if let sid = parser.cliSessionId, let self {
@@ -256,8 +269,13 @@ final class ClaudeCodeProvider: LLMProvider {
                         if let expected = self.getCliSession(for: context.sessionId), expected != sid {
                             wtLog("[ClaudeCodeProvider] ⚠️ Resume failed silently — new session. Expected: \(expected.prefix(8))…, Got: \(sid.prefix(8))…")
                             resumeFailedSilently = true
+                            // Don't save the new session ID that came from a failed resume.
+                            // The new session has no context; it's unreliable. Rotate so the
+                            // next attempt starts completely fresh instead of chaining bad IDs.
+                            self.rotateSession(for: context.sessionId)
+                        } else {
+                            self.setCliSession(sid, for: context.sessionId, workDir: proc.currentDirectoryURL?.path)
                         }
-                        self.setCliSession(sid, for: context.sessionId)
                     }
                 }
             }
@@ -281,6 +299,7 @@ final class ClaudeCodeProvider: LLMProvider {
                     let remaining = parser.flush()
                     for event in remaining {
                         if case .text = event { yieldedContent = true }
+                        if case .toolStart = event { yieldedContent = true }
                         continuation.yield(event)
                     }
 
@@ -301,9 +320,13 @@ final class ClaudeCodeProvider: LLMProvider {
                     }()
 
                     if let sid = parser.cliSessionId, let self {
-                        self.setCliSession(sid, for: context.sessionId)
-                        Task { @MainActor [weak self] in
-                            self?.persistSessionMap()
+                        // Only update the mapping when resume succeeded (same ID) or for new sessions.
+                        // When resumeFailedSilently, the readabilityHandler already rotated — don't re-set.
+                        if !resumeFailedSilently {
+                            self.setCliSession(sid, for: context.sessionId, workDir: proc.currentDirectoryURL?.path)
+                            Task { @MainActor [weak self] in
+                                self?.persistSessionMap()
+                            }
                         }
                     } else if !wasCancelled {
                         // No session ID and not cancelled — session is broken.
@@ -384,6 +407,7 @@ final class ClaudeCodeProvider: LLMProvider {
         mapLock.lock()
         cliSessionMap.removeValue(forKey: canvasSessionId)
         cliSessionLastUsed.removeValue(forKey: canvasSessionId)
+        cliSessionWorkDir.removeValue(forKey: canvasSessionId)
         pruneExpiredSessionsLocked()
         let snapshot = cliSessionMap
         mapLock.unlock()
@@ -440,10 +464,22 @@ final class ClaudeCodeProvider: LLMProvider {
         return sid
     }
 
-    private func setCliSession(_ cliSessionId: String, for canvasSessionId: String) {
+    /// Returns the working directory that was in use when the given canvas session's
+    /// CLI session was originally created. Used to guarantee --resume finds the session
+    /// file in the correct ~/.claude/projects/<cwd>/ directory.
+    private func getCliWorkDir(for canvasSessionId: String) -> String? {
+        mapLock.lock()
+        defer { mapLock.unlock() }
+        return cliSessionWorkDir[canvasSessionId]
+    }
+
+    private func setCliSession(_ cliSessionId: String, for canvasSessionId: String, workDir: String? = nil) {
         mapLock.lock()
         cliSessionMap[canvasSessionId] = cliSessionId
         cliSessionLastUsed[canvasSessionId] = Date()
+        if let wd = workDir {
+            cliSessionWorkDir[canvasSessionId] = wd
+        }
         pruneExpiredSessionsLocked()
         let snapshot = cliSessionMap
         mapLock.unlock()
@@ -452,18 +488,27 @@ final class ClaudeCodeProvider: LLMProvider {
         writeSessionMapFile(snapshot)
     }
 
-    /// Versioned file entry — includes timestamp so resume survives app restarts.
+    /// Versioned file entry — includes timestamp and working directory so resume
+    /// always hits the correct ~/.claude/projects/<cwd>/ directory.
     private struct SessionFileEntry: Codable {
         let cliSessionId: String
         let lastUsed: TimeInterval  // Unix timestamp
+        let workDir: String?        // cwd used when the session was created
+
+        init(cliSessionId: String, lastUsed: TimeInterval, workDir: String? = nil) {
+            self.cliSessionId = cliSessionId
+            self.lastUsed = lastUsed
+            self.workDir = workDir
+        }
     }
 
     private func writeSessionMapFile(_ map: [String: String]) {
-        // Write with timestamps for round-trip fidelity.
+        // Write with timestamps and workDir for round-trip fidelity.
         mapLock.lock()
         let entries: [String: SessionFileEntry] = map.reduce(into: [:]) { result, pair in
             let ts = cliSessionLastUsed[pair.key]?.timeIntervalSince1970 ?? Date().timeIntervalSince1970
-            result[pair.key] = SessionFileEntry(cliSessionId: pair.value, lastUsed: ts)
+            let wd = cliSessionWorkDir[pair.key]
+            result[pair.key] = SessionFileEntry(cliSessionId: pair.value, lastUsed: ts, workDir: wd)
         }
         mapLock.unlock()
         guard let data = try? JSONEncoder().encode(entries) else { return }
@@ -472,7 +517,7 @@ final class ClaudeCodeProvider: LLMProvider {
 
     /// Remove all session entries whose last-used timestamp exceeds the TTL.
     /// MUST be called while mapLock is held — does not acquire the lock itself.
-    /// Lightweight: iterates timestamps once, removes expired keys from both maps.
+    /// Lightweight: iterates timestamps once, removes expired keys from all maps.
     private func pruneExpiredSessionsLocked() {
         let now = Date()
         let expiredKeys = cliSessionLastUsed.compactMap { (key, lastUsed) -> String? in
@@ -488,6 +533,7 @@ final class ClaudeCodeProvider: LLMProvider {
         for key in allStale {
             cliSessionMap.removeValue(forKey: key)
             cliSessionLastUsed.removeValue(forKey: key)
+            cliSessionWorkDir.removeValue(forKey: key)
         }
         wtLog("[ClaudeCodeProvider] Pruned \(allStale.count) expired session(s)")
     }
@@ -537,6 +583,9 @@ final class ClaudeCodeProvider: LLMProvider {
                 for (canvasId, entry) in fileMap {
                     cliSessionMap[canvasId] = entry.cliSessionId  // file wins over DB
                     cliSessionLastUsed[canvasId] = Date(timeIntervalSince1970: entry.lastUsed)
+                    if let wd = entry.workDir {
+                        cliSessionWorkDir[canvasId] = wd
+                    }
                 }
                 mapLock.unlock()
                 wtLog("[ClaudeCodeProvider] Overlaid \(fileMap.count) session mappings from file (with timestamps)")
