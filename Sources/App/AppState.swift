@@ -42,8 +42,9 @@ final class AppState {
     /// Number of active tasks across all projects (dispatches + jobs)
     var activeTaskCount: Int = 0
     /// Whether the terminal panel is visible — persisted so branch switches don't hide it.
+    /// Key bumped to v2 so existing users (who had false saved) get the new default of true.
     var terminalVisible: Bool = false {
-        didSet { UserDefaults.standard.set(terminalVisible, forKey: "terminalVisible") }
+        didSet { UserDefaults.standard.set(terminalVisible, forKey: "terminalVisible_v2") }
     }
 
     /// Navigation history for branch back/forward.
@@ -63,9 +64,10 @@ final class AppState {
             dbSetupError = error
         }
 
-        // Default to visible on first launch — terminal-on is the baseline experience.
-        let hasSetTerminalVisible = UserDefaults.standard.object(forKey: "terminalVisible") != nil
-        terminalVisible = hasSetTerminalVisible ? UserDefaults.standard.bool(forKey: "terminalVisible") : true
+        // Default to visible — terminal-on is the baseline experience.
+        // v2 key: existing machines never set this, so they get true on first launch.
+        let hasSetTerminalVisible = UserDefaults.standard.object(forKey: "terminalVisible_v2") != nil
+        terminalVisible = hasSetTerminalVisible ? UserDefaults.standard.bool(forKey: "terminalVisible_v2") : true
 
         // Restore last selected conversation from previous session
         selectedTreeId = UserDefaults.standard.string(forKey: AppConstants.lastSelectedTreeIdKey)
