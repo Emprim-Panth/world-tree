@@ -31,10 +31,6 @@ private struct AppMainContent: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
 
     var body: some View {
-        // Toolbar lives here — above NavigationSplitView — so it is applied exactly
-        // once per window. Putting .toolbar inside the detail column view causes
-        // macOS to duplicate items because the detail closure is evaluated in
-        // multiple layout contexts (sidebar-visible and sidebar-hidden states).
         SplitContainer(columnVisibility: $columnVisibility)
             .navigationTitle(appState.selectedTreeName ?? "World Tree")
             .toolbar { mainToolbar }
@@ -78,13 +74,14 @@ private struct SplitContainer: View {
     @Binding var columnVisibility: NavigationSplitViewVisibility
 
     var body: some View {
+        let key = appState.detailRefreshKey
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 350)
                 .accessibilityLabel("Sidebar")
         } detail: {
             DetailRouter()
-                .id(appState.detailRefreshKey)
+                .id(key)
         }
     }
 }

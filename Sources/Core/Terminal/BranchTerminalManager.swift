@@ -219,40 +219,47 @@ final class BranchTerminalManager: ObservableObject {
         let sessionName = tmuxNames[branchId] ?? tmuxSessionName(for: branchId)
         tmuxNames[branchId] = sessionName
 
-        if FileManager.default.fileExists(atPath: tmuxExecutable) {
-            // tmux available — attach-or-create for true persistence
-            tv.startProcess(
-                executable: tmuxExecutable,
-                args: ["new-session", "-A", "-s", sessionName],
-                environment: env.map { "\($0.key)=\($0.value)" },
-                execName: "tmux",
-                currentDirectory: workingDirectory
-            )
-            wtLog("[BranchTerminalManager] tmux session '\(sessionName)' attached/created for \(branchId.prefix(8))")
-        } else {
-            // tmux not installed — fall back to plain zsh
-            tv.startProcess(
-                executable: "/bin/zsh",
-                args: ["-i"],
-                environment: env.map { "\($0.key)=\($0.value)" },
-                execName: "zsh",
-                currentDirectory: workingDirectory
-            )
-            wtLog("[BranchTerminalManager] tmux not found; spawned plain zsh for \(branchId.prefix(8))")
-        }
-
+        // Register in cache BEFORE starting the process — prevents a double-fork if
+        // getOrCreate is called again before the deferred startProcess fires.
         terminals[branchId] = tv
         workingDirs[branchId] = workingDirectory
 
         // Persist the session name so the DB knows which tmux session owns this branch
         persistTmuxSessionName(sessionName, for: branchId)
 
-        // Apply tmux enhancements — env vars, pipe-pane, hooks, monitoring.
-        // Runs after session is created so tmux commands target a valid session.
-        if FileManager.default.fileExists(atPath: tmuxExecutable) {
-            enhanceTmuxSession(name: sessionName, branchId: branchId, workingDirectory: workingDirectory)
-            // Send cd + git status so the shell lands in the right directory immediately.
-            initializeProjectSession(name: sessionName, workingDirectory: workingDirectory)
+        // Defer forkpty() out of the synchronous makeNSView / view-init path.
+        //
+        // forkpty() in a multi-threaded process is unsafe when the Swift runtime holds
+        // an os_unfair_lock on any cooperative pool thread — guaranteed during app startup.
+        // The child inherits the locked lock but not the owning thread, which causes
+        // _os_unfair_lock_corruption_abort → SIGKILL (crash within ~22ms of launch).
+        //
+        // 100ms lets the generic-metadata instantiation burst settle before the fork,
+        // while remaining imperceptibly fast to the user (terminal is blank for < 0.1s).
+        Task { @MainActor [weak self, weak tv] in
+            guard let self, let tv else { return }
+            try? await Task.sleep(for: .milliseconds(100))
+            if FileManager.default.fileExists(atPath: tmuxExecutable) {
+                tv.startProcess(
+                    executable: tmuxExecutable,
+                    args: ["new-session", "-A", "-s", sessionName],
+                    environment: env.map { "\($0.key)=\($0.value)" },
+                    execName: "tmux",
+                    currentDirectory: workingDirectory
+                )
+                wtLog("[BranchTerminalManager] tmux session '\(sessionName)' attached/created for \(branchId.prefix(8))")
+                self.enhanceTmuxSession(name: sessionName, branchId: branchId, workingDirectory: workingDirectory)
+                self.initializeProjectSession(name: sessionName, workingDirectory: workingDirectory)
+            } else {
+                tv.startProcess(
+                    executable: "/bin/zsh",
+                    args: ["-i"],
+                    environment: env.map { "\($0.key)=\($0.value)" },
+                    execName: "zsh",
+                    currentDirectory: workingDirectory
+                )
+                wtLog("[BranchTerminalManager] tmux not found; spawned plain zsh for \(branchId.prefix(8))")
+            }
         }
 
         return tv
@@ -609,46 +616,57 @@ final class BranchTerminalManager: ObservableObject {
         let frame = NSRect(x: 0, y: 0, width: 800, height: 400)
         let tv = CapturingTerminalView(frame: frame)
 
+        // Cache immediately — before startProcess — so any re-entrant call (e.g. makeNSView
+        // during NSHostingView layout sizing) returns this instance without double-spawning.
+        projectTerminals[project] = tv
+
         var env = ProcessInfo.processInfo.environment
         env.removeValue(forKey: "CLAUDECODE")
         env["TERM"] = "xterm-256color"
+        let envList = env.map { "\($0.key)=\($0.value)" }
 
-        let sessionName = resolveProjectSessionName(project: project, workingDirectory: workingDirectory)
-        projectTmuxNames[project] = sessionName
+        // Defer forkpty() out of the synchronous makeNSView / view-init path.
+        // See getOrCreate(branchId:workingDirectory:) for the full explanation.
+        // Same 100ms sleep applies here for the same reason.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(100))
 
-        if FileManager.default.fileExists(atPath: tmuxExecutable) {
-            // Snapshot whether this is a pre-existing session before we attach/create it.
-            // Used to decide whether to send a git-context init — existing sessions keep
-            // their current shell state intact; only fresh sessions get the welcome init.
-            let sessionWasNew = !isTmuxSessionAlive(named: sessionName)
+            let sessionName = self.resolveProjectSessionName(project: project, workingDirectory: workingDirectory)
+            self.projectTmuxNames[project] = sessionName
 
-            tv.startProcess(
-                executable: tmuxExecutable,
-                args: ["new-session", "-A", "-s", sessionName],
-                environment: env.map { "\($0.key)=\($0.value)" },
-                execName: "tmux",
-                currentDirectory: workingDirectory
-            )
-            wtLog("[BranchTerminalManager] project tmux '\(sessionName)' \(sessionWasNew ? "created" : "reattached") for \(project)")
+            if FileManager.default.fileExists(atPath: tmuxExecutable) {
+                // Snapshot whether this is a pre-existing session before we attach/create it.
+                // Used to decide whether to send a git-context init — existing sessions keep
+                // their current shell state intact; only fresh sessions get the welcome init.
+                let sessionWasNew = !self.isTmuxSessionAlive(named: sessionName)
 
-            if sessionWasNew {
-                initializeProjectSession(name: sessionName, workingDirectory: workingDirectory)
+                tv.startProcess(
+                    executable: tmuxExecutable,
+                    args: ["new-session", "-A", "-s", sessionName],
+                    environment: envList,
+                    execName: "tmux",
+                    currentDirectory: workingDirectory
+                )
+                wtLog("[BranchTerminalManager] project tmux '\(sessionName)' \(sessionWasNew ? "created" : "reattached") for \(project)")
+
+                if sessionWasNew {
+                    self.initializeProjectSession(name: sessionName, workingDirectory: workingDirectory)
+                }
+            } else {
+                tv.startProcess(
+                    executable: "/bin/zsh",
+                    args: ["-i"],
+                    environment: envList,
+                    execName: "zsh",
+                    currentDirectory: workingDirectory
+                )
             }
-        } else {
-            tv.startProcess(
-                executable: "/bin/zsh",
-                args: ["-i"],
-                environment: env.map { "\($0.key)=\($0.value)" },
-                execName: "zsh",
-                currentDirectory: workingDirectory
-            )
-        }
 
-        projectTerminals[project] = tv
-
-        // Apply tmux enhancements to project terminals too
-        if FileManager.default.fileExists(atPath: tmuxExecutable) {
-            enhanceTmuxSession(name: sessionName, branchId: "project-\(project)", workingDirectory: workingDirectory)
+            // Apply tmux enhancements to project terminals too
+            if FileManager.default.fileExists(atPath: tmuxExecutable) {
+                self.enhanceTmuxSession(name: sessionName, branchId: "project-\(project)", workingDirectory: workingDirectory)
+            }
         }
 
         return tv
@@ -917,9 +935,15 @@ final class BranchTerminalManager: ObservableObject {
         proc.standardOutput = FileHandle.nullDevice
         proc.standardError = FileHandle.nullDevice
 
+        // Use a semaphore instead of waitUntilExit(). waitUntilExit() pumps the main run loop,
+        // which allows SwiftUI to re-enter AttributeGraph during a render pass → abort().
+        // sema.wait() blocks via a kernel wait with no run loop involvement.
+        let sema = DispatchSemaphore(value: 0)
+        proc.terminationHandler = { _ in sema.signal() }
+
         do {
             try proc.run()
-            proc.waitUntilExit()
+            sema.wait()
             return proc.terminationStatus == 0
         } catch {
             return false
@@ -1160,6 +1184,13 @@ final class BranchTerminalManager: ObservableObject {
             _ = getOrCreateProjectTerminal(project: project, workingDirectory: workingDirectory)
             if let sessionName = projectTmuxNames[project] {
                 persistTmuxSessionName(sessionName, for: branchId)
+            } else {
+                // Session name is resolved async in getOrCreateProjectTerminal — persist on next turn.
+                let capturedBranchId = branchId
+                Task { @MainActor [weak self] in
+                    guard let self, let sessionName = self.projectTmuxNames[project] else { return }
+                    self.persistTmuxSessionName(sessionName, for: capturedBranchId)
+                }
             }
             return
         }
