@@ -1,6 +1,18 @@
 import SwiftUI
 import SwiftTerm
 
+// MARK: - TerminalFocusCoordinator
+
+/// Shared coordinator for terminal NSViewRepresentables.
+/// Installs a click gesture recognizer that claims keyboard focus on tap
+/// without blocking SwiftTerm's own mouse handling (selection, scroll, etc.).
+final class TerminalFocusCoordinator: NSObject {
+    @objc func claimFocus(_ recognizer: NSClickGestureRecognizer) {
+        guard let view = recognizer.view else { return }
+        view.window?.makeFirstResponder(view)
+    }
+}
+
 // MARK: - BranchTerminalView
 
 /// NSViewRepresentable that pulls a persistent LocalProcessTerminalView from BranchTerminalManager.
@@ -15,6 +27,8 @@ struct BranchTerminalView: NSViewRepresentable {
     let branchId: String
     let workingDirectory: String
 
+    func makeCoordinator() -> TerminalFocusCoordinator { TerminalFocusCoordinator() }
+
     func makeNSView(context: Context) -> CapturingTerminalView {
         let tv = BranchTerminalManager.shared.getOrCreate(
             branchId: branchId,
@@ -24,14 +38,21 @@ struct BranchTerminalView: NSViewRepresentable {
         tv.nativeBackgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.10, alpha: 1.0)
         tv.nativeForegroundColor = NSColor(red: 0.85, green: 0.87, blue: 0.91, alpha: 1.0)
         tv.font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+
+        // Claim keyboard focus on click. delaysPrimaryMouseButtonEvents = false
+        // lets SwiftTerm's own mouseDown (text selection, cursor placement) still fire.
+        let click = NSClickGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(TerminalFocusCoordinator.claimFocus(_:))
+        )
+        click.delaysPrimaryMouseButtonEvents = false
+        tv.addGestureRecognizer(click)
+
         return tv
     }
 
     func updateNSView(_ nsView: CapturingTerminalView, context: Context) {
-        // Do NOT steal focus here — updateNSView fires on every SwiftUI render cycle,
-        // so calling makeFirstResponder here would intercept every toolbar click,
-        // sidebar tap, and keyboard shortcut, making the rest of the UI unresponsive.
-        // Focus is given to the terminal only once in makeNSView (initial appearance).
+        // Do NOT steal focus here — updateNSView fires on every SwiftUI render cycle.
     }
 }
 
@@ -44,6 +65,8 @@ struct ProjectTerminalView: NSViewRepresentable {
     let project: String
     let workingDirectory: String
 
+    func makeCoordinator() -> TerminalFocusCoordinator { TerminalFocusCoordinator() }
+
     func makeNSView(context: Context) -> CapturingTerminalView {
         let tv = BranchTerminalManager.shared.getOrCreateProjectTerminal(
             project: project,
@@ -52,12 +75,18 @@ struct ProjectTerminalView: NSViewRepresentable {
         tv.nativeBackgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.10, alpha: 1.0)
         tv.nativeForegroundColor = NSColor(red: 0.85, green: 0.87, blue: 0.91, alpha: 1.0)
         tv.font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+
+        let click = NSClickGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(TerminalFocusCoordinator.claimFocus(_:))
+        )
+        click.delaysPrimaryMouseButtonEvents = false
+        tv.addGestureRecognizer(click)
+
         return tv
     }
 
     func updateNSView(_ nsView: CapturingTerminalView, context: Context) {
-        // Same as BranchTerminalView — do NOT call makeFirstResponder here.
-        // updateNSView fires on every render; stealing focus on every cycle
-        // breaks toolbar buttons, sidebar navigation, and keyboard shortcuts.
+        // Do NOT steal focus here — updateNSView fires on every render.
     }
 }
