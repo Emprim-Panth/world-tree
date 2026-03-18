@@ -30,33 +30,11 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 350)
                 .accessibilityLabel("Sidebar")
         } detail: {
-            if let treeId = appState.selectedTreeId {
-                // .id() keyed on both tree and branch forces SwiftUI to fully recreate
-                // SingleDocumentView (and its @StateObject viewModel) whenever either changes.
-                // With the WKWebView pool cap (max 8), recreation cost is now bounded.
-                let selectedBranchId = appState.selectedBranchId ?? ""
-                SingleDocumentView(treeId: treeId, branchId: appState.selectedBranchId)
-                    .id("\(treeId)-\(selectedBranchId)")
-            } else {
-                switch appState.sidebarDestination {
-                case .commandCenter:
-                    CommandCenterView()
-                case .projectDocs:
-                    if let projectName = appState.selectedProjectName {
-                        ProjectDocsView(projectName: projectName, workingDirectory: appState.selectedProjectPath)
-                    } else {
-                        CommandCenterView()
-                    }
-                case .tickets:
-                    AllTicketsView()
-                case .timeline:
-                    EventTimelineView()
-                case .mcpTools:
-                    MCPToolsView()
-                case .brain:
-                    BrainView()
-                }
-            }
+            // DetailRouter is a separate view so @Observable tracking on appState
+            // is scoped to its own body. NavigationSplitView's detail closure does
+            // not reliably track @Observable reads — extracting into a child view
+            // ensures selectedTreeId/selectedBranchId changes trigger re-renders.
+            DetailRouter()
         }
         .sheet(isPresented: Binding(
             get: { appState.showGlobalSearch },
@@ -65,6 +43,43 @@ struct ContentView: View {
             GlobalSearchView()
                 .environment(appState)
                 .frame(minWidth: 600, minHeight: 400)
+        }
+    }
+}
+
+/// Routes the detail column based on AppState selection.
+/// Extracted as a separate view so @Observable tracking on AppState
+/// is properly scoped — NavigationSplitView's detail closure does not
+/// reliably invalidate on @Observable changes.
+private struct DetailRouter: View {
+    @Environment(AppState.self) var appState
+
+    var body: some View {
+        if let treeId = appState.selectedTreeId {
+            // .id() keyed on both tree and branch forces SwiftUI to fully recreate
+            // SingleDocumentView (and its @StateObject viewModel) whenever either changes.
+            let selectedBranchId = appState.selectedBranchId ?? ""
+            SingleDocumentView(treeId: treeId, branchId: appState.selectedBranchId)
+                .id("\(treeId)-\(selectedBranchId)")
+        } else {
+            switch appState.sidebarDestination {
+            case .commandCenter:
+                CommandCenterView()
+            case .projectDocs:
+                if let projectName = appState.selectedProjectName {
+                    ProjectDocsView(projectName: projectName, workingDirectory: appState.selectedProjectPath)
+                } else {
+                    CommandCenterView()
+                }
+            case .tickets:
+                AllTicketsView()
+            case .timeline:
+                EventTimelineView()
+            case .mcpTools:
+                MCPToolsView()
+            case .brain:
+                BrainView()
+            }
         }
     }
 }
