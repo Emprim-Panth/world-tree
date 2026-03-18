@@ -63,7 +63,9 @@ final class AppState {
             dbSetupError = error
         }
 
-        terminalVisible = UserDefaults.standard.bool(forKey: "terminalVisible")
+        // Default to visible on first launch — terminal-on is the baseline experience.
+        let hasSetTerminalVisible = UserDefaults.standard.object(forKey: "terminalVisible") != nil
+        terminalVisible = hasSetTerminalVisible ? UserDefaults.standard.bool(forKey: "terminalVisible") : true
 
         // Restore last selected conversation from previous session
         selectedTreeId = UserDefaults.standard.string(forKey: AppConstants.lastSelectedTreeIdKey)

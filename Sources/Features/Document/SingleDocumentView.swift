@@ -129,10 +129,13 @@ class SingleDocumentViewModel: ObservableObject {
         self.treeId = treeId
 
         // One DB read — reused for both workingDirectory and root branch lookup.
-        let cwd = FileManager.default.currentDirectoryPath
+        // macOS apps have currentDirectoryPath = "/" which is useless as a working dir.
+        // Fall back to ~/Development instead — always a valid, meaningful directory.
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let fallbackCwd = "\(home)/Development"
         let existingTree = try? TreeStore.shared.getTree(treeId)
         let workDir = existingTree?.workingDirectory
-            .flatMap { $0.isEmpty ? nil : $0 } ?? cwd
+            .flatMap { $0.isEmpty || $0 == "/" ? nil : $0 } ?? fallbackCwd
 
         // If a specific branchId was requested (e.g., user clicked a branch in sidebar),
         // try to load that branch first. Fall back to root branch if not found.

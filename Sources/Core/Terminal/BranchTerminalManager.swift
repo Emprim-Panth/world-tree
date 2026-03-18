@@ -251,6 +251,8 @@ final class BranchTerminalManager: ObservableObject {
         // Runs after session is created so tmux commands target a valid session.
         if FileManager.default.fileExists(atPath: tmuxExecutable) {
             enhanceTmuxSession(name: sessionName, branchId: branchId, workingDirectory: workingDirectory)
+            // Send cd + git status so the shell lands in the right directory immediately.
+            initializeProjectSession(name: sessionName, workingDirectory: workingDirectory)
         }
 
         return tv
