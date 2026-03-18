@@ -531,29 +531,6 @@ class DocumentEditorViewModel: ObservableObject {
     /// inject this as priority context then clear it.
     private var checkpointContext: String?
 
-    /// Mirror text to whichever terminal is actually visible — writes directly to the
-    /// terminal display via feed(), bypassing the shell process. Project terminal if a
-    /// project is set (the panel shows `wt-{project}`), otherwise branch terminal.
-    private func mirrorToTerminal(_ text: String) {
-        if let project = cachedProject {
-            BranchTerminalManager.shared.mirrorToProject(project, text: text)
-        } else {
-            BranchTerminalManager.shared.mirror(to: branchId, text: text)
-        }
-    }
-
-    /// HH:MM:SS timestamp for terminal tool headers.
-    private static func terminalTimestamp() -> String {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        return f.string(from: Date())
-    }
-
-    /// Shorten an absolute path for terminal display — replaces home dir with ~.
-    private static func shortenPath(_ path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return path.replacingOccurrences(of: home, with: "~")
-    }
     /// Stable UUID per message ID — prevents random UUIDs being generated each
     /// render cycle when msg.id is an integer string (not a UUID string).
     private var stableSectionIds: [String: UUID] = [:]
@@ -1606,70 +1583,18 @@ class DocumentEditorViewModel: ObservableObject {
         switch event {
         case .text(let token):
             pendingTokenBuffer += token
-            mirrorToTerminal("\u{1B}[1;37m\(token)\u{1B}[0m")
 
-        case .thinking(let chunk):
-            mirrorToTerminal("\u{1B}[2;3m\(chunk)\u{1B}[0m")
+        case .thinking:
+            break
 
         case .toolStart(let name, let input):
             let activity = ToolActivity(name: name, input: input, status: .running)
             currentTool = activity.displayDescription
             GlobalStreamRegistry.shared.updateTool(branchId: branchId, tool: currentTool)
-            let ts = Self.terminalTimestamp()
-            var header = "\r\n\u{1B}[2m\u{1B}[90m─── \(ts) "
-            if let parsed = activity.parsedInput {
-                switch name {
-                case "Bash", "bash":
-                    let cmd = parsed["command"] as? String ?? ""
-                    let preview = cmd.components(separatedBy: .newlines).first ?? cmd
-                    let truncated = preview.count > 120 ? String(preview.prefix(120)) + "…" : preview
-                    header += "\u{1B}[0m\r\n\u{1B}[1;36m  ❯ \(truncated)\u{1B}[0m"
-                case "Read", "read_file":
-                    let path = Self.shortenPath(parsed["file_path"] as? String ?? "file")
-                    header += "\u{1B}[0m\r\n\u{1B}[33m  ◆ Read \(path)\u{1B}[0m"
-                case "Edit", "edit_file":
-                    let path = Self.shortenPath(parsed["file_path"] as? String ?? "file")
-                    header += "\u{1B}[0m\r\n\u{1B}[32m  ◆ Edit \(path)\u{1B}[0m"
-                case "Write", "write_file":
-                    let path = Self.shortenPath(parsed["file_path"] as? String ?? "file")
-                    header += "\u{1B}[0m\r\n\u{1B}[32m  ◆ Write \(path)\u{1B}[0m"
-                case "Grep", "grep":
-                    let pattern = parsed["pattern"] as? String ?? ""
-                    let path = Self.shortenPath(parsed["path"] as? String ?? "")
-                    header += "\u{1B}[0m\r\n\u{1B}[35m  ◆ Grep \"\(pattern)\" \(path)\u{1B}[0m"
-                case "Glob", "glob":
-                    let pattern = parsed["pattern"] as? String ?? ""
-                    header += "\u{1B}[0m\r\n\u{1B}[35m  ◆ Glob \"\(pattern)\"\u{1B}[0m"
-                case "Agent", "agent":
-                    let desc = parsed["description"] as? String ?? "subagent"
-                    header += "\u{1B}[0m\r\n\u{1B}[34m  ◆ Agent: \(desc)\u{1B}[0m"
-                default:
-                    header += "\u{1B}[0m\r\n\u{1B}[2m  ◆ \(activity.displayDescription)\u{1B}[0m"
-                }
-            } else {
-                header += "\u{1B}[0m\r\n\u{1B}[2m  ◆ \(activity.displayDescription)\u{1B}[0m"
-            }
-            mirrorToTerminal(header + "\r\n")
 
-        case .toolEnd(let name, let result, let isError):
+        case .toolEnd:
             currentTool = nil
             GlobalStreamRegistry.shared.updateTool(branchId: branchId, tool: nil)
-            if !result.isEmpty {
-                let lines = result.components(separatedBy: .newlines)
-                let maxLines = isError ? 20 : 15
-                let previewLines = lines.prefix(maxLines)
-                let indented = previewLines.map { line -> String in
-                    let trimmed = line.count > 200 ? String(line.prefix(200)) + "…" : line
-                    return "  \u{1B}[90m│\u{1B}[0m \u{1B}[2m\(trimmed)\u{1B}[0m"
-                }.joined(separator: "\r\n")
-                let overflow = lines.count > maxLines
-                    ? "\r\n  \u{1B}[90m│ … \(lines.count - maxLines) more lines\u{1B}[0m" : ""
-                let statusIcon = isError ? "\u{1B}[31m✗\u{1B}[0m" : "\u{1B}[32m✓\u{1B}[0m"
-                mirrorToTerminal("\(indented)\(overflow)\r\n  \u{1B}[90m└─\u{1B}[0m \(statusIcon)\r\n")
-            } else {
-                let statusIcon = isError ? "\u{1B}[31m✗\u{1B}[0m" : "\u{1B}[32m✓\u{1B}[0m"
-                mirrorToTerminal("  \u{1B}[90m└─\u{1B}[0m \(statusIcon)\r\n")
-            }
 
         case .done(let usage):
             activeSubscriptionId = nil
@@ -1682,9 +1607,6 @@ class DocumentEditorViewModel: ObservableObject {
             // Token accounting
             let model = UserDefaults.standard.string(forKey: AppConstants.defaultModelKey) ?? AppConstants.defaultModel
             if usage.totalInputTokens > 0 || usage.totalOutputTokens > 0 {
-                let inK = String(format: "%.1f", Double(usage.totalInputTokens) / 1000.0)
-                let outK = String(format: "%.1f", Double(usage.totalOutputTokens) / 1000.0)
-                mirrorToTerminal("\r\n\u{1B}[90m━━━ \(inK)K in · \(outK)K out ━━━\u{1B}[0m\r\n\r\n")
                 TokenStore.shared.record(
                     sessionId: sessionId,
                     branchId: branchId,
@@ -1819,7 +1741,6 @@ class DocumentEditorViewModel: ObservableObject {
             streamingContent = nil
             isProcessing = false
             wtLog("[DocumentEditor] Provider error: \(msg)")
-            mirrorToTerminal("\r\n\u{1B}[1;31m  ⚠ Error: \(msg)\u{1B}[0m\r\n")
             // Persist and display the error inline in the chat so the user sees it
             // even if they miss the alert (e.g. window not focused, alert dismissed).
             do {

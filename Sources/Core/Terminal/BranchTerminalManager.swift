@@ -723,13 +723,6 @@ final class BranchTerminalManager: ObservableObject {
         tv.send(source: tv, data: bytes)
     }
 
-    /// Mirror text to a project terminal's display — bypasses the shell process entirely.
-    /// Used to show Claude's live output (tool calls, results, text) without typing into zsh.
-    func mirrorToProject(_ project: String, text: String) {
-        guard let tv = projectTerminals[project] else { return }
-        tv.feed(text: text)
-    }
-
     private static func syntheticProjectSessionName(for project: String) -> String {
         let normalized = project
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1142,13 +1135,6 @@ final class BranchTerminalManager: ObservableObject {
         guard let tv = terminals[branchId] else { return }
         let bytes = ArraySlice(Array(text.utf8))
         tv.send(source: tv, data: bytes)
-    }
-
-    /// Mirror text to a branch terminal's display — bypasses the shell process entirely.
-    /// Used to show Claude's live output without typing into the shell.
-    func mirror(to branchId: String, text: String) {
-        guard let tv = terminals[branchId] else { return }
-        tv.feed(text: text)
     }
 
     // MARK: - Terminal Output Capture
