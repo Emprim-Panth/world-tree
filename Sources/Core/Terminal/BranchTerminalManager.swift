@@ -240,6 +240,7 @@ final class BranchTerminalManager: ObservableObject {
             guard let self, let tv else { return }
             try? await Task.sleep(for: .milliseconds(100))
             if FileManager.default.fileExists(atPath: tmuxExecutable) {
+                let sessionWasNew = !self.isTmuxSessionAlive(named: sessionName)
                 tv.startProcess(
                     executable: tmuxExecutable,
                     args: ["new-session", "-A", "-s", sessionName],
@@ -247,9 +248,11 @@ final class BranchTerminalManager: ObservableObject {
                     execName: "tmux",
                     currentDirectory: workingDirectory
                 )
-                wtLog("[BranchTerminalManager] tmux session '\(sessionName)' attached/created for \(branchId.prefix(8))")
+                wtLog("[BranchTerminalManager] tmux session '\(sessionName)' \(sessionWasNew ? "created" : "reattached") for \(branchId.prefix(8))")
                 self.enhanceTmuxSession(name: sessionName, branchId: branchId, workingDirectory: workingDirectory)
-                self.initializeProjectSession(name: sessionName, workingDirectory: workingDirectory)
+                if sessionWasNew {
+                    self.initializeProjectSession(name: sessionName, workingDirectory: workingDirectory)
+                }
             } else {
                 tv.startProcess(
                     executable: "/bin/zsh",
@@ -303,7 +306,10 @@ final class BranchTerminalManager: ObservableObject {
             ("pipe-pane", ["pipe-pane", "-t", name, "-o",
                            "cat >> '\(streamDir)/\(name).log'"]),
 
-            // ── 3. Monitor-silence — detect command completion (5s quiet) ──
+            // ── 3. Scrollback history — keep 50k lines so work is never lost ──
+            ("history-limit", ["set-option", "-t", name, "history-limit", "50000"]),
+
+            // ── 4. Monitor-silence — detect command completion (5s quiet) ──
             ("monitor-silence", ["set-option", "-t", name, "monitor-silence", "5"]),
 
             // ── 4. Status line — show project, branch, current command, cwd at a glance ──
