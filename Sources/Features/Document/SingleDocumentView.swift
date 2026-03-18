@@ -24,8 +24,15 @@ struct SingleDocumentView: View {
         viewModel.projectName != nil
     }
 
+    /// Persisted terminal panel height — survives branch switches.
+    @State private var terminalHeight: CGFloat = 300
+
     var body: some View {
-        VSplitView {
+        // VStack instead of VSplitView — macOS auto-generates a toolbar toggle button
+        // for every NSSplitView, which conflicts with our own terminal toggle button
+        // (two identical-looking "column" buttons appear at top right, both confusing).
+        // A VStack with a custom drag handle gives identical UX without the phantom button.
+        VStack(spacing: 0) {
             // ── Main document ────────────────────────────────────────────
             DocumentEditorView(
                 sessionId: viewModel.mainBranchSessionId,
@@ -36,6 +43,27 @@ struct SingleDocumentView: View {
 
             // ── Terminal panel (project-bound when available, else branch-bound) ──
             if appState.terminalVisible {
+                // Drag handle — lets the user resize the terminal panel
+                Color.primary.opacity(0.1)
+                    .frame(height: 4)
+                    .frame(maxWidth: .infinity)
+                    .overlay(
+                        Capsule()
+                            .fill(Color.primary.opacity(0.25))
+                            .frame(width: 32, height: 3)
+                    )
+                    .contentShape(Rectangle())
+                    .onHover { hovering in
+                        if hovering { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+                    }
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                let delta = -value.translation.height
+                                terminalHeight = max(120, min(700, terminalHeight + delta))
+                            }
+                    )
+
                 if let project = viewModel.projectName {
                     // Project terminal — persists across branch switches
                     TerminalPanelView(
@@ -48,7 +76,7 @@ struct SingleDocumentView: View {
                         }
                     )
                     .id("project-\(project)")
-                    .frame(minHeight: 160, idealHeight: 300, maxHeight: 600)
+                    .frame(height: terminalHeight)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else {
                     // Branch terminal — fallback for workspace trees without a project
@@ -62,7 +90,7 @@ struct SingleDocumentView: View {
                         }
                     )
                     .id(activeTerminalBranchId)
-                    .frame(minHeight: 160, idealHeight: 300, maxHeight: 600)
+                    .frame(height: terminalHeight)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }

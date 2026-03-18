@@ -11,10 +11,9 @@ struct ModelPickerButton: View {
         providerManager.availableModelOptions
     }
 
-    private var active: ProviderModelOption {
+    private var active: ProviderModelOption? {
         models.first { $0.id == defaultModel }
             ?? ModelCatalog.option(for: defaultModel)
-            ?? models[0]
     }
 
     var body: some View {
@@ -37,7 +36,7 @@ struct ModelPickerButton: View {
             HStack(spacing: 4) {
                 Image(systemName: "cpu")
                     .font(.caption)
-                Text(active.label)
+                Text(active?.label ?? "Model")
                     .font(.caption)
                     .fontWeight(.medium)
             }
@@ -48,6 +47,6 @@ struct ModelPickerButton: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help("Active model: \(active.label) — click to switch model and provider")
+        .help("Active model: \(active?.label ?? "unknown") — click to switch model and provider")
     }
 }
