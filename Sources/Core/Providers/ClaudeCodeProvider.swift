@@ -549,9 +549,16 @@ final class ClaudeCodeProvider: LLMProvider {
                 )
             }
             mapLock.lock()
+            // SQLite datetime() emits "yyyy-MM-dd HH:mm:ss" or "yyyy-MM-dd HH:mm:ss.SSSSSS"
+            // depending on whether the value was stored with fractional seconds. Try both so
+            // the session TTL is always restored — failing to parse leaves lastUsed nil and
+            // causes --resume to never fire after restart.
             let sqliteFormatter = DateFormatter()
             sqliteFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
             sqliteFormatter.timeZone = TimeZone(identifier: "UTC")
+            let sqliteFormatterFrac = DateFormatter()
+            sqliteFormatterFrac.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSSSS"
+            sqliteFormatterFrac.timeZone = TimeZone(identifier: "UTC")
             for row in rows {
                 if let canvasId: String = row["canvas_session_id"],
                    let cliId: String = row["cli_session_id"] {
@@ -560,12 +567,15 @@ final class ClaudeCodeProvider: LLMProvider {
                     // updated_at is set by SQLite's datetime('now') on every persist and
                     // reflects the true last-used time. Sessions within TTL will resume;
                     // sessions beyond TTL will be pruned on first getCliSession() call.
-                    if let updatedAtStr: String = row["updated_at"],
-                       let updatedAt = sqliteFormatter.date(from: updatedAtStr) {
-                        cliSessionLastUsed[canvasId] = updatedAt
+                    if let updatedAtStr: String = row["updated_at"] {
+                        let updatedAt = sqliteFormatter.date(from: updatedAtStr)
+                            ?? sqliteFormatterFrac.date(from: updatedAtStr)
+                        if let updatedAt {
+                            cliSessionLastUsed[canvasId] = updatedAt
+                        }
+                        // Sessions with no parseable timestamp get no entry in lastUsed —
+                        // they'll be treated as stale and rotated on first use (safe default).
                     }
-                    // Sessions with no parseable timestamp get no entry in lastUsed —
-                    // they'll be treated as stale and rotated on first use (safe default).
                 }
             }
             mapLock.unlock()

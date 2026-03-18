@@ -101,7 +101,10 @@ final class BrainStore: ObservableObject {
     }
 
     private func reindex(_ docs: [BrainDocument]) async {
-        guard let dbPool = DatabaseManager.shared.dbPool else { return }
+        guard let dbPool = DatabaseManager.shared.dbPool else {
+            wtLog("[BrainStore] reindex skipped — dbPool not ready")
+            return
+        }
         do {
             try await dbPool.write { db in
                 for doc in docs {
