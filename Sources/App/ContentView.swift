@@ -30,11 +30,35 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 350)
                 .accessibilityLabel("Sidebar")
         } detail: {
-            // DetailRouter is a separate view so @Observable tracking on appState
-            // is scoped to its own body. NavigationSplitView's detail closure does
-            // not reliably track @Observable reads — extracting into a child view
-            // ensures selectedTreeId/selectedBranchId changes trigger re-renders.
+            // .id() at this level forces SwiftUI to fully recreate DetailRouter
+            // (and everything inside it) whenever the selection changes.
+            // NavigationSplitView instantiates the detail closure in multiple layout
+            // passes — relying on @Observable propagation alone is unreliable.
+            // Keying on selection here is the only guarantee of a correct re-render.
             DetailRouter()
+                .id((appState.selectedTreeId ?? "none") + "-" + (appState.selectedBranchId ?? "none"))
+        }
+        // Toolbar lives here — above NavigationSplitView — so it is applied exactly
+        // once per window. Putting .toolbar inside the detail column view causes
+        // macOS to duplicate the items because the detail closure is evaluated in
+        // multiple layout contexts (sidebar-visible and sidebar-hidden states).
+        .toolbar {
+            if appState.selectedTreeId != nil {
+                ToolbarItem(placement: .secondaryAction) {
+                    ModelPickerButton()
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            appState.terminalVisible.toggle()
+                        }
+                    } label: {
+                        Label("Claude", systemImage: appState.terminalVisible ? "terminal.fill" : "terminal")
+                    }
+                    .keyboardShortcut("`", modifiers: .command)
+                    .help("Open Claude terminal (⌘`)")
+                }
+            }
         }
         .sheet(isPresented: Binding(
             get: { appState.showGlobalSearch },

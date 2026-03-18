@@ -95,25 +95,6 @@ struct SingleDocumentView: View {
                 }
             }
         }
-        .toolbar {
-            // Model picker — quick access without opening Settings
-            ToolbarItem(placement: .secondaryAction) {
-                ModelPickerButton()
-            }
-
-            // Terminal toggle
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        appState.terminalVisible.toggle()
-                    }
-                } label: {
-                    Label("Claude", systemImage: appState.terminalVisible ? "terminal.fill" : "terminal")
-                }
-                .keyboardShortcut("`", modifiers: .command)
-                .help("Open Claude terminal (⌘`)")
-            }
-        }
         .onAppear {
             BranchTerminalManager.shared.warmUpPreferred(
                 branchId: viewModel.mainBranchId,
