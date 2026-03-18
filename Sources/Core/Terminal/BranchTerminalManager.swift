@@ -241,18 +241,35 @@ final class BranchTerminalManager: ObservableObject {
             try? await Task.sleep(for: .milliseconds(100))
             if FileManager.default.fileExists(atPath: tmuxExecutable) {
                 let sessionWasNew = !self.isTmuxSessionAlive(named: sessionName)
+
+                // Ensure the chat log exists before tail starts.
+                // tail -F (capital F) will wait for the file, but creating it early
+                // prevents a brief "no such file" flash in the terminal.
+                let chatLog = BranchTerminalManager.chatLogPath(for: branchId)
+                if !FileManager.default.fileExists(atPath: chatLog) {
+                    FileManager.default.createFile(atPath: chatLog, contents: nil)
+                }
+
+                // New sessions: start with `tail -F <chat-log>` so the terminal is
+                // immediately linked to this conversation's activity stream.
+                // Existing sessions (reattach): keep whatever was running — may already
+                // be tailing the log from the previous session.
+                let tmuxArgs: [String]
+                if sessionWasNew {
+                    tmuxArgs = ["new-session", "-A", "-s", sessionName, "tail", "-F", chatLog]
+                } else {
+                    tmuxArgs = ["new-session", "-A", "-s", sessionName]
+                }
+
                 tv.startProcess(
                     executable: tmuxExecutable,
-                    args: ["new-session", "-A", "-s", sessionName],
+                    args: tmuxArgs,
                     environment: env.map { "\($0.key)=\($0.value)" },
                     execName: "tmux",
                     currentDirectory: workingDirectory
                 )
-                wtLog("[BranchTerminalManager] tmux session '\(sessionName)' \(sessionWasNew ? "created" : "reattached") for \(branchId.prefix(8))")
+                wtLog("[BranchTerminalManager] tmux session '\(sessionName)' \(sessionWasNew ? "created (tail -F chat log)" : "reattached") for \(branchId.prefix(8))")
                 self.enhanceTmuxSession(name: sessionName, branchId: branchId, workingDirectory: workingDirectory)
-                if sessionWasNew {
-                    self.initializeProjectSession(name: sessionName, workingDirectory: workingDirectory)
-                }
             } else {
                 tv.startProcess(
                     executable: "/bin/zsh",
@@ -271,6 +288,14 @@ final class BranchTerminalManager: ObservableObject {
     /// Canonical tmux session name for a branch.
     private func tmuxSessionName(for branchId: String) -> String {
         "canvas-\(branchId.prefix(8))"
+    }
+
+    /// Path to the human-readable chat activity log for a branch terminal.
+    /// Written by ClaudeCodeProvider as events stream in; tailed by the terminal view.
+    nonisolated static func chatLogPath(for branchId: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let sessionName = "canvas-\(branchId.prefix(8))"
+        return "\(home)/.cortana/streams/\(sessionName)-chat.log"
     }
 
     // MARK: - tmux Session Enhancements

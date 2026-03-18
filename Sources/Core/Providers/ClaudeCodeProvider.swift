@@ -152,6 +152,14 @@ final class ClaudeCodeProvider: LLMProvider {
                 effectiveMessage = context.message
             }
 
+            // Chat log path — terminal tails this file to show live claude activity.
+            // Written on parseQueue (serial) so there's no concurrent-write race.
+            let chatLogPath = BranchTerminalManager.chatLogPath(for: context.branchId)
+            let userHeader = "\n─── User ────────────────────────────────────────────────────────\n\(context.message)\n─── Claude ──────────────────────────────────────────────────────\n"
+            self.parseQueue.async {
+                self.appendToChatLog(path: chatLogPath, text: userHeader)
+            }
+
             var args = [
                 "--output-format", "stream-json",
                 "--verbose",
@@ -262,6 +270,19 @@ final class ClaudeCodeProvider: LLMProvider {
                         if case .text = event { yieldedContent = true }
                         if case .toolStart = event { yieldedContent = true }
                         continuation.yield(event)
+                        // Mirror event to chat log so the terminal shows live activity.
+                        switch event {
+                        case .text(let chunk):
+                            self?.appendToChatLog(path: chatLogPath, text: chunk)
+                        case .toolStart(let name, _):
+                            self?.appendToChatLog(path: chatLogPath, text: "\n[⚙ \(name)]\n")
+                        case .toolEnd(let name, let result, let isError):
+                            let icon = isError ? "✗" : "✓"
+                            let preview = result.prefix(200)
+                            self?.appendToChatLog(path: chatLogPath, text: "[\(icon) \(name)]: \(preview)\n")
+                        default:
+                            break
+                        }
                     }
                     if let sid = parser.cliSessionId, let self {
                         // Detect silent resume failures: if we asked to resume a session
@@ -363,6 +384,8 @@ final class ClaudeCodeProvider: LLMProvider {
                     usage.totalInputTokens = parser.inputTokens
                     usage.totalOutputTokens = parser.outputTokens
                     usage.turnCount = parser.numTurns
+                    let footer = "\n─────────────────────────────────────────────────────────────────\n"
+                    self?.appendToChatLog(path: chatLogPath, text: footer)
                     continuation.yield(.done(usage: usage))
                     continuation.finish()
                     WakeLock.shared.release()
@@ -395,6 +418,22 @@ final class ClaudeCodeProvider: LLMProvider {
                 self._currentProcess = nil
                 self.stateLock.unlock()
             }
+        }
+    }
+
+    // MARK: - Chat Log
+
+    /// Append text to the branch chat log — used to mirror live claude activity into the terminal.
+    /// Must be called on `parseQueue` (serial) to avoid concurrent writes.
+    private func appendToChatLog(path: String, text: String) {
+        guard let data = text.data(using: .utf8) else { return }
+        if let handle = FileHandle(forWritingAtPath: path) {
+            defer { handle.closeFile() }
+            handle.seekToEndOfFile()
+            handle.write(data)
+        } else {
+            // File may not exist yet — create it
+            try? data.write(to: URL(fileURLWithPath: path), options: [.withoutOverwriting])
         }
     }
 
