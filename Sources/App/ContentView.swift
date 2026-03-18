@@ -1,87 +1,100 @@
 import SwiftUI
 
 struct ContentView: View {
-    @Environment(AppState.self) var appState
-    @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
     @StateObject private var approvalCoordinator = ApprovalCoordinator.shared
 
     var body: some View {
-        advancedView
-        .sheet(item: $approvalCoordinator.pendingRequest) { request in
-            ApprovalSheet(
-                assessment: request.assessment,
-                command: request.command,
-                onApprove: { remember in
-                    approvalCoordinator.resolve(approved: true, remember: remember)
-                },
-                onDeny: {
-                    approvalCoordinator.resolve(approved: false, remember: false)
-                }
-            )
-        }
-        .sheet(item: $approvalCoordinator.pendingFileDiff) { request in
-            FileDiffSheet(request: request)
-        }
+        AppMainContent()
+            .sheet(item: $approvalCoordinator.pendingRequest) { request in
+                ApprovalSheet(
+                    assessment: request.assessment,
+                    command: request.command,
+                    onApprove: { remember in
+                        approvalCoordinator.resolve(approved: true, remember: remember)
+                    },
+                    onDeny: {
+                        approvalCoordinator.resolve(approved: false, remember: false)
+                    }
+                )
+            }
+            .sheet(item: $approvalCoordinator.pendingFileDiff) { request in
+                FileDiffSheet(request: request)
+            }
+    }
+}
+
+/// Main window content — owns the NavigationSplitView, toolbar, and global search sheet.
+/// Separated from ContentView so the approval-coordinator sheets live at a different
+/// layer and the compiler type-checks each modifier chain in isolation.
+private struct AppMainContent: View {
+    @Environment(AppState.self) var appState
+    @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
+
+    var body: some View {
+        // Toolbar lives here — above NavigationSplitView — so it is applied exactly
+        // once per window. Putting .toolbar inside the detail column view causes
+        // macOS to duplicate items because the detail closure is evaluated in
+        // multiple layout contexts (sidebar-visible and sidebar-hidden states).
+        SplitContainer(columnVisibility: $columnVisibility)
+            .navigationTitle(appState.selectedTreeName ?? "World Tree")
+            .toolbar { mainToolbar }
+            .sheet(isPresented: Binding(
+                get: { appState.showGlobalSearch },
+                set: { appState.showGlobalSearch = $0 }
+            )) {
+                GlobalSearchView()
+                    .environment(appState)
+                    .frame(minWidth: 600, minHeight: 400)
+            }
     }
 
-    private var advancedView: some View {
+    @ToolbarContentBuilder
+    private var mainToolbar: some ToolbarContent {
+        ToolbarItem(placement: .secondaryAction) {
+            ModelPickerButton()
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    appState.terminalVisible.toggle()
+                }
+            } label: {
+                Label("Claude", systemImage: appState.terminalVisible ? "terminal.fill" : "terminal")
+            }
+            .keyboardShortcut("`", modifiers: .command)
+            .help("Open Claude terminal (⌘`)")
+            .disabled(appState.selectedTreeId == nil)
+        }
+    }
+}
+
+/// Wraps NavigationSplitView in its own struct so the compiler type-checks the
+/// multi-closure init in isolation. Keys DetailRouter on appState.detailRefreshKey —
+/// bumped by AppState on every selection change — to force detail pane recreation
+/// without relying on @Observable propagation through NavigationSplitView's detail
+/// closure, which is unreliable on macOS.
+private struct SplitContainer: View {
+    @Environment(AppState.self) var appState
+    @Binding var columnVisibility: NavigationSplitViewVisibility
+
+    var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 350)
                 .accessibilityLabel("Sidebar")
         } detail: {
-            // .id() at this level forces SwiftUI to fully recreate DetailRouter
-            // (and everything inside it) whenever the selection changes.
-            // NavigationSplitView instantiates the detail closure in multiple layout
-            // passes — relying on @Observable propagation alone is unreliable.
-            // Keying on selection here is the only guarantee of a correct re-render.
             DetailRouter()
-                .id((appState.selectedTreeId ?? "none") + "-" + (appState.selectedBranchId ?? "none"))
-        }
-        // Toolbar lives here — above NavigationSplitView — so it is applied exactly
-        // once per window. Putting .toolbar inside the detail column view causes
-        // macOS to duplicate the items because the detail closure is evaluated in
-        // multiple layout contexts (sidebar-visible and sidebar-hidden states).
-        .toolbar {
-            if appState.selectedTreeId != nil {
-                ToolbarItem(placement: .secondaryAction) {
-                    ModelPickerButton()
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            appState.terminalVisible.toggle()
-                        }
-                    } label: {
-                        Label("Claude", systemImage: appState.terminalVisible ? "terminal.fill" : "terminal")
-                    }
-                    .keyboardShortcut("`", modifiers: .command)
-                    .help("Open Claude terminal (⌘`)")
-                }
-            }
-        }
-        .sheet(isPresented: Binding(
-            get: { appState.showGlobalSearch },
-            set: { appState.showGlobalSearch = $0 }
-        )) {
-            GlobalSearchView()
-                .environment(appState)
-                .frame(minWidth: 600, minHeight: 400)
+                .id(appState.detailRefreshKey)
         }
     }
 }
 
 /// Routes the detail column based on AppState selection.
-/// Extracted as a separate view so @Observable tracking on AppState
-/// is properly scoped — NavigationSplitView's detail closure does not
-/// reliably invalidate on @Observable changes.
 private struct DetailRouter: View {
     @Environment(AppState.self) var appState
 
     var body: some View {
         if let treeId = appState.selectedTreeId {
-            // .id() keyed on both tree and branch forces SwiftUI to fully recreate
-            // SingleDocumentView (and its @StateObject viewModel) whenever either changes.
             let selectedBranchId = appState.selectedBranchId ?? ""
             SingleDocumentView(treeId: treeId, branchId: appState.selectedBranchId)
                 .id("\(treeId)-\(selectedBranchId)")

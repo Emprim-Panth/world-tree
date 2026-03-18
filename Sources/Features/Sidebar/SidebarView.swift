@@ -807,13 +807,23 @@ struct SidebarView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isSelected ? accentColor.opacity(0.18) : Color.clear)
+        .background(isSelected ? accentColor.opacity(0.15) : Color.clear)
         .cornerRadius(6)
+        .overlay(alignment: .leading) {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(accentColor)
+                    .frame(width: 3)
+                    .padding(.vertical, 4)
+                    .padding(.leading, 4)
+            }
+        }
         .padding(.horizontal, 4)
         .contentShape(Rectangle())
         .onTapGesture {
             // selectTree fires branchWillSwitch for the old branch before switching,
             // giving the outgoing ViewModel a chance to detach and write a snapshot.
+            appState.selectedTreeName = tree.name  // set before selectTree so title updates immediately
             appState.selectTree(tree.id)
             loadTreeBranches(tree.id)
         }

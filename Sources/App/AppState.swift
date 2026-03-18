@@ -32,6 +32,14 @@ final class AppState {
         UserDefaults.standard.dictionary(forKey: AppConstants.lastBranchPerTreeKey) as? [String: String] ?? [:]
     }()
 
+    /// Display name of the currently selected tree — shown in toolbar title.
+    /// Set alongside selectedTreeId so views can show the name without a DB lookup.
+    var selectedTreeName: String?
+    /// Bumped on every selection change. SplitContainer keys DetailRouter on this
+    /// to force recreation without relying on @Observable propagation through
+    /// NavigationSplitView's detail closure (which is unreliable on macOS).
+    var detailRefreshKey: String = UUID().uuidString
+
     var selectedProjectName: String?
     var selectedProjectPath: String?
     var sidebarDestination: SidebarDestination = .commandCenter
@@ -85,6 +93,10 @@ final class AppState {
             )
         }
         clearProjectSelection()
+        if selectedTreeId != treeId {
+            selectedTreeName = (try? TreeStore.shared.getTree(treeId))?.name
+        }
+        detailRefreshKey = UUID().uuidString
         selectedTreeId = treeId
         selectedBranchId = branchId
 
@@ -122,6 +134,8 @@ final class AppState {
             )
         }
         clearProjectSelection()
+        selectedTreeName = (try? TreeStore.shared.getTree(entry.treeId))?.name
+        detailRefreshKey = UUID().uuidString
         selectedTreeId = entry.treeId
         selectedBranchId = entry.branchId
     }
@@ -139,6 +153,8 @@ final class AppState {
             )
         }
         clearProjectSelection()
+        selectedTreeName = (try? TreeStore.shared.getTree(entry.treeId))?.name
+        detailRefreshKey = UUID().uuidString
         selectedTreeId = entry.treeId
         selectedBranchId = entry.branchId
     }
@@ -162,6 +178,8 @@ final class AppState {
             )
         }
         clearProjectSelection()
+        selectedTreeName = (try? TreeStore.shared.getTree(treeId))?.name
+        detailRefreshKey = UUID().uuidString
         selectedBranchId = nil
         selectedTreeId = treeId
     }
@@ -180,6 +198,7 @@ final class AppState {
         }
         selectedTreeId = nil
         selectedBranchId = nil
+        selectedTreeName = nil
         selectedProjectName = name
         selectedProjectPath = path
         sidebarDestination = .projectDocs
