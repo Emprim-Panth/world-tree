@@ -829,6 +829,26 @@ class DocumentEditorViewModel: ObservableObject {
                     self.isProcessing = false
                 }
                 self.refreshRecoveryStatus()
+                // Guarantee the final assistant message is visible.
+                // finishStream (which posts this notification) writes to DB before posting,
+                // so the message is in DB by the time we reach here. GRDB ValueObservation
+                // delivers it asynchronously, but if it races or is delayed, the response
+                // never appears. This Task runs after the current main-queue cycle, giving
+                // GRDB a chance to fire first — seenMessageIds prevents double-display.
+                let sid = self.sessionId
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    guard let msgs = try? MessageStore.shared.getMessages(sessionId: sid),
+                          let lastAssistant = msgs.last(where: {
+                              $0.role == .assistant && !self.seenMessageIds.contains($0.id)
+                          }) else { return }
+                    self.appendAssistantSectionIfNeeded(
+                        messageId: lastAssistant.id,
+                        content: lastAssistant.content,
+                        timestamp: lastAssistant.createdAt,
+                        hasFindingSignal: !self.isRootBranch && self.scanForFindingSignals(lastAssistant.content)
+                    )
+                }
             }
         }
 
