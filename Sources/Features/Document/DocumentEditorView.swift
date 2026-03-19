@@ -240,6 +240,16 @@ struct DocumentEditorView: View {
                     }
                 }
                 Divider()
+
+                // Skills palette — contextual /skill chips, hidden once typing starts
+                SkillsPaletteView(
+                    workingDirectory: viewModel.workingDirectory,
+                    project: viewModel.cachedProject ?? (viewModel.workingDirectory as NSString).lastPathComponent,
+                    currentInput: $viewModel.currentInput,
+                    isProcessing: viewModel.isProcessing
+                )
+                .animation(.easeInOut(duration: 0.15), value: viewModel.currentInput.isEmpty)
+
                 VStack(alignment: .leading, spacing: 8) {
                     UserInputArea(
                         text: $viewModel.currentInput,
@@ -506,9 +516,9 @@ class DocumentEditorViewModel: ObservableObject {
 
     private let sessionId: String
     private let branchId: String
-    private let workingDirectory: String
+    let workingDirectory: String
     private let windowOwnerId = UUID()
-    private var cachedProject: String?
+    var cachedProject: String?
     /// Parent branch's session ID — loaded once at document open for --fork-session support.
     private var cachedParentSessionId: String?
     private var seenMessageIds: Set<String> = []
