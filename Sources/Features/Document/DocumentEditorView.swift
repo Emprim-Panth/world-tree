@@ -188,6 +188,12 @@ struct DocumentEditorView: View {
                         proxy.scrollTo("scroll-bottom", anchor: .bottom)
                     }
                 }
+                // Unconditional scroll — bypasses isScrolledToBottom lag.
+                // Fired on initial load and after every stream completion.
+                .onChange(of: viewModel.forceScrollToBottom) { _, _ in
+                    guard viewModel.initialScrollComplete else { return }
+                    proxy.scrollTo("scroll-bottom", anchor: .bottom)
+                }
                 .onReceive(NotificationCenter.default.publisher(for: .showConversationSearch)) { _ in
                     withAnimation { showSearch = true }
                     isFocused = false
@@ -460,6 +466,11 @@ class DocumentEditorViewModel: ObservableObject {
     /// Guards onChange(sections.count) so it doesn't fire in the same frame as initialLoadDone,
     /// which would cause a premature scroll before layout is measured.
     @Published var initialScrollComplete = false
+
+    /// Incrementing counter — each increment tells the View to scroll to bottom unconditionally.
+    /// Used after stream completion and on initial load to guarantee the last message is visible
+    /// regardless of isScrolledToBottom state (which lags behind the actual scroll position).
+    @Published var forceScrollToBottom: Int = 0
 
     private let pageSize = 30
     private var initialLoadComplete = false
@@ -839,16 +850,22 @@ class DocumentEditorViewModel: ObservableObject {
                 let sid = self.sessionId
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    guard let msgs = try? MessageStore.shared.getMessages(sessionId: sid),
-                          let lastAssistant = msgs.last(where: {
-                              $0.role == .assistant && !self.seenMessageIds.contains($0.id)
-                          }) else { return }
-                    self.appendAssistantSectionIfNeeded(
-                        messageId: lastAssistant.id,
-                        content: lastAssistant.content,
-                        timestamp: lastAssistant.createdAt,
-                        hasFindingSignal: !self.isRootBranch && self.scanForFindingSignals(lastAssistant.content)
-                    )
+                    // Add the final message if GRDB observation hasn't delivered it yet.
+                    if let msgs = try? MessageStore.shared.getMessages(sessionId: sid),
+                       let lastAssistant = msgs.last(where: {
+                           $0.role == .assistant && !self.seenMessageIds.contains($0.id)
+                       }) {
+                        self.appendAssistantSectionIfNeeded(
+                            messageId: lastAssistant.id,
+                            content: lastAssistant.content,
+                            timestamp: lastAssistant.createdAt,
+                            hasFindingSignal: !self.isRootBranch && self.scanForFindingSignals(lastAssistant.content)
+                        )
+                    }
+                    // Always scroll to bottom after completion — the message may have been
+                    // added by GRDB or by the line above, but either way we need to show it.
+                    // forceScrollToBottom bypasses the isScrolledToBottom guard which can lag.
+                    self.forceScrollToBottom += 1
                 }
             }
         }
@@ -1204,7 +1221,8 @@ class DocumentEditorViewModel: ObservableObject {
         if !initialLoadComplete {
             initialLoadComplete = true
             hasMoreMessages = messages.count >= pageSize
-            initialLoadDone = true  // triggers scroll-to-bottom in the view
+            initialLoadDone = true  // mounts the ScrollView
+            forceScrollToBottom += 1  // scroll once layout is ready with real content
         }
     }
 
