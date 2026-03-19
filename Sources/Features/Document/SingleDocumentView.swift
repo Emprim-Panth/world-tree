@@ -28,19 +28,6 @@ struct SingleDocumentView: View {
         // (two identical-looking "column" buttons appear at top right, both confusing).
         // A VStack with a custom drag handle gives identical UX without the phantom button.
         VStack(spacing: 0) {
-            // ── Stall recovery banner ─────────────────────────────────────
-            // Shown when cortana-session-watchdog detects no Claude output for 20min
-            // and the user has been idle. Suppressed during active typing (3min grace window).
-            StallRecoveryBanner {
-                // Retry: post a notification the composer can pick up to send a wake message
-                NotificationCenter.default.post(
-                    name: .stallRecoveryRetryRequested,
-                    object: nil,
-                    userInfo: ["branchId": viewModel.mainBranchId]
-                )
-            }
-            .animation(.easeInOut(duration: 0.2), value: StallRecoveryWatcher.shared.isStallDetected)
-
             // ── Main document ────────────────────────────────────────────
             DocumentEditorView(
                 sessionId: viewModel.mainBranchSessionId,
@@ -86,6 +73,17 @@ struct SingleDocumentView: View {
                 .frame(height: terminalHeight)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+        }
+        .overlay(alignment: .top) {
+            // Stall recovery banner floats over content — doesn't shift layout
+            StallRecoveryBanner {
+                NotificationCenter.default.post(
+                    name: .stallRecoveryRetryRequested,
+                    object: nil,
+                    userInfo: ["branchId": viewModel.mainBranchId]
+                )
+            }
+            .animation(.easeInOut(duration: 0.2), value: StallRecoveryWatcher.shared.isStallDetected)
         }
         .onAppear {
             BranchTerminalManager.shared.warmUpPreferred(
