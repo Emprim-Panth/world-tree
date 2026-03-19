@@ -143,6 +143,12 @@ struct DocumentEditorView: View {
                 // is present on the very first render — .defaultScrollAnchor(.bottom) works.
                 .onAppear {
                     viewModel.initialScrollComplete = true
+                    // forceScrollToBottom fired during applyMessages (initial load) before
+                    // this onAppear ran — the onChange guard blocked it. Scroll explicitly here.
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(50))
+                        proxy.scrollTo("scroll-bottom", anchor: .bottom)
+                    }
                 }
                 // Auto-scroll for subsequent new messages — only if user is at the bottom.
                 .onChange(of: viewModel.document.sections.count) { _, _ in
@@ -850,21 +856,36 @@ class DocumentEditorViewModel: ObservableObject {
                 let sid = self.sessionId
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    // Add the final message if GRDB observation hasn't delivered it yet.
                     if let msgs = try? MessageStore.shared.getMessages(sessionId: sid),
                        let lastAssistant = msgs.last(where: {
                            $0.role == .assistant && !self.seenMessageIds.contains($0.id)
                        }) {
-                        self.appendAssistantSectionIfNeeded(
-                            messageId: lastAssistant.id,
-                            content: lastAssistant.content,
-                            timestamp: lastAssistant.createdAt,
-                            hasFindingSignal: !self.isRootBranch && self.scanForFindingSignals(lastAssistant.content)
-                        )
+                        // Check if the .done handler already added the section with nil messageId.
+                        // That path uses registry content (real-time), this path uses DB content (persisted).
+                        // They should match — if so, upgrade the nil-id section instead of duplicating.
+                        let nilIdIdx = self.document.sections.lastIndex(where: {
+                            if case .assistant = $0.author { return $0.messageId == nil }
+                            return false
+                        })
+                        if let idx = nilIdIdx,
+                           String(self.document.sections[idx].content.characters) == lastAssistant.content {
+                            // .done already added it — upgrade the nil-id entry with the real DB id.
+                            self.document.sections[idx].messageId = lastAssistant.id
+                            self.seenMessageIds.insert(lastAssistant.id)
+                            self.pendingAssistantContent = nil
+                        } else {
+                            // Crash/recovery path — .done didn't fire. Add from DB now.
+                            self.appendAssistantSectionIfNeeded(
+                                messageId: lastAssistant.id,
+                                content: lastAssistant.content,
+                                timestamp: lastAssistant.createdAt,
+                                hasFindingSignal: !self.isRootBranch && self.scanForFindingSignals(lastAssistant.content)
+                            )
+                        }
                     }
-                    // Always scroll to bottom after completion — the message may have been
-                    // added by GRDB or by the line above, but either way we need to show it.
-                    // forceScrollToBottom bypasses the isScrolledToBottom guard which can lag.
+                    // Yield so SwiftUI lays out the new/upgraded section before scrolling.
+                    try? await Task.sleep(for: .milliseconds(100))
+                    guard !Task.isCancelled else { return }
                     self.forceScrollToBottom += 1
                 }
             }
@@ -1150,6 +1171,14 @@ class DocumentEditorViewModel: ObservableObject {
             if msg.role == .assistant, let pending = pendingAssistantContent, msg.content == pending {
                 seenMessageIds.insert(msg.id)
                 pendingAssistantContent = nil
+                // Upgrade the immediately-appended nil-id section with the real DB messageId
+                // so fork/branch capability is restored once GRDB confirms the write.
+                if let idx = document.sections.lastIndex(where: {
+                    if case .assistant = $0.author { return $0.messageId == nil }
+                    return false
+                }) {
+                    document.sections[idx].messageId = msg.id
+                }
                 continue
             }
             newMessages.append(msg)
@@ -1696,10 +1725,19 @@ class DocumentEditorViewModel: ObservableObject {
                 }
             }
 
-            // GRDB ValueObservation delivers the persisted message as a section automatically.
-            // Do NOT read from DB and append here — that creates a duplicate section when
-            // the observation fires moments later with the same messageId.
-            // StreamRecoveryCoordinator owns recovery; DocumentEditorView only observes.
+            // Add the final section immediately so the response is never invisible.
+            // streamingContent was just cleared — without this there's a timing gap between
+            // "streaming ends" and "GRDB async observation delivers the persisted message."
+            // pendingAssistantContent primes content-based dedup in applyMessages so the
+            // GRDB-delivered row is marked seen instead of creating a duplicate section.
+            // When GRDB fires, the nil-id section is upgraded with the real DB messageId.
+            pendingAssistantContent = displayResponse
+            appendAssistantSectionIfNeeded(
+                messageId: nil,
+                content: displayResponse,
+                timestamp: Date(),
+                hasFindingSignal: !isRootBranch && scanForFindingSignals(displayResponse)
+            )
 
             writeSnapshotCheckpoint()
 
@@ -1904,6 +1942,13 @@ class DocumentEditorViewModel: ObservableObject {
         if let messageId {
             if seenMessageIds.contains(messageId) { return false }
             if sections.contains(where: { $0.messageId == messageId }) { return false }
+            // Guard against a nil-id section added synchronously in the .done handler
+            // before the safety net runs with the real DB messageId. Without this check
+            // the section would be appended twice (nil-id + real-id).
+            if sections.contains(where: {
+                if case .assistant = $0.author { return String($0.content.characters) == content }
+                return false
+            }) { return false }
             return true
         }
 
