@@ -116,35 +116,38 @@ struct SkillsPaletteView: View {
     }
 
     var body: some View {
-        // Always render the container so layout height doesn't shift when palette
-        // appears/disappears. Opacity + allowsHitTesting handle show/hide instead.
-        if !store.suggestedSkills.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(store.suggestedSkills) { skill in
-                        SkillChipView(
-                            skill: skill,
-                            isHovered: hoveredSkill == skill.id,
-                            onTap: {
-                                currentInput = "/\(skill.name) "
+        // Reserve height once skills are loaded; hide with opacity so typing never shifts layout.
+        // The transition on the outer Group makes the initial load fade in rather than pop in.
+        Group {
+            if !store.suggestedSkills.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(store.suggestedSkills) { skill in
+                            SkillChipView(
+                                skill: skill,
+                                isHovered: hoveredSkill == skill.id,
+                                onTap: {
+                                    currentInput = "/\(skill.name) "
+                                }
+                            )
+                            .onHover { hovering in
+                                hoveredSkill = hovering ? skill.id : nil
                             }
-                        )
-                        .onHover { hovering in
-                            hoveredSkill = hovering ? skill.id : nil
                         }
                     }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 6)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 6)
+                .opacity(shouldShow ? 1 : 0)
+                .allowsHitTesting(shouldShow)
+                .animation(.easeInOut(duration: 0.15), value: shouldShow)
+                .transition(.opacity)
             }
-            .opacity(shouldShow ? 1 : 0)
-            .allowsHitTesting(shouldShow)
-            .animation(.easeInOut(duration: 0.15), value: shouldShow)
         }
-        EmptyView()
-            .onAppear {
-                store.refresh(project: project, workingDirectory: workingDirectory)
-            }
+        .animation(.easeInOut(duration: 0.25), value: store.suggestedSkills.isEmpty)
+        .onAppear {
+            store.refresh(project: project, workingDirectory: workingDirectory)
+        }
     }
 }
 

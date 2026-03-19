@@ -263,27 +263,28 @@ struct DocumentEditorView: View {
                 .padding(.horizontal, 24)
                 .padding(.vertical, 12)
 
-                // Context provenance button — shows what was injected in the last send
-                if let provenance = provenanceStore.latest(for: branchId) {
-                    HStack {
-                        Spacer()
-                        Button {
-                            showContextInspector.toggle()
-                        } label: {
-                            Label("Context", systemImage: "info.circle")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .buttonStyle(.plain)
-                        .popover(isPresented: $showContextInspector, arrowEdge: .top) {
-                            ContextInspectorView(provenance: provenance)
-                        }
-                        .padding(.trailing, 24)
-                        .padding(.bottom, 4)
-                    }
-                }
             }
             .background(.bar)
+            // Context provenance button — floats over the compose area so it never shifts layout.
+            // Positioned bottom-trailing to avoid covering the input text.
+            .overlay(alignment: .bottomTrailing) {
+                if let provenance = provenanceStore.latest(for: branchId) {
+                    Button {
+                        showContextInspector.toggle()
+                    } label: {
+                        Label("Context", systemImage: "info.circle")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .popover(isPresented: $showContextInspector, arrowEdge: .top) {
+                        ContextInspectorView(provenance: provenance)
+                    }
+                    .padding(.trailing, 24)
+                    .padding(.bottom, 8)
+                    .transition(.opacity.animation(.easeInOut(duration: 0.2)))
+                }
+            }
             // Hidden cancel button — Cmd+. stops the active stream
             .background {
                 Button("") { viewModel.cancelStream() }
