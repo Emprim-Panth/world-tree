@@ -139,13 +139,27 @@ struct WorldTreeApp: App {
                     Task {
                         do {
                             // Recover any responses that were interrupted by a crash or SIGTERM.
-                            // Keep the partial text in recovery state rather than persisting it as
-                            // a finished assistant message. Recovery will resume from that prefix
-                            // and persist a single merged reply when the stream actually completes.
                             let recovered = await StreamCacheManager.shared.recoverOrphanedStreams()
                             for (sessionId, content) in recovered {
                                 wtLog("[StreamCache] Recovering interrupted response for session \(sessionId)")
                                 await MainActor.run {
+                                    // Immediately persist non-empty recovered content to DB so
+                                    // the response is never invisible — even if recovery re-send
+                                    // fails or crash-loops. Write only if the last assistant
+                                    // message for this session doesn't already have this content.
+                                    if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                        do {
+                                            let recent = try MessageStore.shared.getMessages(sessionId: sessionId, limit: 5)
+                                            let alreadyPersisted = recent.last(where: { $0.role == .assistant })?.content == content
+                                            if !alreadyPersisted {
+                                                _ = try MessageStore.shared.sendMessage(
+                                                    sessionId: sessionId, role: .assistant, content: content)
+                                                wtLog("[StreamCache] Pre-persisted recovered response for \(sessionId.prefix(8))")
+                                            }
+                                        } catch {
+                                            wtLog("[StreamCache] Failed to pre-persist recovered response for \(sessionId.prefix(8)): \(error)")
+                                        }
+                                    }
                                     StreamRecoveryStore.shared.markPending(
                                         sessionId: sessionId,
                                         partialContent: content
