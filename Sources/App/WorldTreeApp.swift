@@ -108,6 +108,8 @@ struct WorldTreeApp: App {
                     CompassStore.shared.refresh()
                     TicketStore.shared.scanAll()
                     HeartbeatStore.shared.refresh()
+                    // Session stall recovery — polls stall-recovery.json from cortana-session-watchdog
+                    StallRecoveryWatcher.shared.startMonitoring()
                     // Gateway handoff check — surface pending cross-device work items
                     Task {
                         guard let gateway = GatewayClient.fromLocalConfig() else { return }

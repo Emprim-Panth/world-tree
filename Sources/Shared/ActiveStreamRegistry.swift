@@ -47,7 +47,19 @@ final class ActiveStreamRegistry {
 
     /// Hard timeout per stream — cancels and surfaces an error if a stream is still active
     /// after this interval. Catches hung CLI processes that never send .done or .error.
-    private static let streamTimeoutInterval: TimeInterval = 15 * 60  // 15 minutes
+    ///
+    /// Default is 45min to accommodate multi-agent tool chains. Can be overridden via
+    /// UserDefaults key "activeStream.timeoutMinutes" for debugging.
+    private static let streamTimeoutInterval: TimeInterval = {
+        let custom = UserDefaults.standard.integer(forKey: "activeStream.timeoutMinutes")
+        return custom > 0 ? TimeInterval(custom * 60) : 45 * 60
+    }()
+
+    /// Path to the sentinel file written when Claude produces output.
+    /// Read by cortana-session-watchdog to distinguish "Claude is working" from "session stalled".
+    private static let lastClaudeOutputPath: String = {
+        "\(FileManager.default.homeDirectoryForCurrentUser.path)/.cortana/worldtree/last-claude-output.json"
+    }()
 
     // MARK: - State
 
@@ -248,6 +260,12 @@ final class ActiveStreamRegistry {
             }
             GlobalStreamRegistry.shared.appendContent(branchId: branchId, content: full)
             Task { await StreamCacheManager.shared.appendToStream(sessionId: sessionId, chunk: token) }
+            // Update sentinel so cortana-session-watchdog knows Claude is actively producing output.
+            // Written async, best-effort — never blocks the token path.
+            Task.detached(priority: .background) {
+                let data = "{\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000)),\"sessionId\":\"\(sessionId)\"}".data(using: .utf8)
+                try? data?.write(to: URL(fileURLWithPath: Self.lastClaudeOutputPath))
+            }
 
         case .error(let msg):
             // Store the error reason so finishStream can surface it in the persisted
@@ -390,4 +408,8 @@ extension Notification.Name {
     /// Posted by AppState.selectBranch() before switching to a different branch.
     /// userInfo: ["oldBranchId": String, "newBranchId": String]
     static let branchWillSwitch = Notification.Name("branchWillSwitch")
+
+    /// Posted by StallRecoveryBanner when the user taps "Retry".
+    /// userInfo: ["branchId": String]
+    static let stallRecoveryRetryRequested = Notification.Name("stallRecoveryRetryRequested")
 }

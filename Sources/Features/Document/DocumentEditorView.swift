@@ -428,6 +428,7 @@ class DocumentEditorViewModel: ObservableObject {
     private var activeStreamStartObserver: NSObjectProtocol?
     private var activeStreamCompleteObserver: NSObjectProtocol?
     private var branchWillSwitchObserver: NSObjectProtocol?
+    private var stallRetryObserver: NSObjectProtocol?
 
     /// Whether the conversation scroll view is at (or near) the bottom.
     /// False when the user has manually scrolled up — suppresses auto-scroll.
@@ -579,6 +580,7 @@ class DocumentEditorViewModel: ObservableObject {
         if let obs = activeStreamStartObserver { NotificationCenter.default.removeObserver(obs) }
         if let obs = activeStreamCompleteObserver { NotificationCenter.default.removeObserver(obs) }
         if let obs = branchWillSwitchObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = stallRetryObserver { NotificationCenter.default.removeObserver(obs) }
     }
 
     init(sessionId: String, branchId: String, workingDirectory: String) {
@@ -622,6 +624,7 @@ class DocumentEditorViewModel: ObservableObject {
         if let obs = streamRecoveryObserver { NotificationCenter.default.removeObserver(obs); streamRecoveryObserver = nil }
         if let obs = activeStreamStartObserver { NotificationCenter.default.removeObserver(obs); activeStreamStartObserver = nil }
         if let obs = activeStreamCompleteObserver { NotificationCenter.default.removeObserver(obs); activeStreamCompleteObserver = nil }
+        if let obs = stallRetryObserver { NotificationCenter.default.removeObserver(obs); stallRetryObserver = nil }
         // Restore any in-progress draft from before this branch was last left
         if let saved = UserDefaults.standard.string(forKey: "draft.\(branchId)"), !saved.isEmpty {
             currentInput = saved
@@ -844,6 +847,19 @@ class DocumentEditorViewModel: ObservableObject {
                 // Unblock any tool awaiting sign-off — continuation leak would hang the
                 // tool loop indefinitely, making the old chat appear stuck after switching.
                 ApprovalCoordinator.shared.rejectAll()
+            }
+        }
+
+        stallRetryObserver = NotificationCenter.default.addObserver(
+            forName: .stallRecoveryRetryRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let branchId = note.userInfo?["branchId"] as? String,
+                      branchId == self.branchId else { return }
+                self.sendAutoResumeMessage("continue")
             }
         }
 

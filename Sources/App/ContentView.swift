@@ -113,6 +113,8 @@ private struct DetailRouter: View {
                 MCPToolsView()
             case .brain:
                 BrainView()
+            case .factory:
+                FactoryFloorView()
             }
         }
     }

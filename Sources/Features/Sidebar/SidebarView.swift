@@ -79,6 +79,7 @@ struct SidebarView: View {
             // Global nav — Command Center, Tickets
             HStack(spacing: 2) {
                 sidebarNavButton("Command Center", icon: "square.grid.2x2", dest: .commandCenter)
+                sidebarNavButton("Factory", icon: "building.2.fill", dest: .factory)
                 sidebarNavButton("Tickets", icon: "checklist", dest: .tickets)
                 sidebarNavButton("MCP Tools", icon: "puzzlepiece.extension", dest: .mcpTools)
                 sidebarNavButton("Brain", icon: "brain", dest: .brain)
