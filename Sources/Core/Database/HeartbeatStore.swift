@@ -98,7 +98,7 @@ final class HeartbeatStore: ObservableObject {
 
     /// Read-only pool for the gateway DB (cortana.db) which holds live dispatch_queue.
     /// Opened lazily — returns nil if the file doesn't exist yet.
-    private static var gatewayPool: DatabasePool? = {
+    static var gatewayPool: DatabasePool? = {
         let path = (NSHomeDirectory() as NSString).appendingPathComponent(".cortana/cortana.db")
         guard FileManager.default.fileExists(atPath: path) else { return nil }
         var config = Configuration()

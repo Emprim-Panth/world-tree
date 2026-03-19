@@ -181,26 +181,26 @@ struct FactoryFloorView: View {
     // MARK: - Metrics
 
     private func loadMetrics() {
+        guard let pool = HeartbeatStore.gatewayPool else { return }
         Task {
             do {
-                let (shipped, avgMs) = try await DatabaseManager.shared.readAsync { db -> (Int, Double?) in
-                    // Shipped today
-                    let today = Calendar.current.startOfDay(for: Date())
-                    let todayStr = ISO8601DateFormatter().string(from: today).prefix(10)
+                let (shipped, avgMs) = try await pool.read { db -> (Int, Double?) in
+                    // Shipped today — created_at is Unix ms (INTEGER) in cortana.db
+                    let todayStartMs = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000)
                     let shippedRow = try Row.fetchOne(db, sql: """
                         SELECT COUNT(*) as n FROM dispatch_queue
-                        WHERE status = 'completed' AND date(updated_at) >= date('now', 'localtime')
-                        """)
+                        WHERE status = 'completed' AND completed_at >= ?
+                        """, arguments: [todayStartMs])
                     let shippedCount = (shippedRow?["n"] as? Int64).map(Int.init) ?? 0
 
-                    // Avg pipeline time (ms) from completed tasks with created_at + updated_at
+                    // Avg pipeline time: completed_at - created_at in ms (both Unix ms integers)
                     let avgRow = try Row.fetchOne(db, sql: """
-                        SELECT AVG(
-                            (julianday(updated_at) - julianday(created_at)) * 86400 * 1000
-                        ) as avg_ms
+                        SELECT AVG(CAST(completed_at - created_at AS REAL)) as avg_ms
                         FROM dispatch_queue
-                        WHERE status = 'completed' AND updated_at IS NOT NULL AND created_at IS NOT NULL
-                        LIMIT 1
+                        WHERE status = 'completed'
+                          AND completed_at IS NOT NULL
+                          AND created_at IS NOT NULL
+                          AND completed_at > created_at
                         """)
                     let avg = avgRow?["avg_ms"] as? Double
                     return (shippedCount, avg)
@@ -208,10 +208,17 @@ struct FactoryFloorView: View {
                 await MainActor.run {
                     self.shippedToday = shipped
                     if let ms = avgMs, ms > 0 {
-                        let mins = Int(ms / 60_000)
+                        let secs = Int(ms / 1000)
+                        let mins = secs / 60
                         let hrs  = mins / 60
                         let rem  = mins % 60
-                        self.avgPipelineTime = hrs > 0 ? "\(hrs)h \(rem)m" : "\(mins)m"
+                        if hrs > 0 {
+                            self.avgPipelineTime = "\(hrs)h \(rem)m"
+                        } else if mins > 0 {
+                            self.avgPipelineTime = "\(mins)m"
+                        } else {
+                            self.avgPipelineTime = "\(secs)s"
+                        }
                     } else {
                         self.avgPipelineTime = "—"
                     }
@@ -430,17 +437,3 @@ private struct ProgressBar: View {
     }
 }
 
-// MARK: - DatabaseManager async helper
-
-private extension DatabaseManager {
-    func readAsync<T>(_ block: @escaping (Database) throws -> T) async throws -> T {
-        try await withCheckedThrowingContinuation { continuation in
-            do {
-                let result = try self.read(block)
-                continuation.resume(returning: result)
-            } catch {
-                continuation.resume(throwing: error)
-            }
-        }
-    }
-}
