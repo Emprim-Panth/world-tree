@@ -147,6 +147,7 @@ struct WorldTreeApp: App {
                                     // the response is never invisible — even if recovery re-send
                                     // fails or crash-loops. Write only if the last assistant
                                     // message for this session doesn't already have this content.
+                                    var persisted = false
                                     if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                         do {
                                             let recent = try MessageStore.shared.getMessages(sessionId: sessionId, limit: 5)
@@ -155,19 +156,33 @@ struct WorldTreeApp: App {
                                                 _ = try MessageStore.shared.sendMessage(
                                                     sessionId: sessionId, role: .assistant, content: content)
                                                 wtLog("[StreamCache] Pre-persisted recovered response for \(sessionId.prefix(8))")
+                                                persisted = true
+                                            } else {
+                                                wtLog("[StreamCache] Already in DB — skipping re-send for \(sessionId.prefix(8))")
+                                                persisted = true
                                             }
                                         } catch {
                                             wtLog("[StreamCache] Failed to pre-persist recovered response for \(sessionId.prefix(8)): \(error)")
                                         }
                                     }
-                                    StreamRecoveryStore.shared.markPending(
-                                        sessionId: sessionId,
-                                        partialContent: content
-                                    )
-                                    StreamRecoveryCoordinator.shared.scheduleRecoveryCheck(
-                                        sessionId: sessionId,
-                                        delay: .seconds(2)
-                                    )
+                                    // Only schedule a re-send if we couldn't persist to DB.
+                                    // If content is already in DB, the message is visible —
+                                    // spawning a recovery claude process would create a ghost
+                                    // stream that interferes with the active session.
+                                    if !persisted {
+                                        StreamRecoveryStore.shared.markPending(
+                                            sessionId: sessionId,
+                                            partialContent: content
+                                        )
+                                        StreamRecoveryCoordinator.shared.scheduleRecoveryCheck(
+                                            sessionId: sessionId,
+                                            delay: .seconds(2)
+                                        )
+                                    } else {
+                                        // Content is safe in DB — clear any stale pending state
+                                        // left from a previous crash so we don't fire on next restart.
+                                        StreamRecoveryStore.shared.clearPending(sessionId: sessionId)
+                                    }
                                 }
                             }
                         } catch {
