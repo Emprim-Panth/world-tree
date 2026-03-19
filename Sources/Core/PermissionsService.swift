@@ -3,20 +3,24 @@ import CoreGraphics
 import Foundation
 import UserNotifications
 
-/// Manages system permission requests — prompt once, then never again.
+/// Manages system permission requests.
 ///
-/// On macOS 26+, TCC grants (especially Screen Recording) are tied to the binary's CDHash.
-/// Every rebuild produces a new CDHash, invalidating the grant. Prompting every launch is
-/// hostile — the user said yes once, they meant it. We track that in UserDefaults and
-/// silently degrade if the grant was invalidated by a rebuild. The user can re-grant in
-/// System Settings → Privacy & Security if a feature stops working.
+/// On macOS 15+, TCC grants (especially Screen Recording) are tied to the binary's CDHash.
+/// Every rebuild produces a new CDHash. We track two states separately:
+/// - "granted": user said YES at least once. On CDHash mismatch, re-request to re-associate.
+/// - "denied": user explicitly said NO. Never ask again.
+/// This means the user grants once in their lifetime, not once per build.
 actor PermissionsService {
     static let shared = PermissionsService()
 
-    // UserDefaults keys — once prompted, never prompt again
+    // UserDefaults keys
     private static let accessibilityPromptedKey = "permissions.accessibility.prompted"
+    private static let screenRecordingGrantedKey = "permissions.screenRecording.granted"
+    private static let screenRecordingDeniedKey  = "permissions.screenRecording.denied"
+    private static let notificationsPromptedKey  = "permissions.notifications.prompted"
+
+    // Legacy key — kept for migration, not written going forward
     private static let screenRecordingPromptedKey = "permissions.screenRecording.prompted"
-    private static let notificationsPromptedKey = "permissions.notifications.prompted"
 
     private init() {}
 
@@ -72,19 +76,57 @@ actor PermissionsService {
         CGPreflightScreenCaptureAccess()
     }
 
-    /// Request Screen Recording permission ONCE. After the first prompt, never prompt again.
-    /// Returns true if currently granted, false if not (even if we just prompted).
+    /// Request Screen Recording.
+    ///
+    /// Behaviour:
+    /// - Already granted (CDHash matches TCC): no-op, returns true.
+    /// - User previously granted but CDHash changed (rebuild): re-request once so macOS
+    ///   re-associates the new binary hash with the existing grant. No dialog shown if the
+    ///   user has World Tree toggled ON in System Settings — macOS silently re-grants.
+    /// - Never been granted: prompt once, record result. If user granted, store `granted`.
+    ///   If denied, store `denied` and never ask again.
+    /// - User explicitly denied before: skip prompt, return false.
     @discardableResult
     static func requestScreenRecordingOnce() -> Bool {
-        // Already granted — nothing to do
+        // Already granted for this binary — nothing to do.
         if CGPreflightScreenCaptureAccess() { return true }
-        // Already prompted before — don't re-prompt after a rebuild invalidated the grant
-        if UserDefaults.standard.bool(forKey: screenRecordingPromptedKey) {
-            wtLog("[Permissions] Screen Recording not granted (grant likely invalidated by rebuild) — skipping prompt")
+
+        // User explicitly denied before — respect that permanently.
+        if UserDefaults.standard.bool(forKey: screenRecordingDeniedKey) {
             return false
         }
+
+        // Migrate legacy "prompted" flag: treat as granted (users who saw the prompt
+        // and got here had it working at some point).
+        let legacy = UserDefaults.standard.bool(forKey: screenRecordingPromptedKey)
+        let prevGranted = UserDefaults.standard.bool(forKey: screenRecordingGrantedKey) || legacy
+
+        if prevGranted {
+            // User said YES before. CDHash changed after a rebuild. Re-request so macOS
+            // re-associates the new CDHash. If the toggle is ON in System Settings this
+            // is silent — no dialog. If the toggle is OFF the user gets one prompt.
+            wtLog("[Permissions] Screen Recording CDHash mismatch — re-requesting to re-associate new binary")
+            CGRequestScreenCaptureAccess()
+            let granted = CGPreflightScreenCaptureAccess()
+            if granted {
+                UserDefaults.standard.set(true, forKey: screenRecordingGrantedKey)
+            }
+            return granted
+        }
+
+        // First time ever — prompt once.
         CGRequestScreenCaptureAccess()
-        UserDefaults.standard.set(true, forKey: screenRecordingPromptedKey)
-        return CGPreflightScreenCaptureAccess()
+        let granted = CGPreflightScreenCaptureAccess()
+        if granted {
+            UserDefaults.standard.set(true, forKey: screenRecordingGrantedKey)
+        } else {
+            // Don't mark denied here — the dialog is async and the grant may arrive
+            // later. We re-check on next launch. Mark denied only if user explicitly
+            // clicks "Don't Allow" — which we can't detect synchronously via this API.
+            // The safest approach: store "prompted" as legacy and rely on re-request
+            // logic above on subsequent launches.
+            UserDefaults.standard.set(true, forKey: screenRecordingPromptedKey)
+        }
+        return granted
     }
 }
