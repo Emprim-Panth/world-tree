@@ -149,6 +149,13 @@ targets:
               --options runtime \
               --timestamp=none \
               "$APP_DST"
+            # Flush runningboardd's CDHash cache so macOS accepts the new signature
+            # immediately. Without this, taskgated kills the restarted process because
+            # it still has the old CDHash cached from the previous binary.
+            killall runningboardd 2>/dev/null || true
+            sleep 1
+            # Restart the KeepAlive service with the freshly signed binary.
+            launchctl kickstart -k "gui/$(id -u)/com.forgeandcode.world-tree" 2>/dev/null || true
           fi
         name: "Install to /Applications"
         basedOnDependencyAnalysis: false
