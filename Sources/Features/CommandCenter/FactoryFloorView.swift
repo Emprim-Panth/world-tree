@@ -22,7 +22,9 @@ struct FactoryFloorView: View {
         heartbeatStore.dispatchJobs.filter { $0.status == "completed" }
     }
     private var failed: [CrewDispatchJob] {
-        heartbeatStore.dispatchJobs.filter { $0.status == "failed" || $0.status == "exhausted" }
+        heartbeatStore.dispatchJobs.filter {
+            $0.status == "failed" || $0.status == "exhausted" || $0.status == "timed_out"
+        }
     }
     private var blocked: [CrewDispatchJob] {
         heartbeatStore.dispatchJobs.filter { $0.status == "blocked" }

@@ -182,7 +182,8 @@ final class HeartbeatStore: ObservableObject {
                }) {
                 dispatchJobs = (jobRows ?? []).map { row in
                     let fullPath: String = row["project"] ?? ""
-                    let projectName = (fullPath as NSString).lastPathComponent.isEmpty ? fullPath : (fullPath as NSString).lastPathComponent
+                    let lastComp = (fullPath as NSString).lastPathComponent
+                    let projectName = (lastComp.isEmpty || lastComp == "Development" || lastComp == "evanprimeau") ? "Workspace" : lastComp
                     let createdMs: Int64? = row["created_at"]
                     let createdAt = createdMs.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000.0) }
                     return CrewDispatchJob(
@@ -332,22 +333,32 @@ final class HeartbeatStore: ObservableObject {
                     SELECT id, project, model, source, message, status,
                            created_at, completed_at
                     FROM dispatch_queue
+                    WHERE status IN ('running','pending','dispatched','failed','timed_out','blocked','completed')
                     ORDER BY
                         CASE status
                             WHEN 'running'    THEN 0
-                            WHEN 'pending'    THEN 1
-                            WHEN 'dispatched' THEN 2
-                            ELSE 3
+                            WHEN 'dispatched' THEN 1
+                            WHEN 'pending'    THEN 2
+                            WHEN 'failed'     THEN 3
+                            WHEN 'timed_out'  THEN 4
+                            WHEN 'blocked'    THEN 5
+                            ELSE 6
                         END,
                         created_at DESC
-                    LIMIT 60
+                    LIMIT 80
                     """)
             }
             dispatchJobs = jobRows.map { row in
                 // project is a full path like /Users/evanprimeau/Development/BookBuddy
                 let fullPath: String = row["project"] ?? ""
-                let projectName = (fullPath as NSString).lastPathComponent.isEmpty
-                    ? fullPath : (fullPath as NSString).lastPathComponent
+                let lastComponent = (fullPath as NSString).lastPathComponent
+                // If the path ends at the root dev folder or home, use "Workspace"
+                let projectName: String
+                if lastComponent.isEmpty || lastComponent == "Development" || lastComponent == "evanprimeau" {
+                    projectName = "Workspace"
+                } else {
+                    projectName = lastComponent
+                }
                 // created_at is Unix milliseconds (Int64)
                 let createdMs: Int64? = row["created_at"]
                 let createdAt = createdMs.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000.0) }
