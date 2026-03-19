@@ -16,7 +16,7 @@ struct FactoryFloorView: View {
         heartbeatStore.dispatchJobs.filter { $0.status == "pending" }
     }
     private var running: [CrewDispatchJob] {
-        heartbeatStore.dispatchJobs.filter { $0.status == "running" }
+        heartbeatStore.dispatchJobs.filter { $0.status == "running" || $0.status == "dispatched" }
     }
     private var completed: [CrewDispatchJob] {
         heartbeatStore.dispatchJobs.filter { $0.status == "completed" }
@@ -310,11 +310,12 @@ private struct DispatchJobCard: View {
 
     private var modelTag: String {
         switch job.model.lowercased() {
-        case "codex", "codex-mini-latest", "openai": return "Codex"
-        case "opus":                                  return "Opus"
-        case "sonnet":                                return "Sonnet"
-        case "ollama", "qwen2.5-coder:7b":            return "Ollama"
-        default:                                      return job.model.isEmpty ? "Claude" : job.model
+        case "codex", "codex-mini-latest": return "Codex"
+        case "opus":                       return "Opus"
+        case "sonnet":                     return "Sonnet"
+        case "haiku":                      return "Haiku"
+        case "ollama", "qwen2.5-coder:7b": return "Ollama"
+        default:                           return job.model.isEmpty ? "Claude" : job.model.capitalized
         }
     }
 
@@ -322,8 +323,19 @@ private struct DispatchJobCard: View {
         switch modelTag {
         case "Codex":   return .purple
         case "Opus":    return .orange
+        case "Haiku":   return .green
         case "Ollama":  return .teal
         default:        return .blue
+        }
+    }
+
+    /// Maps gateway source values ("conversation", "reflex", "triage") to readable labels.
+    private var agentLabel: String {
+        switch job.crewAgent.lowercased() {
+        case "conversation": return "You"
+        case "reflex":       return "Reflex"
+        case "triage":       return "Triage"
+        default:             return job.crewAgent.isEmpty ? "Auto" : job.crewAgent.capitalized
         }
     }
 
@@ -338,7 +350,7 @@ private struct DispatchJobCard: View {
             // Metadata row
             HStack(spacing: 6) {
                 // Agent
-                Label(job.crewAgent.isEmpty ? "auto" : job.crewAgent.capitalized, systemImage: job.agentIcon)
+                Label(agentLabel, systemImage: job.agentIcon)
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(.secondary)
 
@@ -366,8 +378,8 @@ private struct DispatchJobCard: View {
                     .foregroundStyle(.tertiary)
             }
 
-            // Progress bar for running tasks
-            if job.status == "running" {
+            // Progress bar for running/dispatched tasks
+            if job.status == "running" || job.status == "dispatched" {
                 ProgressBar(color: accentColor)
             }
 

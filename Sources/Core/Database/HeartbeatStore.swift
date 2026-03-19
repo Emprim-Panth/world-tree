@@ -96,6 +96,16 @@ final class HeartbeatStore: ObservableObject {
         return df
     }()
 
+    /// Read-only pool for the gateway DB (cortana.db) which holds live dispatch_queue.
+    /// Opened lazily — returns nil if the file doesn't exist yet.
+    private static var gatewayPool: DatabasePool? = {
+        let path = (NSHomeDirectory() as NSString).appendingPathComponent(".cortana/cortana.db")
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        var config = Configuration()
+        config.readonly = true
+        return try? DatabasePool(path: path, configuration: config)
+    }()
+
     private init() {}
 
     // MARK: - Signal Queries
@@ -154,38 +164,65 @@ final class HeartbeatStore: ObservableObject {
             }
             activeDispatches = count
 
-            // Crew dispatch queue — pending + running + last 20 completed/failed
-            let jobRows = try DatabaseManager.shared.read { db in
-                guard try db.tableExists("dispatch_queue") else { return [Row]() }
-                return try Row.fetchAll(db, sql: """
-                    SELECT id, project, model, crew_agent, prompt, ticket_id,
-                           status, attempts, max_attempts, last_error, created_at
-                    FROM dispatch_queue
-                    ORDER BY
-                        CASE status
-                            WHEN 'running' THEN 0
-                            WHEN 'pending' THEN 1
-                            ELSE 2
-                        END,
-                        created_at DESC
-                    LIMIT 40
-                    """)
-            }
-            dispatchJobs = jobRows.map { row in
-                let dateStr: String? = row["created_at"]
-                return CrewDispatchJob(
-                    id: row["id"] ?? UUID().uuidString,
-                    project: row["project"] ?? "",
-                    model: row["model"] ?? "sonnet",
-                    crewAgent: row["crew_agent"] ?? "unknown",
-                    prompt: row["prompt"] ?? "",
-                    ticketId: row["ticket_id"],
-                    status: row["status"] ?? "unknown",
-                    attempts: row["attempts"] ?? 0,
-                    maxAttempts: row["max_attempts"] ?? 3,
-                    lastError: row["last_error"],
-                    createdAt: dateStr.flatMap { Self.dateFormatter.date(from: $0) }
-                )
+            // Crew dispatch queue — read from gateway DB (cortana.db) where live dispatches live
+            if let pool = Self.gatewayPool,
+               let jobRows = try? pool.read({ db -> [Row]? in
+                   guard try db.tableExists("dispatch_queue") else { return nil }
+                   return try Row.fetchAll(db, sql: """
+                       SELECT id, project, model, source, message, status, created_at
+                       FROM dispatch_queue
+                       ORDER BY
+                           CASE status
+                               WHEN 'running'    THEN 0
+                               WHEN 'pending'    THEN 1
+                               WHEN 'dispatched' THEN 2
+                               ELSE 3
+                           END, created_at DESC LIMIT 60
+                       """)
+               }) {
+                dispatchJobs = (jobRows ?? []).map { row in
+                    let fullPath: String = row["project"] ?? ""
+                    let projectName = (fullPath as NSString).lastPathComponent.isEmpty ? fullPath : (fullPath as NSString).lastPathComponent
+                    let createdMs: Int64? = row["created_at"]
+                    let createdAt = createdMs.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000.0) }
+                    return CrewDispatchJob(
+                        id: row["id"] ?? UUID().uuidString,
+                        project: projectName,
+                        model: row["model"] ?? "claude",
+                        crewAgent: row["source"] ?? "",
+                        prompt: row["message"] ?? "",
+                        ticketId: nil, status: row["status"] ?? "unknown",
+                        attempts: 1, maxAttempts: 3, lastError: nil, createdAt: createdAt
+                    )
+                }
+            } else {
+                // Fallback to conversations.db legacy table
+                let jobRows = try DatabaseManager.shared.read { db in
+                    guard try db.tableExists("dispatch_queue") else { return [Row]() }
+                    return try Row.fetchAll(db, sql: """
+                        SELECT id, project, model, crew_agent, prompt, ticket_id,
+                               status, attempts, max_attempts, last_error, created_at
+                        FROM dispatch_queue
+                        ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
+                                 created_at DESC LIMIT 40
+                        """)
+                }
+                dispatchJobs = jobRows.map { row in
+                    let dateStr: String? = row["created_at"]
+                    return CrewDispatchJob(
+                        id: row["id"] ?? UUID().uuidString,
+                        project: row["project"] ?? "",
+                        model: row["model"] ?? "sonnet",
+                        crewAgent: row["crew_agent"] ?? "unknown",
+                        prompt: row["prompt"] ?? "",
+                        ticketId: row["ticket_id"],
+                        status: row["status"] ?? "unknown",
+                        attempts: row["attempts"] ?? 0,
+                        maxAttempts: row["max_attempts"] ?? 3,
+                        lastError: row["last_error"],
+                        createdAt: dateStr.flatMap { Self.dateFormatter.date(from: $0) }
+                    )
+                }
             }
 
             // Recent heartbeat runs (last 10)
@@ -285,37 +322,85 @@ final class HeartbeatStore: ObservableObject {
                 """) ?? 0
         }
 
-        let jobRows = try await DatabaseManager.shared.asyncRead { db in
-            guard try db.tableExists("dispatch_queue") else { return [Row]() }
-            return try Row.fetchAll(db, sql: """
-                SELECT id, project, model, crew_agent, prompt, ticket_id,
-                       status, attempts, max_attempts, last_error, created_at
-                FROM dispatch_queue
-                ORDER BY
-                    CASE status
-                        WHEN 'running' THEN 0
-                        WHEN 'pending' THEN 1
-                        ELSE 2
-                    END,
-                    created_at DESC
-                LIMIT 40
-                """)
-        }
-        let dispatchJobs = jobRows.map { row in
-            let dateStr: String? = row["created_at"]
-            return CrewDispatchJob(
-                id: row["id"] ?? UUID().uuidString,
-                project: row["project"] ?? "",
-                model: row["model"] ?? "sonnet",
-                crewAgent: row["crew_agent"] ?? "unknown",
-                prompt: row["prompt"] ?? "",
-                ticketId: row["ticket_id"],
-                status: row["status"] ?? "unknown",
-                attempts: row["attempts"] ?? 0,
-                maxAttempts: row["max_attempts"] ?? 3,
-                lastError: row["last_error"],
-                createdAt: dateStr.flatMap { df.date(from: $0) }
-            )
+        // Read dispatch jobs from the gateway DB (cortana.db) — that's where live dispatches live.
+        // Schema uses `message` (not `prompt`), `project` is a full path, `created_at` is a Unix ms timestamp.
+        let dispatchJobs: [CrewDispatchJob]
+        if let pool = Self.gatewayPool {
+            let jobRows = try await pool.read { db in
+                guard try db.tableExists("dispatch_queue") else { return [Row]() }
+                return try Row.fetchAll(db, sql: """
+                    SELECT id, project, model, source, message, status,
+                           created_at, completed_at
+                    FROM dispatch_queue
+                    ORDER BY
+                        CASE status
+                            WHEN 'running'    THEN 0
+                            WHEN 'pending'    THEN 1
+                            WHEN 'dispatched' THEN 2
+                            ELSE 3
+                        END,
+                        created_at DESC
+                    LIMIT 60
+                    """)
+            }
+            dispatchJobs = jobRows.map { row in
+                // project is a full path like /Users/evanprimeau/Development/BookBuddy
+                let fullPath: String = row["project"] ?? ""
+                let projectName = (fullPath as NSString).lastPathComponent.isEmpty
+                    ? fullPath : (fullPath as NSString).lastPathComponent
+                // created_at is Unix milliseconds (Int64)
+                let createdMs: Int64? = row["created_at"]
+                let createdAt = createdMs.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000.0) }
+                // source maps roughly to crew agent role
+                let source: String = row["source"] ?? ""
+                return CrewDispatchJob(
+                    id: row["id"] ?? UUID().uuidString,
+                    project: projectName,
+                    model: row["model"] ?? "claude",
+                    crewAgent: source,
+                    prompt: row["message"] ?? "",
+                    ticketId: nil,
+                    status: row["status"] ?? "unknown",
+                    attempts: 1,
+                    maxAttempts: 3,
+                    lastError: nil,
+                    createdAt: createdAt
+                )
+            }
+        } else {
+            // Gateway DB not available — fall back to conversations.db legacy table
+            let jobRows = try await DatabaseManager.shared.asyncRead { db in
+                guard try db.tableExists("dispatch_queue") else { return [Row]() }
+                return try Row.fetchAll(db, sql: """
+                    SELECT id, project, model, crew_agent, prompt, ticket_id,
+                           status, attempts, max_attempts, last_error, created_at
+                    FROM dispatch_queue
+                    ORDER BY
+                        CASE status
+                            WHEN 'running' THEN 0
+                            WHEN 'pending' THEN 1
+                            ELSE 2
+                        END,
+                        created_at DESC
+                    LIMIT 40
+                    """)
+            }
+            dispatchJobs = jobRows.map { row in
+                let dateStr: String? = row["created_at"]
+                return CrewDispatchJob(
+                    id: row["id"] ?? UUID().uuidString,
+                    project: row["project"] ?? "",
+                    model: row["model"] ?? "sonnet",
+                    crewAgent: row["crew_agent"] ?? "unknown",
+                    prompt: row["prompt"] ?? "",
+                    ticketId: row["ticket_id"],
+                    status: row["status"] ?? "unknown",
+                    attempts: row["attempts"] ?? 0,
+                    maxAttempts: row["max_attempts"] ?? 3,
+                    lastError: row["last_error"],
+                    createdAt: dateStr.flatMap { df.date(from: $0) }
+                )
+            }
         }
 
         let runRows = try await DatabaseManager.shared.asyncRead { db in
