@@ -116,7 +116,9 @@ struct SkillsPaletteView: View {
     }
 
     var body: some View {
-        if shouldShow && !store.suggestedSkills.isEmpty {
+        // Always render the container so layout height doesn't shift when palette
+        // appears/disappears. Opacity + allowsHitTesting handle show/hide instead.
+        if !store.suggestedSkills.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(store.suggestedSkills) { skill in
@@ -135,11 +137,14 @@ struct SkillsPaletteView: View {
                 .padding(.horizontal, 24)
                 .padding(.vertical, 6)
             }
-            .transition(.opacity.combined(with: .move(edge: .bottom)))
+            .opacity(shouldShow ? 1 : 0)
+            .allowsHitTesting(shouldShow)
+            .animation(.easeInOut(duration: 0.15), value: shouldShow)
+        }
+        EmptyView()
             .onAppear {
                 store.refresh(project: project, workingDirectory: workingDirectory)
             }
-        }
     }
 }
 
