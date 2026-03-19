@@ -49,6 +49,9 @@ private struct AppMainContent: View {
         ToolbarItem(placement: .secondaryAction) {
             ModelPickerButton()
         }
+        ToolbarItem(placement: .secondaryAction) {
+            FactoryStatusChip()
+        }
         ToolbarItem(placement: .primaryAction) {
             Button {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
