@@ -189,7 +189,10 @@ final class StreamRecoveryCoordinator {
 
         case .error:
             finishAttempt(sessionId: sessionId, branchId: attempt.branchId, subscriptionId: attempt.subscriptionId)
-            if StreamRecoveryStore.shared.hasPendingRecovery(sessionId: sessionId) {
+            // Only retry if this attempt made real progress (produced tokens). Silent failures
+            // (resume started a new session but produced no content) won't be fixed by retrying
+            // immediately — they'd just write a second identical error message to the DB.
+            if attempt.madeProgress, StreamRecoveryStore.shared.hasPendingRecovery(sessionId: sessionId) {
                 scheduleRecoveryCheck(sessionId: sessionId, delay: .seconds(retryDelaySeconds))
             }
         }

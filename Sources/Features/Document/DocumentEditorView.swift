@@ -545,6 +545,9 @@ class DocumentEditorViewModel: ObservableObject {
     /// response to the DB independently — both writes produce different row IDs, so
     /// seenMessageIds alone can't deduplicate them. We match by content instead.
     private var pendingAssistantContent: String? = nil
+    /// Set by the .error stream handler; cleared on each new stream start.
+    /// Prevents .done (which always follows .error) from adding a second "no response" section.
+    private var streamErrorHandled = false
     private(set) var treeId: String?
     private(set) var parentBranchId: String?
     private(set) var currentBranch: Branch?
@@ -867,14 +870,19 @@ class DocumentEditorViewModel: ObservableObject {
                             if case .assistant = $0.author { return $0.messageId == nil }
                             return false
                         })
-                        if let idx = nilIdIdx,
-                           String(self.document.sections[idx].content.characters) == lastAssistant.content {
-                            // .done already added it — upgrade the nil-id entry with the real DB id.
+                        if let idx = nilIdIdx {
+                            // .done added a nil-id section — upgrade it with the real DB id.
+                            // If content differs (e.g. .done showed a ⚠️ fallback while registry
+                            // had real content), replace in-place rather than appending a second section.
                             self.document.sections[idx].messageId = lastAssistant.id
+                            if String(self.document.sections[idx].content.characters) != lastAssistant.content {
+                                self.document.sections[idx].content = AttributedString(lastAssistant.content)
+                                self.document.sections[idx].parsedMarkdown = Self.parseAssistantMarkdown(lastAssistant.content)
+                            }
                             self.seenMessageIds.insert(lastAssistant.id)
                             self.pendingAssistantContent = nil
                         } else {
-                            // Crash/recovery path — .done didn't fire. Add from DB now.
+                            // True recovery — .done didn't run at all. Add from DB now.
                             self.appendAssistantSectionIfNeeded(
                                 messageId: lastAssistant.id,
                                 content: lastAssistant.content,
@@ -987,6 +995,7 @@ class DocumentEditorViewModel: ObservableObject {
         guard activeSubscriptionId == nil else { return }
 
         isProcessing = true
+        streamErrorHandled = false
         // Only restore accumulated content if we haven't received any live tokens yet.
         // Prevents re-stamping initialContent (old partial text already rendered as a section)
         // on top of tokens already flowing into streamingContent from a prior subscription.
@@ -1640,6 +1649,7 @@ class DocumentEditorViewModel: ObservableObject {
         )
 
         isProcessing = true
+        streamErrorHandled = false
         streamingContent = ""
         startStreamBatching()
         Task { await StreamCacheManager.shared.openStreamFile(sessionId: sessionId) }
@@ -1709,6 +1719,15 @@ class DocumentEditorViewModel: ObservableObject {
                     cacheHitTokens: usage.cacheHitTokens,
                     model: model
                 )
+            }
+
+            // If .error fired before .done (e.g., failed resume), the error handler already
+            // persisted and displayed the error inline. .done always follows .error in the
+            // stream protocol, so skip the message append to prevent a second section.
+            if streamErrorHandled {
+                isProcessing = false
+                refreshRecoveryStatus()
+                return
             }
 
             // The registry already persisted the response to DB.
@@ -1846,15 +1865,26 @@ class DocumentEditorViewModel: ObservableObject {
             wtLog("[DocumentEditor] Provider error: \(msg)")
             // Persist and display the error inline in the chat so the user sees it
             // even if they miss the alert (e.g. window not focused, alert dismissed).
+            // pendingAssistantContent primes GRDB dedup so the DB-delivered row upgrades
+            // the nil-id section instead of creating a duplicate. The .done handler
+            // checks errorMessage and skips its own append to avoid a second message.
+            let errorContent = "⚠️ \(msg)"
+            streamErrorHandled = true
             do {
                 _ = try MessageStore.shared.sendMessage(
                     sessionId: sessionId,
                     role: .assistant,
-                    content: "⚠️ \(msg)"
+                    content: errorContent
                 )
             } catch {
                 wtLog("[DocumentEditor] Failed to persist error message: \(error)")
             }
+            pendingAssistantContent = errorContent
+            appendAssistantSectionIfNeeded(
+                messageId: nil,
+                content: errorContent,
+                timestamp: Date()
+            )
             errorMessage = msg
             refreshRecoveryStatus()
         }
