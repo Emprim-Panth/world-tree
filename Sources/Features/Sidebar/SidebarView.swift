@@ -4,6 +4,7 @@ struct SidebarView: View {
     @StateObject private var viewModel = SidebarViewModel()
     @StateObject private var daemonService = DaemonService.shared
     @Environment(AppState.self) var appState
+    private var factoryStore = FactoryStore.shared
     @State private var showNewTreeSheet = false
     @State private var sessionsExpanded = false
     @State private var newTreeName = ""
@@ -76,13 +77,12 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Global nav — Command Center, Tickets
+            // Primary navigation — 4 sections
             HStack(spacing: 2) {
-                sidebarNavButton("Command Center", icon: "square.grid.2x2", dest: .commandCenter)
-                sidebarNavButton("Factory", icon: "building.2.fill", dest: .factory)
-                sidebarNavButton("Tickets", icon: "checklist", dest: .tickets)
-                sidebarNavButton("MCP Tools", icon: "puzzlepiece.extension", dest: .mcpTools)
-                sidebarNavButton("Brain", icon: "brain", dest: .brain)
+                factoryNavButton
+                sidebarNavButton("Projects", icon: "folder.fill", dest: .projects)
+                sidebarNavButton("Crew", icon: "person.3.fill", dest: .crew)
+                sidebarNavButton("System", icon: "gearshape.2.fill", dest: .system)
             }
             .padding(.horizontal, 8)
             .padding(.top, 6)
@@ -522,6 +522,43 @@ struct SidebarView: View {
 
     // MARK: - Sidebar Nav Button
 
+    /// Factory button with a live NERVE connection badge overlay.
+    private var factoryNavButton: some View {
+        let isActive = appState.selectedTreeId == nil && appState.sidebarDestination == .factory
+        return Button {
+            if let old = appState.selectedBranchId {
+                NotificationCenter.default.post(
+                    name: .branchWillSwitch,
+                    object: nil,
+                    userInfo: ["oldBranchId": old, "newBranchId": ""]
+                )
+            }
+            appState.selectedTreeId = nil
+            appState.selectedBranchId = nil
+            appState.clearProjectSelection()
+            appState.sidebarDestination = .factory
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Label("Factory", systemImage: "puzzlepiece.extension.fill")
+                    .font(.caption)
+                    .fontWeight(isActive ? .semibold : .regular)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .padding(.horizontal, 4)
+                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+                    .background(isActive ? Color.accentColor.opacity(0.15) : Color.clear)
+                    .cornerRadius(6)
+                Circle()
+                    .fill(factoryStore.isConnected ? Color.green : Color.gray)
+                    .frame(width: 6, height: 6)
+                    .offset(x: -2, y: 2)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(factoryStore.isConnected ? "Factory — NERVE connected" : "Factory — NERVE offline")
+    }
+
     private func sidebarNavButton(_ label: String, icon: String, dest: SidebarDestination) -> some View {
         let isActive = appState.selectedTreeId == nil && appState.sidebarDestination == dest
         return Button {
@@ -536,6 +573,7 @@ struct SidebarView: View {
             appState.selectedBranchId = nil
             appState.clearProjectSelection()
             appState.sidebarDestination = dest
+            appState.detailRefreshKey = UUID().uuidString
         } label: {
             Label(label, systemImage: icon)
                 .font(.caption)

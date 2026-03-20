@@ -261,6 +261,9 @@ struct SettingsView: View {
                         refreshProvidersAfterCredentialChange()
                     }
                     .foregroundStyle(.red)
+                } else if !apiKeyInput.isEmpty {
+                    Label("Unsaved key — click Save to store", systemImage: "key")
+                        .foregroundStyle(.secondary)
                 } else {
                     Label("No API key configured", systemImage: "xmark.circle")
                         .foregroundStyle(.orange)
@@ -313,6 +316,9 @@ struct SettingsView: View {
                         refreshProvidersAfterCredentialChange()
                     }
                     .foregroundStyle(.red)
+                } else if !openAIKeyInput.isEmpty {
+                    Label("Unsaved key — click Save to store", systemImage: "key")
+                        .foregroundStyle(.secondary)
                 } else {
                     Label("No API key configured", systemImage: "xmark.circle")
                         .foregroundStyle(.orange)

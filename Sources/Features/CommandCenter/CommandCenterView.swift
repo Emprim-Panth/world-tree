@@ -33,7 +33,6 @@ struct CommandCenterView: View {
                 ForEach(conflictDetector.activeConflicts, id: \.filePath) { conflict in
                     ConflictWarningBanner(conflict: conflict)
                 }
-                DecisionReviewSection()
                 AgentStatusBoard()
                 TokenDashboardView()
                 LiveStreamsSection()
