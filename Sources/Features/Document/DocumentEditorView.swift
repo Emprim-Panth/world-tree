@@ -267,7 +267,7 @@ struct DocumentEditorView: View {
                         text: $viewModel.currentInput,
                         attachments: $viewModel.pendingAttachments,
                         isProcessing: viewModel.isProcessing,
-                        onSubmit: { viewModel.submitInput() },
+                        onSubmit: { CrashSentinel.shared.recordUserInput(); viewModel.submitInput() },
                         onCancel: { viewModel.cancelStream() }
                     )
                     .focused($isFocused)

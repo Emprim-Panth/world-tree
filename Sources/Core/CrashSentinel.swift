@@ -16,6 +16,7 @@ final class CrashSentinel {
     private let logPath: String
     private var heartbeatTimer: Timer?
     private let launchedAt: String = ISO8601DateFormatter().string(from: Date())
+    private var lastUserInputAt: String? = nil
 
     private init() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -53,6 +54,12 @@ final class CrashSentinel {
         return crashInfo
     }
 
+    /// Call whenever the user submits a message. Updates lastUserInputAt in the sentinel
+    /// so the watchdog daemon can distinguish a stalled session from an idle user.
+    func recordUserInput() {
+        writeSentinel(state: "running", userInputAt: ISO8601DateFormatter().string(from: Date()))
+    }
+
     /// Call on clean app exit (applicationWillTerminate or similar).
     func markCleanExit() {
         heartbeatTimer?.invalidate()
@@ -84,13 +91,15 @@ final class CrashSentinel {
         return info
     }
 
-    private func writeSentinel(state: String) {
+    private func writeSentinel(state: String, userInputAt: String? = nil) {
+        if let t = userInputAt { lastUserInputAt = t }
         let sentinel = SentinelData(
             state: state,
             pid: ProcessInfo.processInfo.processIdentifier,
             launchedAt: launchedAt,
             updatedAt: ISO8601DateFormatter().string(from: Date()),
-            version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+            version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
+            lastUserInputAt: lastUserInputAt
         )
 
         do {
@@ -133,6 +142,7 @@ struct SentinelData: Codable {
     let launchedAt: String
     let updatedAt: String
     let version: String
+    var lastUserInputAt: String?  // Updated when user submits a message; watchdog uses this for idle detection
 }
 
 struct CrashInfo {
