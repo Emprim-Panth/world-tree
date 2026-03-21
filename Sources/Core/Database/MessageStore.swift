@@ -38,9 +38,9 @@ final class MessageStore {
                          WHERE cb.fork_from_message_id = m.id) as has_branches
                     FROM messages m
                     WHERE m.session_id = ?
-                    ORDER BY m.timestamp DESC
+                    ORDER BY m.timestamp DESC, m.id DESC
                     LIMIT ?
-                ) sub ORDER BY sub.timestamp ASC
+                ) sub ORDER BY sub.timestamp ASC, sub.id ASC
                 """
             return try Message.fetchAll(db, sql: sql, arguments: [sessionId, limit])
         }
@@ -48,6 +48,12 @@ final class MessageStore {
 
     /// Get a page of messages older than the given message ID.
     /// Used for pagination — returns up to `limit` messages in chronological order.
+    ///
+    /// Uses (timestamp, id) as the composite boundary so that messages are always
+    /// ordered chronologically even when IDs and timestamps diverge (e.g. external
+    /// inserts from cortana-core, clock drift). Without this, `id < beforeId` would
+    /// return messages that appear after the reference in timestamp order, causing
+    /// old messages to surface below new ones on scroll-up.
     func getMessagesBefore(sessionId: String, beforeMessageId: String, limit: Int) throws -> [Message] {
         try db.read { db in
             let sql = """
@@ -56,12 +62,16 @@ final class MessageStore {
                         (SELECT COUNT(*) FROM canvas_branches cb
                          WHERE cb.fork_from_message_id = m.id) as has_branches
                     FROM messages m
-                    WHERE m.session_id = ? AND m.id < ?
-                    ORDER BY m.timestamp DESC
+                    WHERE m.session_id = ?
+                      AND (
+                        m.timestamp < (SELECT timestamp FROM messages WHERE id = ?)
+                        OR (m.timestamp = (SELECT timestamp FROM messages WHERE id = ?) AND m.id < ?)
+                      )
+                    ORDER BY m.timestamp DESC, m.id DESC
                     LIMIT ?
-                ) sub ORDER BY sub.timestamp ASC
+                ) sub ORDER BY sub.timestamp ASC, sub.id ASC
                 """
-            return try Message.fetchAll(db, sql: sql, arguments: [sessionId, beforeMessageId, limit])
+            return try Message.fetchAll(db, sql: sql, arguments: [sessionId, beforeMessageId, beforeMessageId, beforeMessageId, limit])
         }
     }
 

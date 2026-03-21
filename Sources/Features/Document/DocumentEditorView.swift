@@ -1172,8 +1172,25 @@ class DocumentEditorViewModel: ObservableObject {
         for section in document.sections {
             if let msgId = section.messageId { seenMessageIds.insert(msgId) }
         }
+
+        // Boundary-shift guard: when seenMessageIds is non-empty, only process messages
+        // with IDs greater than the highest already-seen ID. Without this, a 30-message
+        // observation window shifts when a new message is written — causing message N+1
+        // to enter the window and message 1 to exit — but message 1 was never added to
+        // seenMessageIds because it was outside the initial window. It would then appear
+        // as a "new" bubble from hours earlier (the "ghost old chat" bug).
+        //
+        // Exception: maxSeenIntId == 0 means this is the initial load — show everything.
+        let maxSeenIntId = seenMessageIds.isEmpty ? 0 : seenMessageIds.compactMap { Int($0) }.max() ?? 0
+
         var newMessages: [Message] = []
         for msg in messages where !seenMessageIds.contains(msg.id) {
+            // Skip messages that are older than what we've already rendered.
+            // This prevents boundary-shifted observation results from surfacing old history.
+            if maxSeenIntId > 0, let msgIntId = Int(msg.id), msgIntId <= maxSeenIntId {
+                seenMessageIds.insert(msg.id)
+                continue
+            }
             // Filter cortana-core internal hook messages that are written to the shared DB
             // but should never appear as conversation bubbles in the UI. These accumulate
             // silently during streaming (GRDB only fires for World Tree's own writes) and
@@ -1946,7 +1963,17 @@ class DocumentEditorViewModel: ObservableObject {
 
         do {
             let msgs = try MessageStore.shared.getMessages(sessionId: sessionId)
-            if let lastAssistant = msgs.last(where: { $0.role == .assistant && !seenMessageIds.contains($0.id) }) {
+            // Guard: only accept messages newer than every already-seen message.
+            // Without this, a GRDB race (observation fires before this function runs)
+            // marks the real response as seen, and the search falls back to an OLD
+            // unseen assistant message from earlier in the session — producing "ghost"
+            // messages from hours ago appearing after each response.
+            let maxSeenIntId = seenMessageIds.compactMap { Int($0) }.max() ?? 0
+            if let lastAssistant = msgs.last(where: {
+                $0.role == .assistant &&
+                !seenMessageIds.contains($0.id) &&
+                (Int($0.id) ?? 0) > maxSeenIntId
+            }) {
                 appendAssistantSectionIfNeeded(
                     messageId: lastAssistant.id,
                     content: lastAssistant.content,
