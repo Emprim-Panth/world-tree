@@ -82,7 +82,28 @@ fi
 BUILD_NUM=$(defaults read "${BUILT_APP}/Contents/Info" CFBundleVersion 2>/dev/null || echo "?")
 echo "▸ Installing build ${BUILD_NUM} → ${INSTALL_PATH}"
 
-# Stop launchd service first (prevents auto-restart during swap)
+# Build and sign the app BEFORE touching the running service.
+# This ensures we never stop launchd with an unsigned or broken binary.
+
+# Sign the built app first (before any service disruption)
+echo "▸ Signing built app..."
+# Strip nested .app bundles from source bundle root (prevents codesign "unsealed contents" failure)
+find "${BUILT_APP}" -maxdepth 1 -name "*.app" -type d | while read -r nested; do
+  echo "  ⚠ Removing stray nested bundle: $(basename "$nested")"
+  rm -rf "$nested"
+done
+if ! codesign --force --sign "${SIGN_IDENTITY}" \
+  --entitlements "${PROJECT_DIR}/WorldTree.entitlements" \
+  --options runtime \
+  --timestamp=none \
+  --deep \
+  "${BUILT_APP}"; then
+  echo "✗ Signing failed — aborting install (service left running)"
+  exit 1
+fi
+codesign -v "${BUILT_APP}" 2>&1 || { echo "✗ Signature verification failed — aborting"; exit 1; }
+
+# Only stop the service once we have a valid signed binary ready to swap in
 echo "▸ Stopping launchd service..."
 launchctl bootout "gui/${UID_NUM}/${LAUNCHD_LABEL}" 2>/dev/null || true
 
@@ -93,15 +114,6 @@ sleep 0.5
 # Install
 rm -rf "${INSTALL_PATH}"
 cp -R "${BUILT_APP}" "${INSTALL_PATH}"
-
-# Sign — unsigned apps won't launch on macOS 26+
-echo "▸ Signing..."
-codesign --force --sign "${SIGN_IDENTITY}" \
-  --entitlements "${PROJECT_DIR}/WorldTree.entitlements" \
-  --options runtime \
-  --timestamp=none \
-  --deep \
-  "${INSTALL_PATH}"
 
 write_launchd_plist
 
