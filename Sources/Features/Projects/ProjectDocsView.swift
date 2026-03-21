@@ -77,9 +77,9 @@ struct ProjectDocsView: View {
 
             Button {
                 appState.clearProjectSelection()
-                appState.sidebarDestination = .commandCenter
+                appState.sidebarDestination = .projects
             } label: {
-                Label("Command Center", systemImage: "square.grid.2x2")
+                Label("Projects", systemImage: "folder.fill")
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 12)

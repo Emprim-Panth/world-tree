@@ -275,42 +275,7 @@ struct SystemView: View {
 
             switch selectedTab {
             case .brain:
-                VStack(spacing: 0) {
-                    Spacer()
-                    VStack(spacing: 20) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.purple.opacity(0.1))
-                                .frame(width: 80, height: 80)
-                            Image(systemName: "brain")
-                                .font(.system(size: 36))
-                                .foregroundStyle(Color.purple)
-                        }
-                        VStack(spacing: 8) {
-                            Text("Knowledge Base")
-                                .font(.title2.bold())
-                            Text("Every correction, decision, pattern, and mistake Cortana has learned — searchable from here.")
-                                .font(.body)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                                .frame(maxWidth: 360)
-                        }
-                        Text("Powered by NERVE · Available in Phase 2")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(Color(nsColor: .controlBackgroundColor))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                    .padding(40)
-                    .background(Color(nsColor: .windowBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.primary.opacity(0.07)))
-                    .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
-                    .padding(40)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                KnowledgeView()
             case .mcpTools:
                 MCPToolsView()
             }

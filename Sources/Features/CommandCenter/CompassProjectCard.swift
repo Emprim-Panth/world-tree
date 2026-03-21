@@ -16,7 +16,7 @@ struct CompassProjectCard: View {
     @State private var editGoal = ""
     @State private var editPhase = ""
     @State private var newBlocker = ""
-    @State private var newDecision = ""
+    @State private var newDecision = ""  // kept for reset in beginEditing()
 
     @ObservedObject private var store = CompassStore.shared
 
@@ -327,29 +327,6 @@ struct CompassProjectCard: View {
             }
 
             // Decision input (editing mode)
-            if isEditing {
-                HStack(spacing: 4) {
-                    Image(systemName: "lightbulb")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.yellow.opacity(0.8))
-                    TextField("Log decision...", text: $newDecision)
-                        .font(.system(size: 9))
-                        .textFieldStyle(.roundedBorder)
-                        .controlSize(.mini)
-                        .onSubmit {
-                            store.logDecision(newDecision, for: project.name)
-                            newDecision = ""
-                        }
-                    Button("Log") {
-                        store.logDecision(newDecision, for: project.name)
-                        newDecision = ""
-                    }
-                    .font(.system(size: 9))
-                    .controlSize(.mini)
-                    .disabled(newDecision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-
             // Last session
             if let summary = compassState?.lastSessionSummary {
                 HStack(alignment: .top, spacing: 4) {
@@ -360,26 +337,6 @@ struct CompassProjectCard: View {
                         .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
-                }
-            }
-
-            // Recent decisions
-            if let state = compassState, !state.decisions.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Decisions:")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    ForEach(state.decisions.prefix(3), id: \.self) { decision in
-                        HStack(alignment: .top, spacing: 4) {
-                            Text("\u{2022}")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.tertiary)
-                            Text(decision)
-                                .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                    }
                 }
             }
 

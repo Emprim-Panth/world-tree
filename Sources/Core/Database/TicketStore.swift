@@ -215,6 +215,11 @@ final class TicketStore: ObservableObject {
         }
     }
 
+    /// All project names that have open tickets, sorted alphabetically
+    var allProjectNames: [String] {
+        Array(tickets.keys).sorted()
+    }
+
     /// Get tickets for a specific project
     func tickets(for project: String) -> [Ticket] {
         tickets[project] ?? []

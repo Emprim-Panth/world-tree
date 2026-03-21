@@ -5,6 +5,17 @@ import UserNotifications
 struct WorldTreeApp: App {
     @State private var appState = AppState.shared
     @Environment(\.scenePhase) private var scenePhase
+    // Held for app lifetime — DispatchSource cancels on deinit
+    private let sigtermSource: DispatchSourceSignal = {
+        signal(SIGTERM, SIG_IGN)
+        let src = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        src.setEventHandler {
+            CrashSentinel.shared.markCleanExit()
+            NSApplication.shared.terminate(nil)
+        }
+        src.resume()
+        return src
+    }()
 
     var body: some Scene {
         WindowGroup {
@@ -20,16 +31,7 @@ struct WorldTreeApp: App {
                 .onAppear {
                     // Crash sentinel — detect abnormal exits from previous session
                     _ = CrashSentinel.shared.checkAndStart()
-                    // SIGTERM from the rebuild watcher does NOT fire willTerminateNotification,
-                    // so install a signal handler that writes the clean-exit sentinel before dying.
-                    // This prevents every rebuild-triggered restart from being logged as a crash.
-                    signal(SIGTERM) { _ in
-                        CrashSentinel.shared.markCleanExit()
-                        // Route through NSApp.terminate so willTerminateNotification fires
-                        // and stream cleanup (closeAllStreams + clearPending) runs before exit.
-                        DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
-                    }
-
+                    DispatchActivityStore.shared.start()
                     checkForUpdateBadge()
                     // DB is set up in AppState.init() — just surface any error here
                     if let error = appState.dbSetupError {

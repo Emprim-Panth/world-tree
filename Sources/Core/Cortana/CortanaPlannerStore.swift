@@ -315,7 +315,7 @@ final class CortanaPlannerStore: ObservableObject {
             brief.promotedTreeId = tree.id
             brief.promotedBranchId = branch.id
 
-            AppState.shared.sidebarDestination = .commandCenter
+            AppState.shared.sidebarDestination = .conversations
             AppState.shared.selectBranch(branch.id, in: tree.id)
             AppState.shared.terminalVisible = true
 

@@ -3,46 +3,63 @@ import SwiftUI
 /// The bird's eye view of all concurrent work across projects.
 /// Replaces DashboardView when no tree is selected.
 struct CommandCenterView: View {
+    @Environment(AppState.self) var appState
     @State private var viewModel = CommandCenterViewModel()
     @ObservedObject private var daemonService = DaemonService.shared
     @ObservedObject private var heartbeatStore = HeartbeatStore.shared
     private var outputStore = JobOutputStreamStore.shared
     @State private var isShowingRoster = false
     @State private var isShowingEventRules = false
+    @State private var isShowingFactoryFloor = false
     @ObservedObject private var attentionStore = AttentionStore.shared
     @ObservedObject private var conflictDetector = ConflictDetector.shared
     @ObservedObject private var cortanaOpsStore = CortanaOpsStore.shared
+    @ObservedObject private var activityStore = DispatchActivityStore.shared
+    @State private var ccTab: CCTab = .overview
+
+    private enum CCTab: String, CaseIterable {
+        case overview = "Overview"
+        case activity = "Activity"
+    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 header
-                if !attentionStore.unacknowledged.isEmpty {
-                    AttentionPanel()
+                tabPicker
+
+                if ccTab == .activity {
+                    DispatchActivityView()
+                } else {
+                    if !attentionStore.unacknowledged.isEmpty {
+                        AttentionPanel()
+                    }
+                    // Pending handoffs from gateway
+                    if !viewModel.pendingHandoffs.isEmpty {
+                        HandoffBanner(
+                            handoffs: viewModel.pendingHandoffs,
+                            onDismiss: { id in viewModel.dismissHandoff(id) },
+                            onPickUp: { id in viewModel.pickUpHandoff(id) }
+                        )
+                    }
+                    CortanaOpsSection()
+                    FactoryPipelineSection(isShowingFactoryFloor: $isShowingFactoryFloor)
+                    CoordinatorSection()
+                    ForEach(conflictDetector.activeConflicts, id: \.filePath) { conflict in
+                        ConflictWarningBanner(conflict: conflict)
+                    }
+                    AgentStatusBoard()
+                    TokenDashboardView()
+                    LiveStreamsSection()
+                    projectGrid
+                    StarfleetActivitySection()
+                    if UserDefaults.standard.bool(forKey: "pencil.feature.enabled") {
+                        PencilDesignSection()
+                    }
+                    activeWork
+                    recentCompletions
                 }
-                // Pending handoffs from gateway
-                if !viewModel.pendingHandoffs.isEmpty {
-                    HandoffBanner(
-                        handoffs: viewModel.pendingHandoffs,
-                        onDismiss: { id in viewModel.dismissHandoff(id) },
-                        onPickUp: { id in viewModel.pickUpHandoff(id) }
-                    )
-                }
-                CortanaOpsSection()
-                CoordinatorSection()
-                ForEach(conflictDetector.activeConflicts, id: \.filePath) { conflict in
-                    ConflictWarningBanner(conflict: conflict)
-                }
-                AgentStatusBoard()
-                TokenDashboardView()
-                LiveStreamsSection()
-                projectGrid
-                StarfleetActivitySection()
-                if UserDefaults.standard.bool(forKey: "pencil.feature.enabled") {
-                    PencilDesignSection()
-                }
-                activeWork
-                recentCompletions
+
                 Spacer(minLength: 40)
             }
             .padding(.horizontal, 20)
@@ -81,6 +98,11 @@ struct CommandCenterView: View {
         }
         .sheet(isPresented: $isShowingEventRules) {
             EventRulesSheet()
+        }
+        .sheet(isPresented: $isShowingFactoryFloor) {
+            FactoryPipelineView()
+                .environment(appState)
+                .frame(minWidth: 700, minHeight: 550)
         }
         .sheet(item: Binding(
             get: { outputStore.inspectedEntry },
@@ -142,6 +164,15 @@ struct CommandCenterView: View {
             .buttonStyle(.bordered)
             .accessibilityHint("Opens event trigger rules for automation")
 
+            // Factory Pipeline button
+            Button { isShowingFactoryFloor = true } label: {
+                Label("Factory", systemImage: "cpu")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.bordered)
+            .tint(.purple)
+            .accessibilityHint("Opens the NERVE factory pipeline")
+
             // Crew Roster button
             Button {
                 isShowingRoster = true
@@ -175,6 +206,39 @@ struct CommandCenterView: View {
             }
             .buttonStyle(.bordered)
             .accessibilityLabel("Refresh projects")
+        }
+    }
+
+    private var tabPicker: some View {
+        HStack {
+            Picker("", selection: $ccTab) {
+                ForEach(CCTab.allCases, id: \.self) { tab in
+                    HStack(spacing: 4) {
+                        Text(tab.rawValue)
+                        if tab == .activity, activityStore.totalUnread > 0 {
+                            Text("\(activityStore.totalUnread)")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.cyan.opacity(0.85))
+                                .cornerRadius(8)
+                        }
+                    }
+                    .tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 220)
+            Spacer()
+        }
+        .onChange(of: ccTab) { _, tab in
+            // Switching to Activity marks all unread as seen
+            if tab == .activity {
+                for project in activityStore.unreadCounts.keys where (activityStore.unreadCounts[project] ?? 0) > 0 {
+                    activityStore.markRead(project)
+                }
+            }
         }
     }
 
@@ -321,6 +385,234 @@ struct CommandCenterView: View {
         if count >= 1_000_000 { return "\(count / 1_000_000)M" }
         if count >= 1000 { return "\(count / 1000)K" }
         return "\(count)"
+    }
+}
+
+// MARK: - Factory Pipeline Section
+
+/// Compact inline section for the Command Center showing active NERVE factory projects.
+/// Shows up to 6 non-terminal projects with a header, compact rows, and a "See All" button.
+struct FactoryPipelineSection: View {
+    @Binding var isShowingFactoryFloor: Bool
+    var store = FactoryStore.shared
+
+    @State private var isShowingSubmitSheet = false
+    @State private var submitPrompt: String = ""
+    @State private var isSubmitting = false
+    @State private var submitError: String? = nil
+
+    private var activeProjects: [FactoryProject] {
+        store.factoryProjects.filter { $0.state != .done && $0.state != .submit }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Section header
+            HStack(spacing: 6) {
+                Image(systemName: "cpu")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.purple)
+                Text("FACTORY PIPELINE")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Circle()
+                    .fill(store.isConnected ? Color.green : Color.gray)
+                    .frame(width: 6, height: 6)
+                    .accessibilityLabel(store.isConnected ? "Connected" : "Disconnected")
+
+                if !store.factoryProjects.isEmpty {
+                    Text("\(store.factoryProjects.count)")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.purple.opacity(0.7))
+                        .clipShape(Capsule())
+                }
+
+                Spacer()
+
+                Button {
+                    isShowingSubmitSheet = true
+                } label: {
+                    Label("New", systemImage: "plus")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(.purple)
+            }
+
+            // Project rows (up to 6)
+            if activeProjects.isEmpty {
+                Text("No active factory projects")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            } else {
+                VStack(spacing: 4) {
+                    ForEach(activeProjects.prefix(6)) { project in
+                        FactoryCompactRow(project: project)
+                    }
+                }
+
+                if activeProjects.count > 6 {
+                    Button {
+                        isShowingFactoryFloor = true
+                    } label: {
+                        Text("See All (\(activeProjects.count))")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.purple)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.purple.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.purple.opacity(0.15), lineWidth: 1)
+        }
+        .task {
+            await FactoryStore.shared.start()
+        }
+        .sheet(isPresented: $isShowingSubmitSheet) {
+            FactorySubmitSheet(isPresented: $isShowingSubmitSheet)
+        }
+    }
+}
+
+/// Minimal inline submit sheet for new factory projects.
+private struct FactorySubmitSheet: View {
+    @Binding var isPresented: Bool
+    @State private var prompt: String = ""
+    @State private var isSubmitting = false
+    @State private var submitError: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Label("New Factory Project", systemImage: "cpu")
+                    .font(.title3)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.purple)
+                Spacer()
+                Button("Cancel") { isPresented = false }
+                    .buttonStyle(.bordered)
+            }
+
+            Divider()
+
+            Text("Describe the project you want the factory to build:")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            TextField("Describe a project to build…", text: $prompt, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(3...6)
+
+            if let err = submitError {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button(action: submit) {
+                    if isSubmitting {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Submit", systemImage: "paperplane.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.purple)
+                .disabled(prompt.trimmingCharacters(in: .whitespaces).isEmpty || isSubmitting)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 480, minHeight: 220)
+    }
+
+    private func submit() {
+        let p = prompt.trimmingCharacters(in: .whitespaces)
+        guard !p.isEmpty, !isSubmitting else { return }
+        isSubmitting = true
+        submitError = nil
+        Task {
+            do {
+                try await FactoryStore.shared.submitProject(prompt: p)
+                isPresented = false
+            } catch {
+                submitError = error.localizedDescription
+            }
+            isSubmitting = false
+        }
+    }
+}
+
+/// Compact ~50pt row showing project name/prompt and state badge — no pipeline stages.
+private struct FactoryCompactRow: View {
+    let project: FactoryProject
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(project.projectName ?? project.intakePrompt)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(project.intakePrompt)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+
+            Spacer()
+
+            // State badge
+            HStack(spacing: 4) {
+                if project.blocked {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .font(.system(size: 9))
+                }
+                if project.humanQuestion != nil {
+                    Image(systemName: "questionmark.circle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.system(size: 9))
+                }
+                Image(systemName: project.state.icon)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(project.state.color)
+                Text(project.state.displayName)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(project.state.color)
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(project.state.color.opacity(0.12))
+            .clipShape(Capsule())
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(minHeight: 50)
+        .background(.quaternary.opacity(0.15))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(
+                    project.blocked ? Color.red.opacity(0.3) : Color.clear,
+                    lineWidth: 1
+                )
+        )
     }
 }
 

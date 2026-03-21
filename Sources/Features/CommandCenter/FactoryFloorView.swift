@@ -8,6 +8,7 @@ import GRDB
 /// model tags, and per-column counts. Data from HeartbeatStore (reads dispatch_queue).
 struct FactoryFloorView: View {
     @ObservedObject private var heartbeatStore = HeartbeatStore.shared
+    @Environment(AppState.self) var appState
     @State private var avgPipelineTime: String = "—"
     @State private var shippedToday: Int = 0
     @State private var lastRefreshed: Date = Date()
@@ -58,6 +59,16 @@ struct FactoryFloorView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
+            Button {
+                appState.sidebarDestination = .factory
+            } label: {
+                Label("Back", systemImage: "chevron.left")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Back to Factory")
+
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
                     Image(systemName: "building.2.fill")

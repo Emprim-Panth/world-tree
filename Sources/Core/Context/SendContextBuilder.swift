@@ -167,36 +167,13 @@ enum SendContextBuilder {
                 + "\nEND CHECKPOINT"
         }
 
-        guard let sections, !sections.isEmpty else { return nil }
-
-        let maxAdditional = isSessionStale ? 20 : 4
-        let selected = ConversationScorer.select(
-            sections: sections,
-            query: query,
-            mandatoryCount: 4,
-            maxAdditional: maxAdditional
-        )
-
-        guard !selected.isEmpty else { return nil }
-
-        let lines = selected.map { section -> String in
-            let role: String
-            switch section.author {
-            case .user: role = "You"
-            case .assistant: role = LocalAgentIdentity.name
-            case .system: role = "System"
-            }
-            let text = String(section.content.characters.prefix(1000))
-            return "[\(role)]: \(text)"
-        }
-
-        if isSessionStale {
-            wtLog("[ContextBuilder] Stale session — injecting \(selected.count) turns")
-        }
-
-        return "CONVERSATION CONTEXT (recent history — use if session memory is unclear):\n"
-            + lines.joined(separator: "\n\n")
-            + "\nEND CONTEXT"
+        // Scored sections are intentionally disabled — buildRecentMessagesContext already
+        // injects the last 20 DB turns. Scoring sections here created a second copy of
+        // the same session history, causing stale directives ("yes build it" from old
+        // tasks) to appear alongside current messages and trigger repeated work.
+        // If relevance-ranked older context is needed in future, deduplicate against
+        // recentMessages before injecting.
+        return nil
     }
 
     // MARK: - Merge

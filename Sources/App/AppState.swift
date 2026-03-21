@@ -2,13 +2,13 @@ import Foundation
 
 /// Which top-level view shows in the detail pane when no tree is selected.
 enum SidebarDestination: String, Hashable {
-    case commandCenter
-    case projectDocs
-    case tickets
-    case timeline
-    case mcpTools
-    case brain
-    case factory
+    case factory        // NERVE pipeline — default landing page
+    case conversations  // Tree browser (sidebar context — detail shows placeholder)
+    case projects       // Portfolio + tickets + docs
+    case crew           // Agent sessions + dispatch
+    case system         // Brain + MCP + health + settings
+    // Legacy aliases — kept to satisfy any remaining references during migration
+    case projectDocs    // Maps into projects section
 }
 
 /// Global app state — selected tree, selected branch, daemon connection status.
@@ -43,7 +43,7 @@ final class AppState {
 
     var selectedProjectName: String?
     var selectedProjectPath: String?
-    var sidebarDestination: SidebarDestination = .commandCenter
+    var sidebarDestination: SidebarDestination = .factory
     var showGlobalSearch: Bool = false
     var daemonConnected: Bool = false
     /// Non-nil if the database failed to initialize — surfaced as an alert in WorldTreeApp.

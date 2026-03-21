@@ -43,6 +43,12 @@ final class ActiveStreamRegistry {
         /// it can verify the handle it sees at T+15min belongs to the same stream that
         /// spawned it — not a later stream that reused the same branchId.
         let generation: UUID
+        /// Set when a final event (.done or .error) has been delivered to subscribers.
+        /// cancelStream() skips persisting when this is true — finishStream() owns the
+        /// persist for completed streams. Without this flag, a new message sent in the
+        /// brief window between finishStream's DB write and its closeStream suspension
+        /// would cause cancelStream to write the same content a second time.
+        var finalEventDelivered = false
     }
 
     /// Hard timeout per stream — cancels and surfaces an error if a stream is still active
@@ -196,8 +202,13 @@ final class ActiveStreamRegistry {
 
         handle.task.cancel()
 
-        // Persist partial response synchronously before removing the handle
-        if Self.shouldPersistAccumulatedContent(
+        // Persist partial response synchronously before removing the handle.
+        // Skip if a final event (.done or .error) was already delivered — finishStream
+        // owns the DB write for completed streams. Without this guard, sending a new
+        // message in the brief window between finishStream's DB write and its closeStream
+        // suspension causes cancelStream to write the same content a second time, creating
+        // a DB-level duplicate that appears as a second identical message in the UI.
+        if !handle.finalEventDelivered && Self.shouldPersistAccumulatedContent(
             accumulatedContent: partial,
             initialContent: handle.initialContent,
             receivedText: handle.receivedText
@@ -267,10 +278,20 @@ final class ActiveStreamRegistry {
                 try? data?.write(to: URL(fileURLWithPath: Self.lastClaudeOutputPath))
             }
 
+        case .done:
+            // Mark final event delivered BEFORE notifying subscribers so that if a
+            // subscriber synchronously triggers cancelStream (e.g. sending a new message),
+            // cancelStream sees finalEventDelivered = true and skips persisting. finishStream
+            // owns the DB write for clean completions.
+            handles[branchId]?.finalEventDelivered = true
+
         case .error(let msg):
             // Store the error reason so finishStream can surface it in the persisted
             // failure notice instead of the generic "no response" fallback.
             handles[branchId]?.lastErrorMessage = msg
+            // Mark final event delivered so cancelStream skips persisting. The ViewModel's
+            // .error handler has already written the error message to DB.
+            handles[branchId]?.finalEventDelivered = true
             Task { await StreamCacheManager.shared.touchStream(sessionId: sessionId) }
 
         default:
@@ -315,7 +336,10 @@ final class ActiveStreamRegistry {
         let receivedText = handles[branchId]?.receivedText ?? false
         let lastError = handles[branchId]?.lastErrorMessage
 
-        if Self.shouldPersistAccumulatedContent(
+        // Only persist on clean completion. When an error event was received, the ViewModel's
+        // .error handler already persisted an inline error message — persisting the partial
+        // accumulated content here would write a second DB row, causing a duplicate section.
+        if lastError == nil && Self.shouldPersistAccumulatedContent(
             accumulatedContent: accumulated,
             initialContent: initialContent,
             receivedText: receivedText

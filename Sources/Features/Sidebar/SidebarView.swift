@@ -3,6 +3,7 @@ import SwiftUI
 struct SidebarView: View {
     @StateObject private var viewModel = SidebarViewModel()
     @StateObject private var daemonService = DaemonService.shared
+    @ObservedObject private var activityStore = DispatchActivityStore.shared
     @Environment(AppState.self) var appState
     private var factoryStore = FactoryStore.shared
     @State private var showNewTreeSheet = false
@@ -302,6 +303,7 @@ struct SidebarView: View {
                                         isSelected: group.trees.contains { $0.id == appState.selectedTreeId },
                                         phase: viewModel.compassStates[group.project]?.currentPhase,
                                         blockerCount: viewModel.compassStates[group.project]?.blockers.count ?? 0,
+                                        readyCount: activityStore.unreadCount(for: group.project),
                                         onToggle: {
                                             if isGroupExpanded {
                                                 collapsedProjects.insert(group.project)
@@ -309,7 +311,10 @@ struct SidebarView: View {
                                                 collapsedProjects.remove(group.project)
                                             }
                                         },
-                                        onSelect: { openLatestTree(in: group) },
+                                        onSelect: {
+                                            activityStore.markRead(group.project)
+                                            openLatestTree(in: group)
+                                        },
                                         onNewTree: {
                                             quickNewTreeProject = group.project
                                             newTreeProject = group.project
@@ -652,8 +657,10 @@ struct SidebarView: View {
                         isSelected: false,
                         phase: viewModel.compassStates[group.project]?.currentPhase,
                         blockerCount: viewModel.compassStates[group.project]?.blockers.count ?? 0,
+                        readyCount: activityStore.unreadCount(for: group.project),
                         onToggle: {},
                         onSelect: {
+                            activityStore.markRead(group.project)
                             newTreeProject = group.project
                             newTreeName = ""
                             if let path = viewModel.resolvedPath(for: group.project) {
@@ -1177,6 +1184,8 @@ struct ProjectGroupHeader: View {
     let isSelected: Bool
     let phase: String?
     let blockerCount: Int
+    /// Number of autonomous dispatch completions for this project since it was last visited.
+    let readyCount: Int
     let onToggle: () -> Void
     let onSelect: () -> Void
     let onNewTree: () -> Void
@@ -1248,6 +1257,21 @@ struct ProjectGroupHeader: View {
                                 .background(Color.red.opacity(0.8))
                                 .cornerRadius(3)
                                 .accessibilityLabel("\(blockerCount) blocker\(blockerCount == 1 ? "" : "s")")
+                        }
+
+                        if readyCount > 0 {
+                            HStack(spacing: 2) {
+                                Image(systemName: "sparkle")
+                                    .font(.system(size: 7, weight: .bold))
+                                Text("\(readyCount)")
+                                    .font(.system(size: 9, weight: .semibold))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.cyan.opacity(0.85))
+                            .cornerRadius(3)
+                            .accessibilityLabel("Cortana ready: \(readyCount) new")
                         }
                     }
                 }

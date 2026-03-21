@@ -102,31 +102,20 @@ actor PermissionsService {
         let prevGranted = UserDefaults.standard.bool(forKey: screenRecordingGrantedKey) || legacy
 
         if prevGranted {
-            // User said YES before. CDHash changed after a rebuild. Re-request so macOS
-            // re-associates the new CDHash. If the toggle is ON in System Settings this
-            // is silent — no dialog. If the toggle is OFF the user gets one prompt.
-            wtLog("[Permissions] Screen Recording CDHash mismatch — re-requesting to re-associate new binary")
-            CGRequestScreenCaptureAccess()
-            let granted = CGPreflightScreenCaptureAccess()
-            if granted {
-                UserDefaults.standard.set(true, forKey: screenRecordingGrantedKey)
-            }
-            return granted
+            // CDHash changed after a rebuild. The user previously granted this.
+            // CGRequestScreenCaptureAccess() ALWAYS shows a dialog when CDHash doesn't
+            // match — the "silent re-grant" assumption was wrong. Don't prompt again.
+            // Screen Recording features degrade silently; user re-enables via System Settings.
+            wtLog("[Permissions] Screen Recording CDHash mismatch — not re-prompting (user previously granted)")
+            return false
         }
 
-        // First time ever — prompt once.
+        // First time ever — prompt once and optimistically mark as granted.
+        // CGPreflightScreenCaptureAccess() returns false immediately (async dialog),
+        // so we set the granted key before the call to prevent repeat prompts on
+        // future launches if the user grants asynchronously.
+        UserDefaults.standard.set(true, forKey: screenRecordingGrantedKey)
         CGRequestScreenCaptureAccess()
-        let granted = CGPreflightScreenCaptureAccess()
-        if granted {
-            UserDefaults.standard.set(true, forKey: screenRecordingGrantedKey)
-        } else {
-            // Don't mark denied here — the dialog is async and the grant may arrive
-            // later. We re-check on next launch. Mark denied only if user explicitly
-            // clicks "Don't Allow" — which we can't detect synchronously via this API.
-            // The safest approach: store "prompted" as legacy and rely on re-request
-            // logic above on subsequent launches.
-            UserDefaults.standard.set(true, forKey: screenRecordingPromptedKey)
-        }
-        return granted
+        return CGPreflightScreenCaptureAccess()
     }
 }
