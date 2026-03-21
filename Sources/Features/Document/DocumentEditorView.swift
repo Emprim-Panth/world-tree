@@ -1174,21 +1174,72 @@ class DocumentEditorViewModel: ObservableObject {
         }
         var newMessages: [Message] = []
         for msg in messages where !seenMessageIds.contains(msg.id) {
-            // Content-based dedup: if this assistant message has the same content as what
-            // we just wrote (pendingAssistantContent), it's the canvas-runner.py duplicate.
-            // Mark it seen and skip — we already appended the section directly.
-            if msg.role == .assistant, let pending = pendingAssistantContent, msg.content == pending {
-                seenMessageIds.insert(msg.id)
-                pendingAssistantContent = nil
-                // Upgrade the immediately-appended nil-id section with the real DB messageId
-                // so fork/branch capability is restored once GRDB confirms the write.
-                if let idx = document.sections.lastIndex(where: {
-                    if case .assistant = $0.author { return $0.messageId == nil }
+            // Filter cortana-core internal hook messages that are written to the shared DB
+            // but should never appear as conversation bubbles in the UI. These accumulate
+            // silently during streaming (GRDB only fires for World Tree's own writes) and
+            // then surface all at once when finishStream triggers GRDB — producing phantom
+            // "old chats" after a response.
+            let isInternalHookMessage: Bool = {
+                switch msg.role {
+                case .assistant:
+                    return msg.content.hasPrefix("[TOOL:")
+                case .system:
+                    return msg.content == "[RESPONSE_COMPLETE]"
+                        || msg.content.hasPrefix("[PRE_COMPACT]")
+                case .user:
                     return false
-                }) {
-                    document.sections[idx].messageId = msg.id
                 }
+            }()
+            if isInternalHookMessage {
+                seenMessageIds.insert(msg.id)
                 continue
+            }
+
+            // Content-based dedup: if this assistant message matches an optimistically-appended
+            // nil-id section, upgrade that section with the real DB messageId and skip the append.
+            //
+            // Fast path: pendingAssistantContent was set by the most recent .done/.error handler.
+            // Slow path: scan nil-id sections — handles the race where pendingAssistantContent was
+            // overwritten by a second response before GRDB delivered the first (causing the first
+            // response to appear twice: once from the optimistic append, once from DB delivery).
+            if msg.role == .assistant {
+                let matchingPending = pendingAssistantContent == msg.content
+                let nilIdIdx: Int? = {
+                    if matchingPending {
+                        return document.sections.lastIndex(where: {
+                            if case .assistant = $0.author { return $0.messageId == nil }
+                            return false
+                        })
+                    }
+                    // Slow path: find any nil-id assistant section with identical content
+                    return document.sections.lastIndex(where: {
+                        if case .assistant = $0.author {
+                            return $0.messageId == nil && String($0.content.characters) == msg.content
+                        }
+                        return false
+                    })
+                }()
+                if let idx = nilIdIdx {
+                    seenMessageIds.insert(msg.id)
+                    if matchingPending { pendingAssistantContent = nil }
+                    document.sections[idx].messageId = msg.id
+                    continue
+                }
+
+                // Last-resort content dedup: if a section with this exact content already
+                // exists with a real messageId (DB duplicate from a cancelStream + finishStream
+                // race, or from recovery retries), mark the duplicate as seen and skip it.
+                // This prevents historical DB duplicates from creating a second visible bubble.
+                let alreadyDisplayed = document.sections.contains(where: {
+                    if case .assistant = $0.author, $0.messageId != nil {
+                        return String($0.content.characters) == msg.content
+                    }
+                    return false
+                })
+                if alreadyDisplayed {
+                    seenMessageIds.insert(msg.id)
+                    continue
+                }
             }
             newMessages.append(msg)
         }
