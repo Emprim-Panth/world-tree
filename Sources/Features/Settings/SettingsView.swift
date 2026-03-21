@@ -240,25 +240,32 @@ struct SettingsView: View {
     @State private var showAPIKey = false
     @State private var openAIKeyInput = ""
     @State private var showOpenAIKey = false
+    @State private var anthropicKeychainPresent = false
+    @State private var openAIKeychainPresent = false
     @AppStorage(AppConstants.extendedThinkingEnabledKey) private var extendedThinkingEnabled = false
     @AppStorage(AppConstants.fileWriteReviewEnabledKey) private var fileWriteReviewEnabled = false
+
+    private func refreshKeyStatus() {
+        anthropicKeychainPresent = ClaudeService.shared.isConfigured
+        openAIKeychainPresent = OpenAIKeyStore.isConfigured
+    }
 
     private var apiTab: some View {
         Form {
             Section("Anthropic API Key") {
                 let envKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil
-                let keychainKey = ClaudeService.shared.isConfigured
 
                 if envKey {
                     Label("API key loaded from environment", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
-                } else if keychainKey {
+                } else if anthropicKeychainPresent {
                     Label("API key loaded from Keychain", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
 
                     Button("Clear Keychain Key") {
                         ClaudeService.shared.setAPIKey("")
                         refreshProvidersAfterCredentialChange()
+                        refreshKeyStatus()
                     }
                     .foregroundStyle(.red)
                 } else if !apiKeyInput.isEmpty {
@@ -295,6 +302,7 @@ struct SettingsView: View {
                     ClaudeService.shared.setAPIKey(apiKeyInput)
                     apiKeyInput = ""
                     refreshProvidersAfterCredentialChange()
+                    refreshKeyStatus()
                 }
                 .disabled(apiKeyInput.isEmpty)
 
@@ -307,13 +315,14 @@ struct SettingsView: View {
                 if OpenAIKeyStore.hasEnvironmentKey {
                     Label("API key loaded from environment", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
-                } else if OpenAIKeyStore.hasKeychainKey {
+                } else if openAIKeychainPresent {
                     Label("API key loaded from Keychain", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
 
                     Button("Clear Keychain Key") {
                         OpenAIKeyStore.clearAPIKey()
                         refreshProvidersAfterCredentialChange()
+                        refreshKeyStatus()
                     }
                     .foregroundStyle(.red)
                 } else if !openAIKeyInput.isEmpty {
@@ -350,6 +359,7 @@ struct SettingsView: View {
                     OpenAIKeyStore.saveAPIKey(openAIKeyInput)
                     openAIKeyInput = ""
                     refreshProvidersAfterCredentialChange()
+                    refreshKeyStatus()
                 }
                 .disabled(openAIKeyInput.isEmpty)
 
@@ -382,6 +392,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .onAppear { refreshKeyStatus() }
     }
 
     // MARK: - Server
