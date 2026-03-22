@@ -859,9 +859,18 @@ class DocumentEditorViewModel: ObservableObject {
                 let sid = self.sessionId
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    // Only consider messages newer than what we've already rendered.
+                    // Without this bound, getMessages returns ALL historical messages and
+                    // msgs.last(where:) finds the last assistant message NOT in seenMessageIds —
+                    // which can be an old message from before the current page window (never
+                    // added to seenMessageIds), producing a ghost chat from hours earlier.
+                    let maxSeenIntId = self.seenMessageIds.compactMap { Int($0) }.max() ?? 0
                     if let msgs = try? MessageStore.shared.getMessages(sessionId: sid),
                        let lastAssistant = msgs.last(where: {
-                           $0.role == .assistant && !self.seenMessageIds.contains($0.id)
+                           guard $0.role == .assistant && !self.seenMessageIds.contains($0.id) else { return false }
+                           // Must be newer than anything already rendered (or first-ever message)
+                           if maxSeenIntId > 0, let intId = Int($0.id) { return intId > maxSeenIntId }
+                           return true
                        }) {
                         // Check if the .done handler already added the section with nil messageId.
                         // That path uses registry content (real-time), this path uses DB content (persisted).
