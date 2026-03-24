@@ -118,14 +118,12 @@ ditto "$STAGED_APP" "$APP_DST"
 # Re-sign after copy (cross-volume ditto can strip signatures)
 # Extract the specific signing identity SHA-1 hash from the staged build.
 # "Apple Development" is ambiguous (matches 2+ certs) — must use the hash.
-IDENTITY=$(codesign -dvv "$STAGED_APP" 2>&1 | grep "Authority=" | head -1 | sed 's/Authority=//')
-SIGN_HASH=$(codesign -dvv "$STAGED_APP" 2>&1 | awk -F= '/^Authority=/{print; exit}')
-# Extract the SHA-1 from the staged binary's signature directly
-SIGN_HASH=$(security find-identity -v -p codesigning | grep "Apple Development.*6JB5KB6D47" | head -1 | awk '{print $2}')
-if [ -z "$SIGN_HASH" ]; then
-    echo "WARNING: Could not find signing identity — falling back to first Apple Development cert"
-    SIGN_HASH=$(security find-identity -v -p codesigning | grep "Apple Development" | head -1 | awk '{print $2}')
-fi
+# Hardcoded cert SHA-1 hash — DO NOT grep for "6JB5KB6D47".
+# That is the member ID in the cert CN field, not the team ID. Grepping for it
+# picks no cert (or the wrong one) and silently falls back to ad-hoc signing,
+# producing a new CDHash on every build and triggering TCC permission loops.
+# Team ID is F75F8Z9ZPZ (OU field). Cert hash is stable until the cert expires.
+SIGN_HASH="4B1FEE2344F79AD30E99304B6454317CDEAB3878"
 
 ENTITLEMENTS="${PROJECT_DIR}/WorldTree.entitlements"
 

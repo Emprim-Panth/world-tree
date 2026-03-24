@@ -44,6 +44,7 @@ struct DispatchSheet: View {
                 Spacer()
                 Button("Dispatch") {
                     guard !message.isEmpty, !selectedProject.isEmpty else { return }
+                    CrashSentinel.shared.recordUserInput()
                     onDispatch(message, selectedProject, selectedModel)
                     dismiss()
                 }
