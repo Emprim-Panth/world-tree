@@ -14,7 +14,9 @@ final class CrashSentinel {
 
     private let sentinelPath: String
     private let logPath: String
-    private var heartbeatTimer: Timer?
+    // DispatchSourceTimer is not affected by App Nap or RunLoop throttling,
+    // unlike Timer.scheduledTimer which can be starved when the app is occluded.
+    private var heartbeatSource: DispatchSourceTimer?
     private let launchedAt: String = ISO8601DateFormatter().string(from: Date())
     private var lastUserInputAt: String? = nil
 
@@ -43,13 +45,22 @@ final class CrashSentinel {
         writeSentinel(state: "running")
         wtLog("[CrashSentinel] Started — sentinel at \(sentinelPath)")
 
-        // Start heartbeat — write timestamp every 30s so the external heartbeat
-        // can detect hangs (sentinel timestamp stale > 2 min = frozen)
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+        // Start heartbeat — write timestamp every 30s so the external watchdog
+        // can detect hangs (sentinel timestamp stale > 20 min = frozen).
+        // Uses DispatchSourceTimer instead of Timer.scheduledTimer because
+        // Timer is throttled by App Nap when the app is occluded, causing
+        // multi-minute gaps between heartbeats and false stall detections.
+        let source = DispatchSource.makeTimerSource(queue: .main)
+        source.schedule(deadline: .now() + 30, repeating: 30, leeway: .seconds(2))
+        source.setEventHandler { [weak self] in
+            // We scheduled on .main queue, so MainActor isolation is guaranteed.
+            // MainActor.assumeIsolated avoids an unnecessary async hop.
+            MainActor.assumeIsolated {
                 self?.writeSentinel(state: "running")
             }
         }
+        source.resume()
+        heartbeatSource = source
 
         return crashInfo
     }
@@ -62,8 +73,8 @@ final class CrashSentinel {
 
     /// Call on clean app exit (applicationWillTerminate or similar).
     func markCleanExit() {
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = nil
+        heartbeatSource?.cancel()
+        heartbeatSource = nil
         writeSentinel(state: "clean")
     }
 

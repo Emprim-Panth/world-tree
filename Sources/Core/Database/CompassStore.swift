@@ -274,6 +274,25 @@ final class CompassStore: ObservableObject {
         }
     }
 
+    /// Update the last session summary for a project (called by ContextServer on POST /session/summary)
+    func updateLastSessionSummary(_ summary: String, for project: String) {
+        guard let dbPool else { return }
+        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            try dbPool.write { db in
+                try db.execute(
+                    sql: "UPDATE compass_state SET last_session_summary = ?, updated_at = datetime('now') WHERE project = ?",
+                    arguments: [trimmed, project]
+                )
+            }
+            refresh()
+            wtLog("[CompassStore] Updated session summary for \(project)")
+        } catch {
+            wtLog("[CompassStore] Failed to update session summary for \(project): \(error)")
+        }
+    }
+
     /// Write an event to compass_log
     private func logEvent(project: String, type: String, summary: String) {
         guard let dbPool else { return }

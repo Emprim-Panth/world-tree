@@ -1,4 +1,14 @@
 import Foundation
+import os.log
+
+// MARK: - Logging
+
+private let appLogger = Logger(subsystem: "com.forgeandcode.WorldTree", category: "App")
+
+/// Lightweight app-level logger. Use instead of print() so logs appear in Console.app.
+func wtLog(_ message: String) {
+    appLogger.info("\(message, privacy: .public)")
+}
 
 // MARK: - Thread-Safe One-Shot Guard
 

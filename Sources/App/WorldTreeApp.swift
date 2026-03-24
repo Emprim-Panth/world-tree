@@ -5,6 +5,13 @@ import UserNotifications
 struct WorldTreeApp: App {
     @State private var appState = AppState.shared
     @Environment(\.scenePhase) private var scenePhase
+
+    private let contextServer: ContextServer = {
+        let stored = UserDefaults.standard.integer(forKey: "contextServerPort")
+        let port = (stored >= 1024 && stored <= 65535) ? UInt16(stored) : 4863
+        return ContextServer(port: port)
+    }()
+
     // Held for app lifetime — DispatchSource cancels on deinit
     private let sigtermSource: DispatchSourceSignal = {
         signal(SIGTERM, SIG_IGN)
@@ -21,24 +28,16 @@ struct WorldTreeApp: App {
         WindowGroup {
             ContentView()
                 .environment(appState)
-                .frame(minWidth: 900, minHeight: 600)
-                .onContinueUserActivity("com.evanprimeau.worldtree.viewBranch") { activity in
-                    guard let treeId = activity.userInfo?["treeId"] as? String,
-                          let branchId = activity.userInfo?["branchId"] as? String else { return }
-                    NSApp.activate(ignoringOtherApps: true)
-                    appState.selectBranch(branchId, in: treeId)
-                }
                 .onAppear {
-                    // Crash sentinel — detect abnormal exits from previous session
                     _ = CrashSentinel.shared.checkAndStart()
                     DispatchActivityStore.shared.start()
                     checkForUpdateBadge()
-                    // DB is set up in AppState.init() — just surface any error here
+
                     if let error = appState.dbSetupError {
                         wtLog("[WorldTree] Database setup failed: \(error)")
                         let alert = NSAlert()
                         alert.messageText = "World Tree — Database Error"
-                        alert.informativeText = "Failed to open the conversation database.\n\n\(error.localizedDescription)\n\nCheck that ~/.cortana/claude-memory/ exists, or configure a different database path in Settings."
+                        alert.informativeText = "Failed to open the database.\n\n\(error.localizedDescription)\n\nCheck that ~/.cortana/claude-memory/ exists."
                         alert.alertStyle = .critical
                         alert.addButton(withTitle: "Open Settings")
                         alert.addButton(withTitle: "Quit")
@@ -49,70 +48,18 @@ struct WorldTreeApp: App {
                             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
                         }
                     }
+
                     guard !AppConstants.isRunningTests else {
-                        wtLog("[WorldTree] XCTest detected — skipping production startup side effects")
+                        wtLog("[WorldTree] XCTest detected — skipping production startup")
                         return
                     }
-                    validateRestoredSelection()
-                    startProjectRefresh()
-                    Task {
-                        do { await PermissionsService.shared.setup() }
-                        catch { wtLog("[WorldTree] PermissionsService setup failed: \(error)") }
-                    }
-                    Task {
-                        do { await ProviderManager.shared.refreshHealth() }
-                        catch { wtLog("[WorldTree] ProviderManager refresh failed: \(error)") }
-                        // Activate recovery only after providers are registered so the first
-                        // auto-resume attempt doesn't fire against an uninitialised provider,
-                        // fail instantly, clear activeAttempts, and race a second attempt.
-                        await MainActor.run { StreamRecoveryCoordinator.shared.activate() }
-                    }
-                    Task {
-                        do { EventStore.shared.prune() }
-                        catch { wtLog("[WorldTree] EventStore prune failed: \(error)") }
-                    }
-                    DispatchSupervisor.shared.start()
-                    DispatchSupervisor.shared.pruneOldDispatches()
-                    EventRuleStore.shared.loadRules()
-                    UIStateStore.shared.loadAll()
-                    BranchTerminalManager.shared.recoverOrphanedSessions()
-                    // Pre-warm terminals for all recently-active branches that have a persisted
-                    // tmux session — instant terminal attach when navigating between branches.
-                    // workingDirectory is on the tree; for tmux reattach it's irrelevant
-                    // (the session already exists at its own CWD). Pass home as fallback.
-                    Task {
-                        if let branches = try? DatabaseManager.shared.read({ db in
-                            try Branch.fetchAll(db, sql: """
-                                SELECT * FROM canvas_branches
-                                WHERE tmux_session_name IS NOT NULL
-                                  AND updated_at > datetime('now', '-7 days')
-                                LIMIT 20
-                                """)
-                        }) {
-                            await MainActor.run {
-                                for branch in branches {
-                                    let tree = try? TreeStore.shared.getTree(branch.treeId)
-                                    let workingDirectory = tree?.workingDirectory ?? NSHomeDirectory()
-                                    BranchTerminalManager.shared.warmUpPreferred(
-                                        branchId: branch.id,
-                                        project: tree?.project,
-                                        workingDirectory: workingDirectory,
-                                        knownTmuxSession: branch.tmuxSessionName
-                                    )
-                                }
-                                if !branches.isEmpty {
-                                    wtLog("[WorldTree] Pre-warmed \(branches.count) branch terminal(s)")
-                                }
-                            }
-                        }
-                    }
-                    // Compass + Tickets + Heartbeat: initial scan on launch
+
+                    // Core data refresh
                     CompassStore.shared.refresh()
                     TicketStore.shared.scanAll()
                     HeartbeatStore.shared.refresh()
-                    // Session stall recovery — polls stall-recovery.json from cortana-session-watchdog
-                    StallRecoveryWatcher.shared.startMonitoring()
-                    // Gateway handoff check — surface pending cross-device work items
+
+                    // Gateway: check for pending handoffs
                     Task {
                         guard let gateway = GatewayClient.fromLocalConfig() else { return }
                         if let handoffs = try? await gateway.checkHandoffs(),
@@ -120,138 +67,25 @@ struct WorldTreeApp: App {
                             wtLog("[WorldTree] \(handoffs.count) pending handoff(s) from gateway")
                         }
                     }
-                    if UserDefaults.standard.bool(forKey: AppConstants.daemonChannelEnabledKey) {
-                        DaemonService.shared.startMonitoring()
-                    }
-                    startWorldTreeServerIfEnabled()
-                    startPluginServerIfEnabled()
-                    syncCodexMCPIfEnabled()
-                    if UserDefaults.standard.bool(forKey: "pencil.feature.enabled") {
-                        launchPencilInBackground()
-                        Task {
-                            // Give Pencil a moment to finish launching before polling
-                            try? await Task.sleep(nanoseconds: 2_000_000_000)
-                            await PencilConnectionStore.shared.startPolling()
-                        }
-                    }
-                    PeekabooBridgeServer.shared.start()
-                    WTCommandBridge.shared.start()
-                    GlobalHotKey.shared.register()
-                    // VoiceService configures lazily on first use — no startup call needed
-                    Task {
-                        do {
-                            // Recover any responses that were interrupted by a crash or SIGTERM.
-                            let recovered = await StreamCacheManager.shared.recoverOrphanedStreams()
-                            for (sessionId, content) in recovered {
-                                wtLog("[StreamCache] Recovering interrupted response for session \(sessionId)")
-                                await MainActor.run {
-                                    // Immediately persist non-empty recovered content to DB so
-                                    // the response is never invisible — even if recovery re-send
-                                    // fails or crash-loops. Write only if the last assistant
-                                    // message for this session doesn't already have this content.
-                                    var persisted = false
-                                    if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                        do {
-                                            let recent = try MessageStore.shared.getMessages(sessionId: sessionId, limit: 5)
-                                            let alreadyPersisted = recent.last(where: { $0.role == .assistant })?.content == content
-                                            if !alreadyPersisted {
-                                                _ = try MessageStore.shared.sendMessage(
-                                                    sessionId: sessionId, role: .assistant, content: content)
-                                                wtLog("[StreamCache] Pre-persisted recovered response for \(sessionId.prefix(8))")
-                                                persisted = true
-                                            } else {
-                                                wtLog("[StreamCache] Already in DB — skipping re-send for \(sessionId.prefix(8))")
-                                                persisted = true
-                                            }
-                                        } catch {
-                                            wtLog("[StreamCache] Failed to pre-persist recovered response for \(sessionId.prefix(8)): \(error)")
-                                        }
-                                    }
-                                    // Only schedule a re-send if we couldn't persist to DB.
-                                    // If content is already in DB, the message is visible —
-                                    // spawning a recovery claude process would create a ghost
-                                    // stream that interferes with the active session.
-                                    if !persisted {
-                                        StreamRecoveryStore.shared.markPending(
-                                            sessionId: sessionId,
-                                            partialContent: content
-                                        )
-                                        StreamRecoveryCoordinator.shared.scheduleRecoveryCheck(
-                                            sessionId: sessionId,
-                                            delay: .seconds(2)
-                                        )
-                                    } else {
-                                        // Content is safe in DB — clear any stale pending state
-                                        // left from a previous crash so we don't fire on next restart.
-                                        StreamRecoveryStore.shared.clearPending(sessionId: sessionId)
-                                    }
-                                }
-                            }
-                        } catch {
-                            wtLog("[WorldTree] Stream recovery failed: \(error)")
-                        }
-                    }
+
+                    // TASK-20: ContextServer — serves project context to Claude sessions
+                    contextServer.start()
                 }
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .active {
-                        clearUpdateBadge()
-                    }
-                    if phase == .background {
-                        DaemonService.shared.stopMonitoring()
-                    }
+                    if phase == .active { clearUpdateBadge() }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     CrashSentinel.shared.markCleanExit()
-                    // Close all open stream handles so their .tmp files are deleted, and
-                    // clear their pending-recovery entries from UserDefaults. Without this,
-                    // a clean SIGTERM (rebuild watcher) leaves stream files on disk that
-                    // recoverOrphanedStreams() picks up on the next launch and treats as
-                    // crash-interrupted, causing a spurious auto-resume loop on every rebuild.
-                    Task {
-                        let openIds = await StreamCacheManager.shared.openSessionIds()
-                        await StreamCacheManager.shared.closeAllStreams()
-                        await MainActor.run {
-                            for sessionId in openIds {
-                                StreamRecoveryStore.shared.clearPending(sessionId: sessionId)
-                            }
-                        }
-                    }
                 }
         }
         .windowStyle(.titleBar)
         .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("New Tree") {
-                    NotificationCenter.default.post(name: .createNewTree, object: nil)
-                }
-                .keyboardShortcut("n", modifiers: .command)
-
-                Button("New Branch") {
-                    NotificationCenter.default.post(name: .createNewBranch, object: nil)
-                }
-                .keyboardShortcut("b", modifiers: .command)
-            }
-
             CommandGroup(after: .toolbar) {
-                Button("Back") { appState.navigateBack() }
-                    .keyboardShortcut("[", modifiers: .command)
-                    .disabled(!appState.canGoBack)
-
-                Button("Forward") { appState.navigateForward() }
-                    .keyboardShortcut("]", modifiers: .command)
-                    .disabled(!appState.canGoForward)
-
-                Divider()
-
-                Button("Find in Conversation") {
-                    NotificationCenter.default.post(name: .showConversationSearch, object: nil)
+                Button("Refresh") {
+                    CompassStore.shared.refresh()
+                    TicketStore.shared.scanAll()
                 }
-                .keyboardShortcut("f", modifiers: .command)
-
-                Button("Search Everything") {
-                    appState.showGlobalSearch = true
-                }
-                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .keyboardShortcut("r", modifiers: .command)
             }
         }
 
@@ -260,100 +94,17 @@ struct WorldTreeApp: App {
         }
 
         MenuBarExtra {
-            Button("Open World Tree") {
-                NSApp.activate(ignoringOtherApps: true)
-            }
+            Button("Open World Tree") { NSApp.activate(ignoringOtherApps: true) }
             Divider()
-            Button("New Tree") {
-                NSApp.activate(ignoringOtherApps: true)
-                NotificationCenter.default.post(name: .createNewTree, object: nil)
-            }
-            Button("New Branch") {
-                NSApp.activate(ignoringOtherApps: true)
-                NotificationCenter.default.post(name: .createNewBranch, object: nil)
-            }
-            Divider()
-            Button("Quit World Tree") {
-                NSApp.terminate(nil)
-            }
+            Button("Quit") { NSApp.terminate(nil) }
         } label: {
-            Image(systemName: appState.activeTaskCount > 0 ? "tree.circle.fill" : "tree.fill")
+            Image(systemName: "tree.fill")
         }
         .menuBarExtraStyle(.menu)
     }
 
-    /// Validate that the restored tree/branch still exist in the DB.
-    /// Clears the selection if either has been deleted since last session.
-    /// Also pre-warms the terminal for the restored branch so it's live when the
-    /// user's view appears — no waiting, no black screen, no manual trigger needed.
-    private func validateRestoredSelection() {
-        guard let treeId = appState.selectedTreeId else { return }
-        Task { @MainActor in
-            let treeExists = (try? TreeStore.shared.getTree(treeId)) != nil
-            if !treeExists {
-                appState.selectedTreeId = nil
-                appState.selectedBranchId = nil
-                return
-            }
-            // Pre-warm terminal for the restored branch.
-            // workingDirectory lives on the tree, tmuxSessionName on the branch.
-            if let branchId = appState.selectedBranchId,
-               let branch = try? TreeStore.shared.getBranch(branchId),
-               let tree = try? TreeStore.shared.getTree(branch.treeId) {
-                let workDir = tree.workingDirectory ?? NSHomeDirectory()
-                BranchTerminalManager.shared.warmUpPreferred(
-                    branchId: branchId,
-                    project: tree.project,
-                    workingDirectory: workDir,
-                    knownTmuxSession: branch.tmuxSessionName
-                )
-                wtLog("[WorldTree] Pre-warmed terminal for restored branch \(branchId.prefix(8))")
-            }
-        }
-    }
-    
-    private func startProjectRefresh() {
-        ProjectRefreshService.shared.startAutoRefresh()
-    }
-
-    /// Launch Pencil.app in the background — hidden, no activation.
-    /// If already running, this is a no-op (NSWorkspace won't open a second instance).
-    private func launchPencilInBackground() {
-        let candidates = [
-            "/Applications/Pencil.app",
-            "\(NSHomeDirectory())/Applications/Pencil.app"
-        ]
-        guard let appPath = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
-            wtLog("[WorldTree] Pencil.app not found — skipping auto-launch")
-            return
-        }
-        let config = NSWorkspace.OpenConfiguration()
-        config.activates = false
-        config.hides = true
-        NSWorkspace.shared.openApplication(
-            at: URL(fileURLWithPath: appPath),
-            configuration: config
-        ) { _, error in
-            if let error {
-                wtLog("[WorldTree] Pencil background launch failed: \(error.localizedDescription)")
-            } else {
-                wtLog("[WorldTree] Pencil launched in background")
-            }
-        }
-    }
-
-    private func startWorldTreeServerIfEnabled() {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: WorldTreeServer.enabledKey) == nil {
-            defaults.set(true, forKey: WorldTreeServer.enabledKey) // default on
-        }
-        guard defaults.bool(forKey: WorldTreeServer.enabledKey) else { return }
-        WorldTreeServer.shared.start()
-    }
-
     private func checkForUpdateBadge() {
-        let sentinel = URL(fileURLWithPath: "/tmp/.worldtree-updated")
-        if FileManager.default.fileExists(atPath: sentinel.path) {
+        if FileManager.default.fileExists(atPath: "/tmp/.worldtree-updated") {
             NSApp.dockTile.badgeLabel = "↑"
         }
     }
@@ -363,37 +114,4 @@ struct WorldTreeApp: App {
         NSApp.dockTile.badgeLabel = nil
         try? FileManager.default.removeItem(at: URL(fileURLWithPath: "/tmp/.worldtree-updated"))
     }
-
-    /// Plugin server is enabled by default (daemon-local, loopback only).
-    /// Users can disable via Settings → Plugin Server, or set cortana.pluginEnabled = false.
-    private func startPluginServerIfEnabled() {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: AppConstants.pluginServerEnabledKey) == nil {
-            defaults.set(true, forKey: AppConstants.pluginServerEnabledKey) // default on
-        }
-        guard defaults.bool(forKey: AppConstants.pluginServerEnabledKey) else { return }
-        PluginServer.shared.start()
-    }
-
-    private func syncCodexMCPIfEnabled() {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: AppConstants.codexMCPSyncEnabledKey) == nil {
-            defaults.set(true, forKey: AppConstants.codexMCPSyncEnabledKey) // default on
-        }
-        guard defaults.bool(forKey: AppConstants.codexMCPSyncEnabledKey) else { return }
-
-        let includeWorldTree = defaults.bool(forKey: AppConstants.pluginServerEnabledKey)
-        Task {
-            await CodexMCPConfigManager.shared.syncFromClaudeAsync(includeWorldTree: includeWorldTree)
-        }
-    }
-}
-
-// MARK: - Notifications
-
-extension Notification.Name {
-    static let createNewTree = Notification.Name("createNewTree")
-    static let createNewBranch = Notification.Name("createNewBranch")
-    static let showConversationSearch = Notification.Name("showConversationSearch")
-    static let forkLastMessage = Notification.Name("forkLastMessage")
 }

@@ -1,21 +1,12 @@
 import SwiftUI
 
-/// The bird's eye view of all concurrent work across projects.
-/// Replaces DashboardView when no tree is selected.
 struct CommandCenterView: View {
     @Environment(AppState.self) var appState
     @State private var viewModel = CommandCenterViewModel()
-    @ObservedObject private var daemonService = DaemonService.shared
     @ObservedObject private var heartbeatStore = HeartbeatStore.shared
-    private var outputStore = JobOutputStreamStore.shared
-    @State private var isShowingRoster = false
-    @State private var isShowingEventRules = false
-    @State private var isShowingFactoryFloor = false
-    @ObservedObject private var attentionStore = AttentionStore.shared
-    @ObservedObject private var conflictDetector = ConflictDetector.shared
-    @ObservedObject private var cortanaOpsStore = CortanaOpsStore.shared
     @ObservedObject private var activityStore = DispatchActivityStore.shared
     @State private var ccTab: CCTab = .overview
+    @State private var isShowingDispatchSheet = false
 
     private enum CCTab: String, CaseIterable {
         case overview = "Overview"
@@ -30,33 +21,17 @@ struct CommandCenterView: View {
 
                 if ccTab == .activity {
                     DispatchActivityView()
+                        .padding(.top, 4)
                 } else {
-                    if !attentionStore.unacknowledged.isEmpty {
-                        AttentionPanel()
-                    }
-                    // Pending handoffs from gateway
                     if !viewModel.pendingHandoffs.isEmpty {
                         HandoffBanner(
                             handoffs: viewModel.pendingHandoffs,
-                            onDismiss: { id in viewModel.dismissHandoff(id) },
-                            onPickUp: { id in viewModel.pickUpHandoff(id) }
+                            onDismiss: { viewModel.dismissHandoff($0) },
+                            onPickUp: { viewModel.pickUpHandoff($0) }
                         )
                     }
-                    CortanaOpsSection()
-                    FactoryPipelineSection(isShowingFactoryFloor: $isShowingFactoryFloor)
-                    CoordinatorSection()
-                    ForEach(conflictDetector.activeConflicts, id: \.filePath) { conflict in
-                        ConflictWarningBanner(conflict: conflict)
-                    }
-                    AgentStatusBoard()
-                    TokenDashboardView()
-                    LiveStreamsSection()
                     projectGrid
-                    StarfleetActivitySection()
-                    if UserDefaults.standard.bool(forKey: "pencil.feature.enabled") {
-                        PencilDesignSection()
-                    }
-                    activeWork
+                    activeDispatches
                     recentCompletions
                 }
 
@@ -68,15 +43,9 @@ struct CommandCenterView: View {
         .onAppear {
             viewModel.startObserving()
             viewModel.refreshHandoffs()
-            daemonService.refreshTmuxSessions()
-            AgentStatusStore.shared.startObserving()
-            cortanaOpsStore.start()
-            EventRuleStore.shared.loadRules()
-            UIStateStore.shared.loadAll()
             Task { await heartbeatStore.refreshAsync() }
         }
         .task {
-            // Refresh heartbeat every 30s while Command Center is visible
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
                 await heartbeatStore.refreshAsync()
@@ -84,130 +53,68 @@ struct CommandCenterView: View {
         }
         .onDisappear {
             viewModel.stopObserving()
-            AgentStatusStore.shared.stopObserving()
-            cortanaOpsStore.stop()
         }
-        .sheet(isPresented: $viewModel.isShowingDispatchSheet) {
-            DispatchSheet(projects: viewModel.projects) { message, project, model, template in
-                viewModel.dispatch(message: message, project: project, model: model, template: template)
-            }
-        }
-        .sheet(isPresented: $isShowingRoster) {
-            StarfleetRosterView()
-                .frame(width: 700, height: 500)
-        }
-        .sheet(isPresented: $isShowingEventRules) {
-            EventRulesSheet()
-        }
-        .sheet(isPresented: $isShowingFactoryFloor) {
-            FactoryPipelineView()
-                .environment(appState)
-                .frame(minWidth: 700, minHeight: 550)
-        }
-        .sheet(item: Binding(
-            get: { outputStore.inspectedEntry },
-            set: { _ in outputStore.dismissInspector() }
-        )) { entry in
-            JobOutputInspectorView(entry: entry) {
-                outputStore.dismissInspector()
+        .sheet(isPresented: $isShowingDispatchSheet) {
+            DispatchSheet(projects: viewModel.compassProjects.map(\.project)) { message, project, model in
+                // Dispatch via gateway
+                Task {
+                    guard let gateway = GatewayClient.fromLocalConfig() else { return }
+                    _ = try? await gateway.createHandoff(
+                        message: "\(message)\n\n[model: \(model ?? "claude-sonnet-4-6")]",
+                        project: project
+                    )
+                }
             }
         }
     }
 
-    // MARK: - Header
+    // MARK: — Header
 
     private var header: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 10) {
                     Text("Command Center")
-                        .font(.title2)
-                        .fontWeight(.bold)
-
+                        .font(.title2.bold())
                     HeartbeatIndicator(
                         activeTaskCount: heartbeatStore.activeDispatches,
                         lastHeartbeat: heartbeatStore.lastHeartbeat,
                         signalCount: heartbeatStore.lastSignalCount
                     )
                 }
-
                 HStack(spacing: 12) {
-                    statusPill(
-                        icon: "bolt.fill",
-                        text: "\(viewModel.activeDispatches.count + viewModel.activeJobs.count) active",
-                        color: viewModel.activeDispatches.isEmpty && viewModel.activeJobs.isEmpty ? .gray : .green
-                    )
-
-                    statusPill(
-                        icon: "terminal",
-                        text: "\(daemonService.tmuxSessions.filter(\.isClaudeSession).count) sessions",
-                        color: daemonService.tmuxSessions.contains(where: \.isClaudeSession) ? .cyan : .gray
-                    )
-
-                    statusPill(
-                        icon: "folder",
-                        text: "\(viewModel.projects.count) projects",
-                        color: .secondary
-                    )
+                    statusPill("bolt.fill",
+                               "\(viewModel.activeDispatches.count) active",
+                               viewModel.activeDispatches.isEmpty ? .gray : .green)
+                    statusPill("folder",
+                               "\(viewModel.compassProjects.count) projects",
+                               .secondary)
                 }
             }
-
             Spacer()
-
-            // Event Rules button
-            Button {
-                isShowingEventRules = true
-            } label: {
-                Label("Rules", systemImage: "bolt.trianglebadge.exclamationmark")
-                    .font(.system(size: 12, weight: .medium))
+            Button { viewModel.refreshProjects(); viewModel.refreshHandoffs() } label: {
+                Image(systemName: "arrow.clockwise").font(.system(size: 12))
             }
             .buttonStyle(.bordered)
-            .accessibilityHint("Opens event trigger rules for automation")
+            .keyboardShortcut("r", modifiers: .command)
 
-            // Factory Pipeline button
-            Button { isShowingFactoryFloor = true } label: {
-                Label("Factory", systemImage: "cpu")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.bordered)
-            .tint(.purple)
-            .accessibilityHint("Opens the NERVE factory pipeline")
-
-            // Crew Roster button
-            Button {
-                isShowingRoster = true
-            } label: {
-                Label("Crew", systemImage: "person.3.fill")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.bordered)
-            .accessibilityHint("Opens Starfleet crew roster for agent dispatch")
-
-            // Dispatch button
-            Button {
-                viewModel.loadProjects() // refresh before showing sheet
-                guard !viewModel.projects.isEmpty else { return }
-                viewModel.isShowingDispatchSheet = true
-            } label: {
+            Button { isShowingDispatchSheet = true } label: {
                 Label("Dispatch", systemImage: "paperplane.fill")
                     .font(.system(size: 12, weight: .medium))
             }
             .buttonStyle(.borderedProminent)
-            .accessibilityHint("Opens dispatch sheet to send work to agents")
-
-            // Refresh
-            Button {
-                viewModel.loadProjects()
-                viewModel.refreshCompassAndTickets()
-                daemonService.refreshTmuxSessions()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12))
-            }
-            .buttonStyle(.bordered)
-            .accessibilityLabel("Refresh projects")
         }
     }
+
+    private func statusPill(_ icon: String, _ text: String, _ color: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 9))
+            Text(text).font(.system(size: 10, weight: .medium))
+        }
+        .foregroundStyle(color)
+    }
+
+    // MARK: — Tab Picker
 
     private var tabPicker: some View {
         HStack {
@@ -219,10 +126,9 @@ struct CommandCenterView: View {
                             Text("\(activityStore.totalUnread)")
                                 .font(.system(size: 9, weight: .semibold))
                                 .foregroundStyle(.white)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
+                                .padding(.horizontal, 4).padding(.vertical, 1)
                                 .background(Color.cyan.opacity(0.85))
-                                .cornerRadius(8)
+                                .clipShape(Capsule())
                         }
                     }
                     .tag(tab)
@@ -233,393 +139,112 @@ struct CommandCenterView: View {
             Spacer()
         }
         .onChange(of: ccTab) { _, tab in
-            // Switching to Activity marks all unread as seen
             if tab == .activity {
-                for project in activityStore.unreadCounts.keys where (activityStore.unreadCounts[project] ?? 0) > 0 {
+                for project in activityStore.unreadCounts.keys
+                    where (activityStore.unreadCounts[project] ?? 0) > 0 {
                     activityStore.markRead(project)
                 }
             }
         }
     }
 
-    private func statusPill(icon: String, text: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 9))
-            Text(text)
-                .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundStyle(color)
-        .accessibilityElement(children: .combine)
-    }
-
-    // MARK: - Project Grid
+    // MARK: — Project Grid
 
     private var projectGrid: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !viewModel.projectActivities.isEmpty {
-                let columns = [
-                    GridItem(.adaptive(minimum: 200, maximum: 300), spacing: 8)
-                ]
-
-                LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(viewModel.projectActivities) { activity in
+        Group {
+            if viewModel.compassProjects.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "folder.badge.questionmark").font(.title2).foregroundStyle(.tertiary)
+                    Text("No projects found").font(.caption).foregroundStyle(.secondary)
+                    Text("compass.db not initialized or no projects tracked")
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 20)
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 220, maximum: 320), spacing: 8)],
+                    spacing: 8
+                ) {
+                    ForEach(viewModel.compassProjects, id: \.project) { state in
                         CompassProjectCard(
-                            activity: activity,
-                            compassState: viewModel.compassStates[activity.project.name],
-                            ticketCount: viewModel.ticketCounts[activity.project.name] ?? 0,
-                            blockedCount: viewModel.blockedCounts[activity.project.name] ?? 0
+                            compassState: state,
+                            ticketCount: TicketStore.shared.openCount(for: state.project),
+                            blockedCount: TicketStore.shared.blockedCount(for: state.project)
                         )
                     }
                 }
-            } else if viewModel.projects.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "folder.badge.questionmark")
-                        .font(.title2)
-                        .foregroundStyle(.tertiary)
-                    Text("No projects found")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("Projects are scanned from ~/Development")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 20)
             }
         }
     }
 
-    // MARK: - Active Work
+    // MARK: — Active Dispatches
 
-    private var activeWork: some View {
-        ActiveWorkSection(
-            dispatches: viewModel.activeDispatches,
-            jobs: viewModel.activeJobs,
-            onCancel: { id in viewModel.cancelDispatch(id) },
-            onInspectDispatch: { id in outputStore.inspect(id: id, kind: .dispatch) },
-            onInspectJob: { id in outputStore.inspect(id: id, kind: .job) }
-        )
+    private var activeDispatches: some View {
+        Group {
+            if !viewModel.activeDispatches.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionHeader("bolt.fill", "RUNNING", .green)
+                    ForEach(viewModel.activeDispatches) { dispatch in
+                        dispatchRow(dispatch, isActive: true)
+                    }
+                }
+            }
+        }
     }
 
-    // MARK: - Recent Completions
+    // MARK: — Recent Completions
 
     private var recentCompletions: some View {
         Group {
             if !viewModel.recentDispatches.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                        Text("RECENT")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-
-                    VStack(spacing: 4) {
-                        ForEach(viewModel.recentDispatches.prefix(10)) { dispatch in
-                            Button {
-                                outputStore.inspect(id: dispatch.id, kind: .dispatch)
-                            } label: {
-                                recentRow(dispatch)
-                            }
-                            .buttonStyle(.plain)
-                            .help("View dispatch output")
-                        }
+                    sectionHeader("clock.arrow.circlepath", "RECENT", .secondary)
+                    ForEach(viewModel.recentDispatches.prefix(10)) { dispatch in
+                        dispatchRow(dispatch, isActive: false)
                     }
                 }
             }
         }
     }
 
-    private func recentRow(_ dispatch: WorldTreeDispatch) -> some View {
+    private func sectionHeader(_ icon: String, _ label: String, _ color: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 10)).foregroundStyle(color)
+            Text(label).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+            Spacer()
+        }
+    }
+
+    private func dispatchRow(_ dispatch: WorldTreeDispatch, isActive: Bool) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: dispatch.status == .completed ? "checkmark.circle.fill" : "xmark.circle.fill")
+            Image(systemName: isActive ? "circle.fill" :
+                    (dispatch.status == .completed ? "checkmark.circle.fill" : "xmark.circle.fill"))
                 .font(.system(size: 10))
-                .foregroundStyle(dispatch.status == .completed ? .green : .red)
-                .accessibilityLabel(dispatch.status == .completed ? "Completed" : "Failed")
+                .foregroundStyle(isActive ? .green :
+                    (dispatch.status == .completed ? .green : .red))
 
             Text(dispatch.project)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
 
             Text(dispatch.displayMessage)
-                .font(.system(size: 10))
-                .foregroundStyle(.primary.opacity(0.7))
-                .lineLimit(1)
-                .truncationMode(.tail)
+                .font(.system(size: 10)).foregroundStyle(.primary.opacity(0.7))
+                .lineLimit(1).truncationMode(.tail)
 
             Spacer()
 
-            // Token usage
-            if let tokensIn = dispatch.resultTokensIn, let tokensOut = dispatch.resultTokensOut,
-               tokensIn + tokensOut > 0 {
-                Text(formatTokens(tokensIn + tokensOut))
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-            }
-
-            // Duration
-            if let dur = dispatch.durationString {
-                Text(dur)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-            }
-
-            // Completion time
             if let completed = dispatch.completedAt {
                 Text(completed, style: .relative)
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 9)).foregroundStyle(.tertiary)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 10).padding(.vertical, 5)
         .background(.quaternary.opacity(0.2))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
-
-    private func formatTokens(_ count: Int) -> String {
-        if count >= 1_000_000 { return "\(count / 1_000_000)M" }
-        if count >= 1000 { return "\(count / 1000)K" }
-        return "\(count)"
-    }
 }
 
-// MARK: - Factory Pipeline Section
+// MARK: — Handoff Banner
 
-/// Compact inline section for the Command Center showing active NERVE factory projects.
-/// Shows up to 6 non-terminal projects with a header, compact rows, and a "See All" button.
-struct FactoryPipelineSection: View {
-    @Binding var isShowingFactoryFloor: Bool
-    var store = FactoryStore.shared
-
-    @State private var isShowingSubmitSheet = false
-    @State private var submitPrompt: String = ""
-    @State private var isSubmitting = false
-    @State private var submitError: String? = nil
-
-    private var activeProjects: [FactoryProject] {
-        store.factoryProjects.filter { $0.state != .done && $0.state != .submit }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Section header
-            HStack(spacing: 6) {
-                Image(systemName: "cpu")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.purple)
-                Text("FACTORY PIPELINE")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Circle()
-                    .fill(store.isConnected ? Color.green : Color.gray)
-                    .frame(width: 6, height: 6)
-                    .accessibilityLabel(store.isConnected ? "Connected" : "Disconnected")
-
-                if !store.factoryProjects.isEmpty {
-                    Text("\(store.factoryProjects.count)")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.purple.opacity(0.7))
-                        .clipShape(Capsule())
-                }
-
-                Spacer()
-
-                Button {
-                    isShowingSubmitSheet = true
-                } label: {
-                    Label("New", systemImage: "plus")
-                        .font(.system(size: 10, weight: .medium))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(.purple)
-            }
-
-            // Project rows (up to 6)
-            if activeProjects.isEmpty {
-                Text("No active factory projects")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .center)
-            } else {
-                VStack(spacing: 4) {
-                    ForEach(activeProjects.prefix(6)) { project in
-                        FactoryCompactRow(project: project)
-                    }
-                }
-
-                if activeProjects.count > 6 {
-                    Button {
-                        isShowingFactoryFloor = true
-                    } label: {
-                        Text("See All (\(activeProjects.count))")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.purple)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, 2)
-                }
-            }
-        }
-        .padding(12)
-        .background(Color.purple.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.purple.opacity(0.15), lineWidth: 1)
-        }
-        .task {
-            await FactoryStore.shared.start()
-        }
-        .sheet(isPresented: $isShowingSubmitSheet) {
-            FactorySubmitSheet(isPresented: $isShowingSubmitSheet)
-        }
-    }
-}
-
-/// Minimal inline submit sheet for new factory projects.
-private struct FactorySubmitSheet: View {
-    @Binding var isPresented: Bool
-    @State private var prompt: String = ""
-    @State private var isSubmitting = false
-    @State private var submitError: String? = nil
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Label("New Factory Project", systemImage: "cpu")
-                    .font(.title3)
-                    .fontWeight(.bold)
-                    .foregroundStyle(.purple)
-                Spacer()
-                Button("Cancel") { isPresented = false }
-                    .buttonStyle(.bordered)
-            }
-
-            Divider()
-
-            Text("Describe the project you want the factory to build:")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-
-            TextField("Describe a project to build…", text: $prompt, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(3...6)
-
-            if let err = submitError {
-                Text(err)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-
-            HStack {
-                Spacer()
-                Button(action: submit) {
-                    if isSubmitting {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Submit", systemImage: "paperplane.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.purple)
-                .disabled(prompt.trimmingCharacters(in: .whitespaces).isEmpty || isSubmitting)
-            }
-        }
-        .padding(24)
-        .frame(minWidth: 480, minHeight: 220)
-    }
-
-    private func submit() {
-        let p = prompt.trimmingCharacters(in: .whitespaces)
-        guard !p.isEmpty, !isSubmitting else { return }
-        isSubmitting = true
-        submitError = nil
-        Task {
-            do {
-                try await FactoryStore.shared.submitProject(prompt: p)
-                isPresented = false
-            } catch {
-                submitError = error.localizedDescription
-            }
-            isSubmitting = false
-        }
-    }
-}
-
-/// Compact ~50pt row showing project name/prompt and state badge — no pipeline stages.
-private struct FactoryCompactRow: View {
-    let project: FactoryProject
-
-    var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(project.projectName ?? project.intakePrompt)
-                    .font(.system(size: 12, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text(project.intakePrompt)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-
-            Spacer()
-
-            // State badge
-            HStack(spacing: 4) {
-                if project.blocked {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                        .font(.system(size: 9))
-                }
-                if project.humanQuestion != nil {
-                    Image(systemName: "questionmark.circle.fill")
-                        .foregroundStyle(.orange)
-                        .font(.system(size: 9))
-                }
-                Image(systemName: project.state.icon)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(project.state.color)
-                Text(project.state.displayName)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(project.state.color)
-            }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(project.state.color.opacity(0.12))
-            .clipShape(Capsule())
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(minHeight: 50)
-        .background(.quaternary.opacity(0.15))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
-        .overlay(
-            RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(
-                    project.blocked ? Color.red.opacity(0.3) : Color.clear,
-                    lineWidth: 1
-                )
-        )
-    }
-}
-
-// MARK: - Handoff Banner
-
-/// Shows pending handoffs from the Ark Gateway — cross-device work items
-/// that need attention (e.g., Telegram handoffs, daemon-created tasks).
 struct HandoffBanner: View {
     let handoffs: [Handoff]
     let onDismiss: (String) -> Void
@@ -628,107 +253,30 @@ struct HandoffBanner: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "tray.full.fill")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.orange)
-                Text("PENDING HANDOFFS")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.orange)
+                Image(systemName: "tray.full.fill").font(.system(size: 10)).foregroundStyle(.orange)
+                Text("PENDING HANDOFFS").font(.system(size: 10, weight: .semibold)).foregroundStyle(.orange)
                 Spacer()
-                Text("\(handoffs.count)")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.orange)
+                Text("\(handoffs.count)").font(.system(size: 10, weight: .bold)).foregroundStyle(.orange)
             }
-
             ForEach(handoffs) { handoff in
-                HandoffRow(handoff: handoff, onDismiss: onDismiss, onPickUp: onPickUp)
+                HStack(spacing: 8) {
+                    Text(handoff.message).font(.system(size: 12)).lineLimit(2)
+                    Spacer()
+                    Button("Pick Up") { onPickUp(handoff.id) }
+                        .buttonStyle(.borderedProminent).controlSize(.small).tint(.orange)
+                    Button { onDismiss(handoff.id) } label: {
+                        Image(systemName: "xmark").font(.system(size: 10))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(.quaternary.opacity(0.15))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
         }
         .padding(12)
         .background(Color.orange.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.orange.opacity(0.2), lineWidth: 1)
-        }
-    }
-}
-
-private struct HandoffRow: View {
-    let handoff: Handoff
-    let onDismiss: (String) -> Void
-    let onPickUp: (String) -> Void
-
-    private var priorityColor: Color {
-        switch handoff.priority {
-        case "high", "critical": return .red
-        case "normal": return .orange
-        default: return .secondary
-        }
-    }
-
-    private var timeAgo: String {
-        let seconds = Int(Date().timeIntervalSince1970) - Int(handoff.createdAt)
-        if seconds < 60 { return "just now" }
-        if seconds < 3600 { return "\(seconds / 60)m ago" }
-        if seconds < 86400 { return "\(seconds / 3600)h ago" }
-        return "\(seconds / 86400)d ago"
-    }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            // Priority indicator
-            Circle()
-                .fill(priorityColor)
-                .frame(width: 6, height: 6)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(handoff.message)
-                    .font(.system(size: 12))
-                    .lineLimit(2)
-
-                HStack(spacing: 8) {
-                    if let project = handoff.project {
-                        Text(project)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                    if let source = handoff.source {
-                        Text("via \(source)")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                    }
-                    Text(timeAgo)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
-            Spacer()
-
-            Button {
-                onPickUp(handoff.id)
-            } label: {
-                Text("Pick Up")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .tint(.orange)
-
-            Button {
-                onDismiss(handoff.id)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Dismiss handoff")
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.quaternary.opacity(0.15))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.2)) }
     }
 }

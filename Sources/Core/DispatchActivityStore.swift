@@ -101,7 +101,6 @@ final class DispatchActivityStore: ObservableObject {
     }
 
     private func currentlySelectedProjectName() -> String? {
-        guard let treeId = AppState.shared.selectedTreeId else { return nil }
-        return (try? TreeStore.shared.getTree(treeId))?.project
+        return AppState.shared.selectedProject
     }
 }

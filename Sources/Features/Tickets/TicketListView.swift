@@ -246,7 +246,6 @@ struct TicketRowView: View {
 struct TicketDetailView: View {
     let ticket: Ticket
     @Environment(\.dismiss) private var dismiss
-    @State private var linkedFrames: [PenFrameLink] = []
 
     var body: some View {
         ScrollView {
@@ -332,11 +331,6 @@ struct TicketDetailView: View {
                     }
                 }
 
-                // Design Frames
-                if !linkedFrames.isEmpty {
-                    designFramesSection
-                }
-
                 // Metadata
                 VStack(alignment: .leading, spacing: 4) {
                     if let assignee = ticket.assignee {
@@ -361,68 +355,6 @@ struct TicketDetailView: View {
                 Button("Close") { dismiss() }
             }
         }
-        .task { await loadLinkedFrames() }
-    }
-
-    // MARK: - Design Frames Section
-
-    private var designFramesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "pencil.circle")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                Text("DESIGN FRAMES")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text("(\(linkedFrames.count))")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-            }
-
-            ForEach(linkedFrames, id: \.id) { link in
-                HStack(spacing: 8) {
-                    Image(systemName: "rectangle.dashed")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.blue)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(link.frameName ?? link.frameId)
-                            .font(.system(size: 11))
-                        if let w = link.width, let h = link.height {
-                            Text("\(Int(w)) × \(Int(h))")
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-
-                    Spacer()
-
-                    Image(systemName: "pencil.circle.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.blue.opacity(0.6))
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.blue.opacity(0.05))
-                .cornerRadius(6)
-            }
-        }
-        .padding(12)
-        .background(Color.primary.opacity(0.03))
-        .cornerRadius(8)
-    }
-
-    private func loadLinkedFrames() async {
-        let ticketId = ticket.id
-        // Check in-memory cache first
-        let cached = PenAssetStore.shared.frameLinks.filter { $0.ticketId == ticketId }
-        if !cached.isEmpty {
-            linkedFrames = cached
-            return
-        }
-        // Live DB query by ticket_id
-        linkedFrames = await PenAssetStore.shared.frameLinksForTicket(ticketId: ticketId)
     }
 
     private func metadataRow(label: String, value: String) -> some View {
