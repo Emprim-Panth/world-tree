@@ -1,11 +1,11 @@
-# World Tree — Conversation Tree Interface
+# World Tree — Command Center & Intelligence Dashboard
 
-> Cortana's home. Tree-structured branching conversations with daemon integration.
+> Cortana's home. Project management, agent orchestration, and local intelligence.
 
 ## Stack
 - **Platform**: macOS 14+ (SwiftUI)
 - **Database**: SQLite via GRDB.swift (shared `conversations.db`, WAL mode)
-- **IPC**: Unix domain socket to cortana-daemon
+- **Intelligence**: Ollama fleet (qwen2.5:72b, qwen2.5-coder:32b, nomic-embed-text)
 - **Build**: XcodeGen (`project.yml`)
 
 ## Build & Run
@@ -13,47 +13,57 @@
 xcodegen                            # Generate .xcodeproj
 xcodebuild -scheme WorldTree        # Build
 open WorldTree.xcodeproj            # Open in Xcode
+make install                        # Build + install to /Applications
 ```
 
 ## Architecture
 
 ```
 Sources/
-├── App/          # @main entry, AppState
+├── App/              # @main entry, AppState, ContentView
 ├── Core/
-│   ├── Database/ # DatabaseManager, TreeStore, MessageStore, Migrations
-│   ├── Daemon/   # Unix socket client, log tailer
-│   ├── Claude/   # ClaudeBridge — send/fork dispatch
-│   └── Models/   # ConversationTree, Branch, Message
+│   ├── Database/     # DatabaseManager, MigrationManager, CompassStore,
+│   │                 # HeartbeatStore, TicketStore, SessionStateStore
+│   ├── BrainHost/    # CentralBrainStore, BrainFileStore
+│   ├── ContextServer/# HTTP server (port 4863) — project context + agent routes
+│   ├── Intelligence/ # BrainIndexer (FTS5 + semantic), QualityRouter (Ollama)
+│   ├── Gateway/      # GatewayClient — handoffs, agent events
+│   ├── Models/       # Dispatch model
+│   └── Notifications/# macOS notifications
 ├── Features/
-│   ├── Sidebar/       # Tree browser with recursive branch nodes
-│   ├── Canvas/        # Conversation view, message rows, fork menu
-│   ├── CommandCenter/ # Compass project cards, dispatch, activity overview
+│   ├── CommandCenter/ # Compass project cards, dispatch activity, intelligence dashboard
 │   ├── Tickets/       # Ticket list, detail, inline status toggle
-│   ├── Terminal/      # Project + branch terminals (NSViewRepresentable)
-│   ├── Document/      # Single document view with integrated terminal
+│   ├── Brain/         # Brain editor, Central Brain viewer
+│   ├── AgentLab/      # Agent proof viewer, cast replay, live screenshots
 │   └── Settings/      # Configuration
-└── Shared/       # Components, extensions, constants
+└── Shared/           # Palette (design tokens), constants, utilities, extensions
 ```
 
 ## Key Invariants
 
-1. **Zero changes** to existing `sessions`, `messages` tables — canvas_* tables overlay
+1. **Never touch** cortana-core tables (`sessions`, `messages`, `summaries`, `agent_attention_events`)
 2. **WAL mode** with `busy_timeout = 5000` — matches cortana-core exactly
-3. **Sessions created by Canvas** must match cortana-core INSERT pattern
-4. **Daemon communication** via Unix socket at `~/.cortana/daemon/cortana.sock`
-5. **Branch context** injected as system message when forking
+3. **Never use `try?`** on database or network calls — use `do/catch` + `wtLog`
+4. **Use `Palette.*`** for all view colors — no bare `.red`, `.blue`, `Color(NSColor.*)` etc.
+5. **Delete superseded files** in the same commit — no dead code
+6. **Use Developer cert** for signing (Team: F75F8Z9ZPZ) — never ad-hoc
 
 ## Database
 
 Shared: `~/.cortana/claude-memory/conversations.db`
-Canvas tables: `canvas_trees`, `canvas_branches`, `canvas_tickets`, `canvas_dispatches`, `canvas_jobs`
-Compass (read-write): `~/.cortana/compass.db` — project state read/written by World Tree and cortana-core MCP
+Canvas tables: `canvas_tickets`, `canvas_dispatches`
+Agent tables: `agent_sessions`, `agent_screenshots`, `inference_log`
+Compass (read-write): `~/.cortana/compass.db`
+Brain index: `~/.cortana/brain-index.db` (FTS5 + embeddings)
+
+## ContextServer Routes (port 4863)
+
+- `GET /context/{project}` — project context for Claude sessions
+- `GET /brain/search?q=...` — semantic brain search
+- `GET /intelligence/status` — model fleet + routing stats
+- `GET/POST /agent/*` — agent session tracking + proof delivery
+- `POST /session/summary` — session summary from Claude Code hooks
 
 ## Tickets
 
 Tickets live as `TASK-*.md` files in `.claude/epic/tasks/`. Compass scans them into `canvas_tickets` for the Command Center. Use `compass_tickets WorldTree` to see open work.
-
-## Anti-Duplication Rule
-
-When refactoring replaces a file with a new implementation, **delete the old file in the same commit**. Do not leave superseded files as "for reference". Stranded dead code accumulates silently — two known culprits already removed (ContextBuilder.swift superseded by SendContextBuilder; VMExecutor.swift — speculative stub never completed).
