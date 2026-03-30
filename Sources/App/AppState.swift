@@ -6,6 +6,7 @@ enum NavigationPanel: String, Hashable {
     case brain
     case centralBrain
     case agentLab
+    case starfleet
     case settings
 }
 

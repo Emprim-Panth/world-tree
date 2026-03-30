@@ -31,6 +31,8 @@ struct ContentView: View {
             Label("Central Brain", systemImage: "brain.head.profile")
                 .tag(NavigationPanel.centralBrain)
             agentLabSidebarItem
+            Label("Starfleet", systemImage: "person.2.badge.gearshape")
+                .tag(NavigationPanel.starfleet)
             Divider()
             Label("Settings", systemImage: "gear")
                 .tag(NavigationPanel.settings)
@@ -67,6 +69,8 @@ struct ContentView: View {
             CentralBrainView()
         case .agentLab:
             AgentLabView()
+        case .starfleet:
+            StarfleetCommandView()
         case .settings:
             SettingsView()
         }

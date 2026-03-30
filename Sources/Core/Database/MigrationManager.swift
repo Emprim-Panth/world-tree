@@ -176,6 +176,62 @@ enum MigrationManager {
             migrationLog.info("v35: inference_log table ready")
         }
 
+        // v36_cortana_alerts — drift/health alerts surfaced in WorldTree Briefing panel.
+        migrator.registerMigration("v36_cortana_alerts") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS cortana_alerts (
+                    id TEXT PRIMARY KEY,
+                    type TEXT NOT NULL,
+                    project TEXT,
+                    message TEXT NOT NULL,
+                    severity TEXT NOT NULL DEFAULT 'info'
+                        CHECK(severity IN ('info','warning','critical')),
+                    source TEXT NOT NULL DEFAULT 'manual',
+                    resolved INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    resolved_at TEXT
+                )
+            """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_alerts_resolved ON cortana_alerts(resolved, created_at)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_alerts_project ON cortana_alerts(project)")
+            migrationLog.info("v36: cortana_alerts table ready")
+        }
+
+        // v37_starfleet_activity — agent lifecycle events for Starfleet Command panel.
+        migrator.registerMigration("v37_starfleet_activity") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS starfleet_activity (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_name TEXT NOT NULL,
+                    event_type TEXT NOT NULL
+                        CHECK(event_type IN ('start','stop','error','dispatch','complete','heartbeat')),
+                    project TEXT,
+                    detail TEXT,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_starfleet_agent ON starfleet_activity(agent_name, created_at)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_starfleet_date ON starfleet_activity(created_at)")
+            migrationLog.info("v37: starfleet_activity table ready")
+        }
+
+        // v38_hook_events — raw hook event log for pattern analysis and knowledge promotion.
+        migrator.registerMigration("v38_hook_events") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS hook_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    hook_type TEXT NOT NULL,
+                    session_id TEXT,
+                    project TEXT,
+                    payload TEXT,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_hook_type ON hook_events(hook_type, created_at)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_hook_session ON hook_events(session_id)")
+            migrationLog.info("v38: hook_events table ready")
+        }
+
         try migrator.migrate(dbPool)
         migrationLog.info("Migration complete")
     }

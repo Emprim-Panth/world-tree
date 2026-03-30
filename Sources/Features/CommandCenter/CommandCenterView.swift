@@ -30,6 +30,7 @@ struct CommandCenterView: View {
                             onPickUp: { viewModel.pickUpHandoff($0) }
                         )
                     }
+                    BriefingAlertsView()
                     projectGrid
                     IntelligenceDashboard()
                     activeDispatches
