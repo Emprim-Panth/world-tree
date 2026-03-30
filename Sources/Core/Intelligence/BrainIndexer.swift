@@ -12,7 +12,7 @@ final class BrainIndexer: ObservableObject {
     @Published private(set) var lastIndexDate: Date?
     @Published private(set) var isIndexing: Bool = false
 
-    nonisolated(unsafe) private var dbPool: DatabasePool?
+    private var dbPool: DatabasePool?
     private let fm = FileManager.default
     private let brainDir: URL
     private let dbPath: String
@@ -50,7 +50,7 @@ final class BrainIndexer: ObservableObject {
 
     private func createSchema() throws {
         guard let dbPool else { return }
-        try dbPool.unsafeReentrantWrite { db in
+        try dbPool.writeWithoutTransaction { db in
             try db.execute(sql: """
                 CREATE TABLE IF NOT EXISTS brain_chunks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,9 +78,13 @@ final class BrainIndexer: ObservableObject {
 
     private func refreshCount() {
         guard let dbPool else { return }
-        chunkCount = (try? dbPool.unsafeReentrantRead { db in
-            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM brain_chunks")
-        }) ?? 0
+        do {
+            chunkCount = try dbPool.unsafeReentrantRead { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM brain_chunks")
+            } ?? 0
+        } catch {
+            wtLog("[BrainIndexer] Failed to refresh chunk count: \(error)")
+        }
     }
 
     // MARK: - Full Index
@@ -101,8 +105,12 @@ final class BrainIndexer: ObservableObject {
             await indexFile(file)
         }
 
-        try? dbPool?.unsafeReentrantWrite { db in
-            try db.execute(sql: "INSERT INTO brain_fts(brain_fts) VALUES('rebuild')")
+        do {
+            try await dbPool?.write { db in
+                try db.execute(sql: "INSERT INTO brain_fts(brain_fts) VALUES('rebuild')")
+            }
+        } catch {
+            wtLog("[BrainIndexer] FTS rebuild failed: \(error)")
         }
 
         wtLog("[BrainIndexer] Index complete — \(chunkCount) chunks")
@@ -119,7 +127,7 @@ final class BrainIndexer: ObservableObject {
             guard let embedding = await embed(chunk) else { continue }
 
             do {
-                try dbPool?.unsafeReentrantWrite { db in
+                try await dbPool?.write { db in
                     try db.execute(sql: "DELETE FROM brain_fts WHERE rowid IN (SELECT id FROM brain_chunks WHERE file_path = ? AND chunk_index = ?)",
                                    arguments: [relativePath, index])
                     try db.execute(sql: "DELETE FROM brain_chunks WHERE file_path = ? AND chunk_index = ?",
@@ -135,11 +143,15 @@ final class BrainIndexer: ObservableObject {
             }
         }
 
-        try? dbPool?.unsafeReentrantWrite { db in
-            try db.execute(sql: "DELETE FROM brain_fts WHERE rowid IN (SELECT id FROM brain_chunks WHERE file_path = ? AND chunk_index >= ?)",
-                           arguments: [relativePath, chunks.count])
-            try db.execute(sql: "DELETE FROM brain_chunks WHERE file_path = ? AND chunk_index >= ?",
-                           arguments: [relativePath, chunks.count])
+        do {
+            try await dbPool?.write { db in
+                try db.execute(sql: "DELETE FROM brain_fts WHERE rowid IN (SELECT id FROM brain_chunks WHERE file_path = ? AND chunk_index >= ?)",
+                               arguments: [relativePath, chunks.count])
+                try db.execute(sql: "DELETE FROM brain_chunks WHERE file_path = ? AND chunk_index >= ?",
+                               arguments: [relativePath, chunks.count])
+            }
+        } catch {
+            wtLog("[BrainIndexer] Failed to clean stale chunks for \(relativePath): \(error)")
         }
     }
 
@@ -158,38 +170,47 @@ final class BrainIndexer: ObservableObject {
         let queryEmbedding = await embed(query)
 
         // FTS5 keyword results
-        let ftsResults: [(Int64, String, String, Double)] = (try? dbPool.unsafeReentrantRead { db in
-            try Row.fetchAll(db, sql: """
-                SELECT bc.id, bc.file_path, bc.content, bm25(brain_fts) AS rank
-                FROM brain_fts
-                JOIN brain_chunks bc ON bc.id = brain_fts.rowid
-                WHERE brain_fts MATCH ?
-                ORDER BY rank LIMIT ?
-            """, arguments: [query, limit * 2]).map { row in
-                let id: Int64 = row["id"]
-                let path: String = row["file_path"]
-                let content: String = row["content"]
-                let rank: Double = row["rank"]
-                return (id, path, content, rank)
+        let ftsResults: [(Int64, String, String, Double)]
+        do {
+            ftsResults = try await dbPool.read { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT bc.id, bc.file_path, bc.content, bm25(brain_fts) AS rank
+                    FROM brain_fts
+                    JOIN brain_chunks bc ON bc.id = brain_fts.rowid
+                    WHERE brain_fts MATCH ?
+                    ORDER BY rank LIMIT ?
+                """, arguments: [query, limit * 2]).map { row in
+                    let id: Int64 = row["id"]
+                    let path: String = row["file_path"]
+                    let content: String = row["content"]
+                    let rank: Double = row["rank"]
+                    return (id, path, content, rank)
+                }
             }
-        }) ?? []
+        } catch {
+            wtLog("[BrainIndexer] FTS search failed: \(error)")
+            ftsResults = []
+        }
 
         // Semantic results
         var semanticScores: [Int64: Float] = [:]
         if let queryEmb = queryEmbedding {
-            let allChunks: [(Int64, Data)] = (try? dbPool.unsafeReentrantRead { db in
-                try Row.fetchAll(db, sql: "SELECT id, embedding FROM brain_chunks").map { row in
-                    let id: Int64 = row["id"]
-                    let emb: Data = row["embedding"]
-                    return (id, emb)
+            do {
+                let allChunks = try await dbPool.read { db in
+                    try Row.fetchAll(db, sql: "SELECT id, embedding FROM brain_chunks").map { row in
+                        let id: Int64 = row["id"]
+                        let emb: Data = row["embedding"]
+                        return (id, emb)
+                    }
                 }
-            }) ?? []
-
-            for (id, embData) in allChunks {
-                let similarity = cosineSimilarity(queryEmb, embData)
-                if similarity > 0.5 {
-                    semanticScores[id] = similarity
+                for (id, embData) in allChunks {
+                    let similarity = cosineSimilarity(queryEmb, embData)
+                    if similarity > 0.5 {
+                        semanticScores[id] = similarity
+                    }
                 }
+            } catch {
+                wtLog("[BrainIndexer] Semantic search failed: \(error)")
             }
         }
 
@@ -208,19 +229,22 @@ final class BrainIndexer: ObservableObject {
 
         // Add semantic-only results
         if queryEmbedding != nil {
-            let allInfo: [(Int64, String, String)] = (try? dbPool.unsafeReentrantRead { db in
-                try Row.fetchAll(db, sql: "SELECT id, file_path, content FROM brain_chunks").map { row in
-                    let id: Int64 = row["id"]
-                    let path: String = row["file_path"]
-                    let content: String = row["content"]
-                    return (id, path, content)
+            do {
+                let allInfo = try await dbPool.read { db in
+                    try Row.fetchAll(db, sql: "SELECT id, file_path, content FROM brain_chunks").map { row in
+                        let id: Int64 = row["id"]
+                        let path: String = row["file_path"]
+                        let content: String = row["content"]
+                        return (id, path, content)
+                    }
                 }
-            }) ?? []
-
-            for (id, path, content) in allInfo {
-                if combined[id] == nil, let score = semanticScores[id], score > 0.6 {
-                    combined[id] = (path, content, score, "semantic")
+                for (id, path, content) in allInfo {
+                    if combined[id] == nil, let score = semanticScores[id], score > 0.6 {
+                        combined[id] = (path, content, score, "semantic")
+                    }
                 }
+            } catch {
+                wtLog("[BrainIndexer] Semantic-only lookup failed: \(error)")
             }
         }
 

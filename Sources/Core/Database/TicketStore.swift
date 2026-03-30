@@ -238,30 +238,40 @@ final class TicketStore: ObservableObject {
     /// Fetch completed (done + cancelled) tickets for a project directly from DB
     func completedTickets(for project: String) -> [Ticket] {
         guard let dbPool = DatabaseManager.shared.dbPool else { return [] }
-        return (try? dbPool.read { db in
-            try Ticket.fetchAll(db, sql: """
-                SELECT * FROM canvas_tickets
-                WHERE project = ? AND status IN ('done', 'cancelled')
-                ORDER BY updated_at DESC
-                """, arguments: [project])
-        }) ?? []
+        do {
+            return try dbPool.read { db in
+                try Ticket.fetchAll(db, sql: """
+                    SELECT * FROM canvas_tickets
+                    WHERE project = ? AND status IN ('done', 'cancelled')
+                    ORDER BY updated_at DESC
+                    """, arguments: [project])
+            }
+        } catch {
+            wtLog("[TicketStore] Failed to fetch completed tickets for \(project): \(error)")
+            return []
+        }
     }
 
     /// Fetch all completed tickets across all projects, grouped by project
     func allCompletedTickets() -> [String: [Ticket]] {
         guard let dbPool = DatabaseManager.shared.dbPool else { return [:] }
-        let all = (try? dbPool.read { db in
-            try Ticket.fetchAll(db, sql: """
-                SELECT * FROM canvas_tickets
-                WHERE status IN ('done', 'cancelled')
-                ORDER BY updated_at DESC
-                """)
-        }) ?? []
-        var grouped: [String: [Ticket]] = [:]
-        for ticket in all {
-            grouped[ticket.project, default: []].append(ticket)
+        do {
+            let all = try dbPool.read { db in
+                try Ticket.fetchAll(db, sql: """
+                    SELECT * FROM canvas_tickets
+                    WHERE status IN ('done', 'cancelled')
+                    ORDER BY updated_at DESC
+                    """)
+            }
+            var grouped: [String: [Ticket]] = [:]
+            for ticket in all {
+                grouped[ticket.project, default: []].append(ticket)
+            }
+            return grouped
+        } catch {
+            wtLog("[TicketStore] Failed to fetch all completed tickets: \(error)")
+            return [:]
         }
-        return grouped
     }
 
     // MARK: - Scanning
@@ -431,6 +441,10 @@ final class TicketStore: ObservableObject {
             content = regex.stringByReplacingMatches(in: content, range: range, withTemplate: "**Updated:** \(today)")
         }
 
-        try? content.write(toFile: filePath, atomically: true, encoding: .utf8)
+        do {
+            try content.write(toFile: filePath, atomically: true, encoding: .utf8)
+        } catch {
+            wtLog("[TicketStore] Failed to write status to \(filePath): \(error)")
+        }
     }
 }

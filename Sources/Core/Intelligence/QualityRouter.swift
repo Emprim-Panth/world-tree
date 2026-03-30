@@ -185,11 +185,16 @@ final class QualityRouter: ObservableObject {
         if let sys = systemPrompt {
             payload["system"] = sys
         }
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        } catch {
+            wtLog("[QualityRouter] Failed to serialize request: \(error)")
+            return nil
+        }
 
         do {
             let (data, _) = try await URLSession.shared.data(for: request)
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let response = json["response"] as? String else { return nil }
             let tokens = json["eval_count"] as? Int ?? 0
             return (response, tokens)

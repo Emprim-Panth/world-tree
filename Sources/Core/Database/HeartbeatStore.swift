@@ -165,21 +165,28 @@ final class HeartbeatStore: ObservableObject {
             activeDispatches = count
 
             // Crew dispatch queue — read from gateway DB (cortana.db) where live dispatches live
-            if let pool = Self.gatewayPool,
-               let jobRows = try? pool.read({ db -> [Row]? in
-                   guard try db.tableExists("dispatch_queue") else { return nil }
-                   return try Row.fetchAll(db, sql: """
-                       SELECT id, project, model, source, message, status, created_at
-                       FROM dispatch_queue
-                       ORDER BY
-                           CASE status
-                               WHEN 'running'    THEN 0
-                               WHEN 'pending'    THEN 1
-                               WHEN 'dispatched' THEN 2
-                               ELSE 3
-                           END, created_at DESC LIMIT 60
-                       """)
-               }) {
+            if let pool = Self.gatewayPool {
+              let jobRows: [Row]?
+              do {
+                jobRows = try pool.read { db -> [Row]? in
+                    guard try db.tableExists("dispatch_queue") else { return nil }
+                    return try Row.fetchAll(db, sql: """
+                        SELECT id, project, model, source, message, status, created_at
+                        FROM dispatch_queue
+                        ORDER BY
+                            CASE status
+                                WHEN 'running'    THEN 0
+                                WHEN 'pending'    THEN 1
+                                WHEN 'dispatched' THEN 2
+                                ELSE 3
+                            END, created_at DESC LIMIT 60
+                        """)
+                }
+              } catch {
+                wtLog("[HeartbeatStore] Failed to read gateway dispatch queue: \(error)")
+                jobRows = nil
+              }
+              if let jobRows {
                 dispatchJobs = (jobRows ?? []).map { row in
                     let fullPath: String = row["project"] ?? ""
                     let lastComp = (fullPath as NSString).lastPathComponent
@@ -196,6 +203,7 @@ final class HeartbeatStore: ObservableObject {
                         attempts: 1, maxAttempts: 3, lastError: nil, createdAt: createdAt
                     )
                 }
+              }
             } else {
                 // Fallback to conversations.db legacy table
                 let jobRows = try DatabaseManager.shared.read { db in

@@ -43,7 +43,12 @@ actor NotificationManager {
         case .denied:
             isAuthorized = false
         case .notDetermined:
-            isAuthorized = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+            do {
+                isAuthorized = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+            } catch {
+                wtLog("[NotificationManager] Authorization request failed: \(error)")
+                isAuthorized = false
+            }
         @unknown default:
             isAuthorized = false
         }
@@ -57,6 +62,10 @@ actor NotificationManager {
         content.body = body
         if sound { content.sound = .default }
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        try? await UNUserNotificationCenter.current().add(request)
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+        } catch {
+            wtLog("[NotificationManager] Failed to deliver notification: \(error)")
+        }
     }
 }

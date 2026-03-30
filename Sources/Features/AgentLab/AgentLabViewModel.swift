@@ -106,27 +106,36 @@ import Foundation
 
     private func refreshActive() async {
         guard let url = URL(string: "http://127.0.0.1:4863/agent/active") else { return }
-        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return }
-        if let session = try? JSONDecoder().decode(AgentSession.self, from: data) {
-            activeSession = session
-        } else {
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            activeSession = try? JSONDecoder().decode(AgentSession.self, from: data)
+        } catch {
             activeSession = nil
         }
     }
 
     private func refreshSessions() async {
         guard let url = URL(string: "http://127.0.0.1:4863/agent/sessions") else { return }
-        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return }
-        if let decoded = try? JSONDecoder().decode([AgentSession].self, from: data) {
-            sessions = decoded
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            if let decoded = try? JSONDecoder().decode([AgentSession].self, from: data) {
+                sessions = decoded
+            }
+        } catch {
+            wtLog("[AgentLab] Failed to fetch sessions: \(error)")
         }
     }
 
     func refreshLiveScreenshot() async {
         guard let session = activeSession,
               let url = URL(string: "http://127.0.0.1:4863/agent/\(session.id)/screenshot") else { return }
-        guard let (data, response) = try? await URLSession.shared.data(from: url),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { return }
-        liveScreenshotData = data
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            if (response as? HTTPURLResponse)?.statusCode == 200 {
+                liveScreenshotData = data
+            }
+        } catch {
+            // Screenshot fetch is expected to fail when no active session — don't log
+        }
     }
 }

@@ -37,17 +37,22 @@ final class TerminalLauncher {
 
     private func latestResumeId(forPath rawPath: String) -> String? {
         let expanded = (rawPath as NSString).expandingTildeInPath
-        guard let row = try? db.read({ db in
-            try Row.fetchOne(db, sql: """
-                SELECT c.cli_session_id
-                FROM canvas_cli_sessions c
-                JOIN sessions s ON s.id = c.canvas_session_id
-                WHERE s.working_directory = ? OR s.working_directory = ?
-                ORDER BY c.updated_at DESC
-                LIMIT 1
-                """, arguments: [expanded, rawPath])
-        }) else { return nil }
-        return row["cli_session_id"] as? String
+        do {
+            guard let row = try db.read({ db in
+                try Row.fetchOne(db, sql: """
+                    SELECT c.cli_session_id
+                    FROM canvas_cli_sessions c
+                    JOIN sessions s ON s.id = c.canvas_session_id
+                    WHERE s.working_directory = ? OR s.working_directory = ?
+                    ORDER BY c.updated_at DESC
+                    LIMIT 1
+                    """, arguments: [expanded, rawPath])
+            }) else { return nil }
+            return row["cli_session_id"] as? String
+        } catch {
+            wtLog("[TerminalLauncher] Failed to look up resume ID for \(rawPath): \(error)")
+            return nil
+        }
     }
 
     // MARK: - Launch (nonisolated — only uses Process, no actor state)

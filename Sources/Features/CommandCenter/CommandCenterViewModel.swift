@@ -54,8 +54,10 @@ final class CommandCenterViewModel {
                     self?.activeDispatches = active
                     self?.recentDispatches = recent
                 }
+            } catch is CancellationError {
+                // Expected on stopObserving
             } catch {
-                // Observation cancelled or DB unavailable
+                wtLog("[CommandCenter] Dispatch observation failed: \(error)")
             }
         }
     }
@@ -84,24 +86,36 @@ final class CommandCenterViewModel {
         handoffTask?.cancel()
         handoffTask = Task { [weak self] in
             guard let gateway = GatewayClient.fromLocalConfig() else { return }
-            guard let handoffs = try? await gateway.checkHandoffs() else { return }
-            self?.pendingHandoffs = handoffs.filter { $0.status == "pending" || $0.status == "created" }
+            do {
+                let handoffs = try await gateway.checkHandoffs()
+                self?.pendingHandoffs = handoffs.filter { $0.status == "pending" || $0.status == "created" }
+            } catch {
+                wtLog("[CommandCenter] Failed to check handoffs: \(error)")
+            }
         }
     }
 
     func dismissHandoff(_ id: String) {
-        Task {
+        Task { [weak self] in
             guard let gateway = GatewayClient.fromLocalConfig() else { return }
-            try? await gateway.updateHandoff(id: id, status: "viewed")
-            pendingHandoffs.removeAll { $0.id == id }
+            do {
+                try await gateway.updateHandoff(id: id, status: "viewed")
+                self?.pendingHandoffs.removeAll { $0.id == id }
+            } catch {
+                wtLog("[CommandCenter] Failed to dismiss handoff \(id): \(error)")
+            }
         }
     }
 
     func pickUpHandoff(_ id: String) {
-        Task {
+        Task { [weak self] in
             guard let gateway = GatewayClient.fromLocalConfig() else { return }
-            try? await gateway.updateHandoff(id: id, status: "picked_up")
-            pendingHandoffs.removeAll { $0.id == id }
+            do {
+                try await gateway.updateHandoff(id: id, status: "picked_up")
+                self?.pendingHandoffs.removeAll { $0.id == id }
+            } catch {
+                wtLog("[CommandCenter] Failed to pick up handoff \(id): \(error)")
+            }
         }
     }
 }

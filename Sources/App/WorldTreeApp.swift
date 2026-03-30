@@ -62,9 +62,14 @@ struct WorldTreeApp: App {
                     // Gateway: check for pending handoffs
                     Task {
                         guard let gateway = GatewayClient.fromLocalConfig() else { return }
-                        if let handoffs = try? await gateway.checkHandoffs(),
-                           !handoffs.filter({ $0.status == "pending" || $0.status == "created" }).isEmpty {
-                            wtLog("[WorldTree] \(handoffs.count) pending handoff(s) from gateway")
+                        do {
+                            let handoffs = try await gateway.checkHandoffs()
+                            let pending = handoffs.filter { $0.status == "pending" || $0.status == "created" }
+                            if !pending.isEmpty {
+                                wtLog("[WorldTree] \(pending.count) pending handoff(s) from gateway")
+                            }
+                        } catch {
+                            wtLog("[WorldTree] Failed to check handoffs: \(error)")
                         }
                     }
 

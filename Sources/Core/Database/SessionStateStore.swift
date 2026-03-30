@@ -44,64 +44,75 @@ final class SessionStateStore {
 
     /// Active session states — updated within the last 2 hours.
     func getActiveStates() -> [SessionState] {
-        guard let rows = try? db.read({ db in
-            // Guard: session_state table may not exist if Python memory system hasn't run yet
-            let hasTable = try Bool.fetchOne(db, sql: """
-                SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='session_state'
-                """) ?? false
-            guard hasTable else { return [Row]() }
+        do {
+            let rows = try db.read { db in
+                let hasTable = try Bool.fetchOne(db, sql: """
+                    SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='session_state'
+                    """) ?? false
+                guard hasTable else { return [Row]() }
 
-            return try Row.fetchAll(db, sql: """
-                SELECT session_id, project, goal, phase, blockers, errors_encountered, updated_at
-                FROM session_state
-                WHERE updated_at > datetime('now', '-2 hours')
-                ORDER BY updated_at DESC
-                LIMIT 10
-                """)
-        }) else { return [] }
-
-        return rows.compactMap { parseRow($0) }
+                return try Row.fetchAll(db, sql: """
+                    SELECT session_id, project, goal, phase, blockers, errors_encountered, updated_at
+                    FROM session_state
+                    WHERE updated_at > datetime('now', '-2 hours')
+                    ORDER BY updated_at DESC
+                    LIMIT 10
+                    """)
+            }
+            return rows.compactMap { parseRow($0) }
+        } catch {
+            wtLog("[SessionStateStore] Failed to get active states: \(error)")
+            return []
+        }
     }
 
     /// Most recent state for a given project.
     func getLatestState(project: String) -> SessionState? {
-        let row: Row? = (try? db.read { db in
-            let hasTable = try Bool.fetchOne(db, sql: """
-                SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='session_state'
-                """) ?? false
-            guard hasTable else { return nil }
+        do {
+            let row = try db.read { db -> Row? in
+                let hasTable = try Bool.fetchOne(db, sql: """
+                    SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='session_state'
+                    """) ?? false
+                guard hasTable else { return nil }
 
-            return try Row.fetchOne(db, sql: """
-                SELECT session_id, project, goal, phase, blockers, errors_encountered, updated_at
-                FROM session_state
-                WHERE project = ?
-                ORDER BY updated_at DESC
-                LIMIT 1
-                """, arguments: [project])
-        }) ?? nil
-
-        guard let row else { return nil }
-        return parseRow(row)
+                return try Row.fetchOne(db, sql: """
+                    SELECT session_id, project, goal, phase, blockers, errors_encountered, updated_at
+                    FROM session_state
+                    WHERE project = ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """, arguments: [project])
+            }
+            guard let row else { return nil }
+            return parseRow(row)
+        } catch {
+            wtLog("[SessionStateStore] Failed to get latest state for \(project): \(error)")
+            return nil
+        }
     }
 
     /// The single most recent session state across all projects.
     func getLatestState() -> SessionState? {
-        let row: Row? = (try? db.read { db in
-            let hasTable = try Bool.fetchOne(db, sql: """
-                SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='session_state'
-                """) ?? false
-            guard hasTable else { return nil }
+        do {
+            let row = try db.read { db -> Row? in
+                let hasTable = try Bool.fetchOne(db, sql: """
+                    SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='session_state'
+                    """) ?? false
+                guard hasTable else { return nil }
 
-            return try Row.fetchOne(db, sql: """
-                SELECT session_id, project, goal, phase, blockers, errors_encountered, updated_at
-                FROM session_state
-                ORDER BY updated_at DESC
-                LIMIT 1
-                """)
-        }) ?? nil
-
-        guard let row else { return nil }
-        return parseRow(row)
+                return try Row.fetchOne(db, sql: """
+                    SELECT session_id, project, goal, phase, blockers, errors_encountered, updated_at
+                    FROM session_state
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """)
+            }
+            guard let row else { return nil }
+            return parseRow(row)
+        } catch {
+            wtLog("[SessionStateStore] Failed to get latest state: \(error)")
+            return nil
+        }
     }
 
     // MARK: - Parsing
