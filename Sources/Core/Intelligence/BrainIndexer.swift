@@ -91,6 +91,13 @@ final class BrainIndexer: ObservableObject {
 
     func indexAll() async {
         guard !isIndexing else { return }
+
+        // Check Ollama health before starting — skip if offline
+        if !QualityRouter.shared.ollamaOnline {
+            wtLog("[BrainIndexer] Skipping index — Ollama offline")
+            return
+        }
+
         isIndexing = true
         defer {
             isIndexing = false

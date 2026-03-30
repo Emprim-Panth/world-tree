@@ -8,11 +8,40 @@ final class QualityRouter: ObservableObject {
     static let shared = QualityRouter()
 
     @Published private(set) var todayStats = RoutingStats()
+    @Published private(set) var ollamaOnline = true
+    @Published private(set) var lastOllamaCheck: Date?
 
     private let ollamaBase = "http://localhost:11434"
-    private var logDB: OpaquePointer?  // inference_log goes in conversations.db via DatabaseManager
+    private var healthCheckTask: Task<Void, Never>?
 
-    private init() {}
+    private init() {
+        startHealthPolling()
+    }
+
+    // MARK: - Health Polling
+
+    private func startHealthPolling() {
+        healthCheckTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.checkOllamaHealth()
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+    }
+
+    func checkOllamaHealth() async {
+        guard let url = URL(string: "\(ollamaBase)/api/tags") else {
+            ollamaOnline = false
+            return
+        }
+        do {
+            let (_, response) = try await URLSession.shared.data(from: url)
+            ollamaOnline = (response as? HTTPURLResponse)?.statusCode == 200
+        } catch {
+            ollamaOnline = false
+        }
+        lastOllamaCheck = Date()
+    }
 
     // MARK: - Provider Types
 
@@ -80,8 +109,25 @@ final class QualityRouter: ObservableObject {
     // MARK: - Routing
 
     /// Route a task to the appropriate provider.
+    /// When Ollama is offline, local tasks either skip (non-critical) or escalate to Claude (critical).
     func route(_ taskType: TaskType, context: String? = nil) -> RoutingDecision {
         let decision: RoutingDecision
+
+        // Offline fallback: reroute local tasks when Ollama is down
+        if !ollamaOnline {
+            switch taskType {
+            case .fileSummary, .ticketScan, .healthCheck, .brainSearch:
+                // Non-critical local tasks — skip rather than waste Claude tokens
+                return RoutingDecision(provider: .local72B, taskType: taskType,
+                                        reason: "Ollama offline — task will be skipped")
+            case .briefing, .driftDetection, .commitExplain:
+                // Important but deferrable — escalate to Claude
+                return RoutingDecision(provider: .claudeSonnet, taskType: taskType,
+                                        reason: "Ollama offline — escalated to Claude")
+            default:
+                break  // Claude tasks route normally
+            }
+        }
 
         switch taskType {
         case .fileSummary:
@@ -89,7 +135,7 @@ final class QualityRouter: ObservableObject {
                                        reason: "File summaries are advisory — local 32B code model")
 
         case .commitExplain:
-            let isLarge = (context?.count ?? 0) > 5000  // rough: >500 lines
+            let isLarge = (context?.count ?? 0) > 5000
             if isLarge {
                 decision = RoutingDecision(provider: .claudeSonnet, taskType: taskType,
                                            reason: "Large diff (>500 lines) — escalating to Claude")
@@ -200,6 +246,7 @@ final class QualityRouter: ObservableObject {
             return (response, tokens)
         } catch {
             wtLog("[QualityRouter] Local inference failed: \(error)")
+            ollamaOnline = false
             return nil
         }
     }

@@ -88,9 +88,15 @@ struct IntelligenceDashboard: View {
                 .buttonStyle(.plain).foregroundStyle(.tertiary)
             }
 
-            if models.isEmpty {
+            if !router.ollamaOnline {
                 HStack(spacing: 4) {
-                    Circle().fill(.red).frame(width: 6, height: 6)
+                    Circle().fill(Palette.error).frame(width: 6, height: 6)
+                    Text("Ollama offline — local inference unavailable")
+                        .font(.system(size: 9)).foregroundStyle(Palette.error)
+                }
+            } else if models.isEmpty {
+                HStack(spacing: 4) {
+                    Circle().fill(Palette.warning).frame(width: 6, height: 6)
                     Text("No models loaded — Ollama may be starting")
                         .font(.system(size: 9)).foregroundStyle(.secondary)
                 }
