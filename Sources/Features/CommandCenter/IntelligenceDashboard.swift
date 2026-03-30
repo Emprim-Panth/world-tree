@@ -125,9 +125,10 @@ struct IntelligenceDashboard: View {
                     .font(.system(size: 9)).foregroundStyle(.tertiary)
             } else {
                 HStack(spacing: 16) {
-                    statBadge("Local", "\(stats.localCount)", .green)
-                    statBadge("Claude", "\(stats.claudeCount)", .blue)
-                    statBadge("Local %", "\(stats.localPercent)%", stats.localPercent > 80 ? .green : .orange)
+                    statBadge("Local", "\(stats.localCount)", Palette.success)
+                    statBadge("Claude", "\(stats.claudeCount)", Palette.info)
+                    statBadge("Escalated", "\(stats.escalationCount)", Palette.warning)
+                    statBadge("Local %", "\(stats.localPercent)%", stats.localPercent > 80 ? Palette.success : Palette.warning)
                 }
             }
         }

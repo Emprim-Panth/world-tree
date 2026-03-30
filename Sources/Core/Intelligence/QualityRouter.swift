@@ -242,18 +242,143 @@ final class QualityRouter: ObservableObject {
         return "\(bytes) B"
     }
 
+    // MARK: - Route + Execute
+
+    struct InferenceResult {
+        let response: String
+        let provider: Provider
+        let inputTokens: Int
+        let outputTokens: Int
+        let latencyMs: Int
+        let escalated: Bool
+        let escalationReason: String?
+    }
+
+    /// Route a task, execute inference, log results, and handle escalation.
+    func routeAndExecute(
+        taskType: TaskType,
+        prompt: String,
+        systemPrompt: String? = nil,
+        context: String? = nil
+    ) async -> InferenceResult? {
+        let decision = route(taskType, context: context)
+        let start = Date()
+
+        if decision.provider.isLocal {
+            // Try local first
+            if let (response, tokens) = await localInfer(
+                model: decision.provider.rawValue,
+                prompt: prompt,
+                systemPrompt: systemPrompt
+            ) {
+                let ms = Int(Date().timeIntervalSince(start) * 1000)
+                let confidence = assessConfidence(response)
+
+                // Check for escalation
+                if shouldEscalate(confidence: confidence, taskType: taskType) {
+                    wtLog("[QualityRouter] Escalating \(taskType.rawValue) — local confidence: \(confidence)")
+                    logFullRouting(
+                        taskType: taskType, provider: decision.provider,
+                        inputTokens: 0, outputTokens: tokens, latencyMs: ms,
+                        confidence: confidence, escalated: true,
+                        escalationReason: "Low confidence from local model"
+                    )
+                    todayStats.escalationCount += 1
+
+                    // Escalation is advisory — return local result but mark it
+                    return InferenceResult(
+                        response: response, provider: decision.provider,
+                        inputTokens: 0, outputTokens: tokens, latencyMs: ms,
+                        escalated: true, escalationReason: "Low confidence — consider Claude for this task"
+                    )
+                }
+
+                logFullRouting(
+                    taskType: taskType, provider: decision.provider,
+                    inputTokens: 0, outputTokens: tokens, latencyMs: ms,
+                    confidence: confidence, escalated: false, escalationReason: nil
+                )
+
+                return InferenceResult(
+                    response: response, provider: decision.provider,
+                    inputTokens: 0, outputTokens: tokens, latencyMs: ms,
+                    escalated: false, escalationReason: nil
+                )
+            } else {
+                // Local model failed — log and return nil
+                let ms = Int(Date().timeIntervalSince(start) * 1000)
+                logFullRouting(
+                    taskType: taskType, provider: decision.provider,
+                    inputTokens: 0, outputTokens: 0, latencyMs: ms,
+                    confidence: "error", escalated: false,
+                    escalationReason: "Local model unreachable"
+                )
+                wtLog("[QualityRouter] Local model \(decision.provider.rawValue) failed for \(taskType.rawValue)")
+                return nil
+            }
+        } else {
+            // Claude routing — log the decision (actual inference happens through Claude Code)
+            logFullRouting(
+                taskType: taskType, provider: decision.provider,
+                inputTokens: 0, outputTokens: 0, latencyMs: 0,
+                confidence: "high", escalated: false, escalationReason: nil
+            )
+            return nil  // Claude inference handled externally
+        }
+    }
+
+    /// Simple confidence assessment based on response characteristics.
+    private func assessConfidence(_ response: String) -> String {
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Very short responses suggest the model punted
+        if trimmed.count < 20 { return "low" }
+
+        // Hedging language suggests uncertainty
+        let hedges = ["I'm not sure", "I don't know", "unclear", "might be", "possibly",
+                       "it's hard to say", "I cannot determine"]
+        for hedge in hedges {
+            if trimmed.lowercased().contains(hedge.lowercased()) { return "low" }
+        }
+
+        // Refusal patterns
+        if trimmed.lowercased().hasPrefix("i'm sorry") || trimmed.lowercased().hasPrefix("i apologize") {
+            return "low"
+        }
+
+        return "high"
+    }
+
     // MARK: - Logging
 
     private func logRouting(_ decision: RoutingDecision) {
+        logFullRouting(
+            taskType: decision.taskType, provider: decision.provider,
+            inputTokens: 0, outputTokens: 0, latencyMs: 0,
+            confidence: nil, escalated: false, escalationReason: nil
+        )
+    }
+
+    private func logFullRouting(
+        taskType: TaskType, provider: Provider,
+        inputTokens: Int, outputTokens: Int, latencyMs: Int,
+        confidence: String?, escalated: Bool, escalationReason: String?
+    ) {
         do {
             try DatabaseManager.shared.write { db in
                 try db.execute(sql: """
-                    INSERT INTO inference_log (task_type, provider, created_at)
-                    VALUES (?, ?, datetime('now'))
-                """, arguments: [decision.taskType.rawValue, decision.provider.rawValue])
+                    INSERT INTO inference_log
+                        (task_type, provider, input_tokens, output_tokens, latency_ms,
+                         confidence, escalated, escalation_reason, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                """, arguments: [
+                    taskType.rawValue, provider.rawValue,
+                    inputTokens, outputTokens, latencyMs,
+                    confidence, escalated ? 1 : 0, escalationReason
+                ])
             }
         } catch {
-            // Table might not exist yet — silent fail until migration runs
+            wtLog("[QualityRouter] Failed to log routing: \(error)")
         }
     }
 

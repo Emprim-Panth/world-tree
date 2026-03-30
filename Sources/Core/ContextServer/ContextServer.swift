@@ -107,6 +107,12 @@ final class ContextServer {
         case ("GET", "intelligence", let second?) where second == "status":
             handleIntelligenceStatus(conn: conn)
 
+        case ("POST", "inference", "log"):
+            handlePostInferenceLog(body: body, conn: conn)
+
+        case ("GET", "inference", "recent"):
+            handleGetRecentInference(path: path, conn: conn)
+
         case ("GET", "agent", "active"):
             handleGetAgentActive(conn: conn)
 
@@ -231,6 +237,78 @@ final class ContextServer {
             {"models":[\(modelJSON)],"routing":{"local":\(stats.localCount),"claude":\(stats.claudeCount),"local_percent":\(stats.localPercent)},"brain_index":{"chunks":\(indexer.chunkCount),"indexing":\(indexer.isIndexing),"last_index":"\(indexer.lastIndexDate.map { ISO8601DateFormatter().string(from: $0) } ?? "never")"}}
             """
             self.send(conn, status: 200, json: json)
+        }
+    }
+
+    // MARK: — Inference Log Handlers
+
+    private func handlePostInferenceLog(body: String, conn: NWConnection) {
+        guard let data = body.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let taskType = json["task_type"] as? String,
+              let provider = json["provider"] as? String else {
+            send(conn, status: 400, json: #"{"error":"missing task_type or provider"}"#)
+            return
+        }
+
+        let inputTokens = json["input_tokens"] as? Int ?? 0
+        let outputTokens = json["output_tokens"] as? Int ?? 0
+        let latencyMs = json["latency_ms"] as? Int ?? 0
+        let confidence = json["confidence"] as? String
+        let escalated = json["escalated"] as? Bool ?? false
+        let escalationReason = json["escalation_reason"] as? String
+
+        Task { @MainActor in
+            do {
+                try DatabaseManager.shared.write { db in
+                    try db.execute(sql: """
+                        INSERT INTO inference_log
+                            (task_type, provider, input_tokens, output_tokens, latency_ms,
+                             confidence, escalated, escalation_reason, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    """, arguments: [
+                        taskType, provider, inputTokens, outputTokens, latencyMs,
+                        confidence, escalated ? 1 : 0, escalationReason
+                    ])
+                }
+                self.send(conn, status: 200, json: #"{"status":"logged"}"#)
+            } catch {
+                self.send(conn, status: 500, json: #"{"error":"\#(escapeJSONString(error.localizedDescription))"}"#)
+            }
+        }
+    }
+
+    private func handleGetRecentInference(path: String, conn: NWConnection) {
+        let components = URLComponents(string: "http://localhost\(path)")
+        let limit = Int(components?.queryItems?.first(where: { $0.name == "limit" })?.value ?? "20") ?? 20
+
+        Task { @MainActor in
+            do {
+                let rows = try DatabaseManager.shared.read { db in
+                    guard try db.tableExists("inference_log") else { return [Row]() }
+                    return try Row.fetchAll(db, sql: """
+                        SELECT task_type, provider, input_tokens, output_tokens,
+                               latency_ms, confidence, escalated, escalation_reason, created_at
+                        FROM inference_log
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                    """, arguments: [limit])
+                }
+
+                let items = rows.map { row -> String in
+                    let taskType: String = row["task_type"] ?? ""
+                    let provider: String = row["provider"] ?? ""
+                    let latency: Int = row["latency_ms"] ?? 0
+                    let confidence: String = row["confidence"] ?? ""
+                    let escalated: Int = row["escalated"] ?? 0
+                    let createdAt: String = row["created_at"] ?? ""
+                    return #"{"task_type":"\#(escapeJSONString(taskType))","provider":"\#(escapeJSONString(provider))","latency_ms":\#(latency),"confidence":"\#(escapeJSONString(confidence))","escalated":\#(escalated == 1),"created_at":"\#(escapeJSONString(createdAt))"}"#
+                }
+
+                self.send(conn, status: 200, json: #"{"entries":[\#(items.joined(separator: ","))]}"#)
+            } catch {
+                self.send(conn, status: 500, json: #"{"error":"\#(escapeJSONString(error.localizedDescription))"}"#)
+            }
         }
     }
 
