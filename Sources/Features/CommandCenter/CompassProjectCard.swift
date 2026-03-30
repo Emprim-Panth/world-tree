@@ -331,9 +331,9 @@ struct CompassProjectCard: View {
     // MARK: — Styling
 
     private var statusColor: Color {
-        if !compassState.blockers.isEmpty { return .red }
-        if compassState.isDirty { return .orange }
-        return .gray.opacity(0.4)
+        if !compassState.blockers.isEmpty { return Palette.blocked }
+        if compassState.isDirty { return Palette.dirty }
+        return Palette.neutral.opacity(0.4)
     }
 
     private var statusLabel: String {
@@ -348,7 +348,7 @@ struct CompassProjectCard: View {
 
     private var cardFillColor: Color {
         if !compassState.blockers.isEmpty { return Color.red.opacity(0.06) }
-        return Color(NSColor.controlBackgroundColor).opacity(0.5)
+        return Palette.cardBackground.opacity(0.5)
     }
 
     private var cardBorder: some View {

@@ -215,30 +215,13 @@ struct TicketRowView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.3))
+        .background(Palette.cardBackground.opacity(0.3))
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .onTapGesture { onTap() }
     }
 
-    private var priorityColor: Color {
-        switch ticket.priority {
-        case "critical": return .red
-        case "high": return .orange
-        case "medium": return .yellow
-        case "low": return .gray
-        default: return .secondary
-        }
-    }
-
-    private var statusColor: Color {
-        switch ticket.status {
-        case "done": return .green
-        case "in_progress": return .blue
-        case "blocked": return .red
-        case "review": return .purple
-        default: return .secondary
-        }
-    }
+    private var priorityColor: Color { Palette.forPriority(ticket.priority) }
+    private var statusColor: Color { Palette.forStatus(ticket.status) }
 }
 
 // MARK: - Ticket Detail

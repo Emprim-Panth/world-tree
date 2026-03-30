@@ -28,7 +28,7 @@ struct AgentLabView: View {
                         .padding(.trailing, 16)
                 }
             }
-            .background(Color(NSColor.windowBackgroundColor))
+            .background(Palette.windowBackground)
 
             Divider()
 
@@ -64,7 +64,7 @@ struct AgentLabView: View {
                                     .foregroundStyle(.secondary)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
-                                    .background(Color(NSColor.controlBackgroundColor))
+                                    .background(Palette.cardBackground)
                                     .clipShape(RoundedRectangle(cornerRadius: 4))
                             }
                         }
@@ -74,7 +74,7 @@ struct AgentLabView: View {
                             .lineLimit(3)
                     }
                     .padding(16)
-                    .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
+                    .background(Palette.cardBackground.opacity(0.4))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
 
                     // Live screenshot
@@ -192,7 +192,7 @@ struct SessionRowView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.3))
+        .background(Palette.cardBackground.opacity(0.3))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }

@@ -23,7 +23,7 @@ struct IntelligenceDashboard: View {
             }
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(NSColor.controlBackgroundColor).opacity(0.5)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(Palette.cardBackground.opacity(0.5)))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.purple.opacity(0.2), lineWidth: 1))
         .onAppear {
             Task {

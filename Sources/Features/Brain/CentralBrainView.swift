@@ -98,7 +98,7 @@ struct CentralBrainView: View {
                     .padding(.horizontal, 12).padding(.vertical, 6)
             }
         }
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(Palette.cardBackground)
     }
 
     // MARK: - Content Panel
@@ -158,7 +158,7 @@ struct CentralBrainView: View {
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(10)
-                                    .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                                    .background(Palette.cardBackground.opacity(0.5))
                                     .clipShape(RoundedRectangle(cornerRadius: 6))
                             }
                         }

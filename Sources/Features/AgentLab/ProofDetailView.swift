@@ -40,7 +40,7 @@ struct ProofDetailView: View {
                 buildStatusBadge
             }
             .padding(16)
-            .background(Color(NSColor.windowBackgroundColor))
+            .background(Palette.windowBackground)
 
             Divider()
 
@@ -155,7 +155,7 @@ struct ProofDetailView: View {
                             .controlSize(.small)
                         }
                         .padding(10)
-                        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                        .background(Palette.cardBackground.opacity(0.5))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .sheet(isPresented: $showCastPlayer) {
@@ -194,7 +194,7 @@ struct ProofDetailView: View {
                     .onTapGesture { selectedScreenshotIndex = index }
             } else {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(NSColor.controlBackgroundColor))
+                    .fill(Palette.cardBackground)
                     .frame(width: 180, height: 120)
                     .overlay(
                         VStack(spacing: 4) {
