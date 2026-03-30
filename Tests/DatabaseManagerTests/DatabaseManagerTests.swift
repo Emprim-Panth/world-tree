@@ -104,16 +104,17 @@ final class DatabaseManagerTests: XCTestCase {
     func testWriteSucceedsWhenConnected() throws {
         DatabaseManager.shared.setDatabasePoolForTesting(dbPool)
 
-        // Write a tree row
+        // Write a dispatch row
         try DatabaseManager.shared.write { db in
             try db.execute(sql: """
-                INSERT INTO canvas_trees (id, name) VALUES ('test-tree', 'Test')
+                INSERT INTO canvas_dispatches (id, project, message, working_directory, status)
+                VALUES ('test-dispatch', 'TestProject', 'Test message', '/tmp', 'queued')
                 """)
         }
 
         // Verify it persisted
         let count = try DatabaseManager.shared.read { db in
-            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM canvas_trees WHERE id = 'test-tree'")
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM canvas_dispatches WHERE id = 'test-dispatch'")
         }
         XCTAssertEqual(count, 1, "write() should persist data")
     }

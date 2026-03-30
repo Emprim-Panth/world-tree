@@ -66,10 +66,12 @@ final class HeartbeatStoreTests: XCTestCase {
         }
 
         DatabaseManager.shared.setDatabasePoolForTesting(dbPool)
+        HeartbeatStore.gatewayPool = dbPool
     }
 
     override func tearDown() async throws {
         DatabaseManager.shared.setDatabasePoolForTesting(nil)
+        HeartbeatStore.gatewayPool = nil
         dbPool = nil
         if let path = dbPath {
             try? FileManager.default.removeItem(atPath: path)

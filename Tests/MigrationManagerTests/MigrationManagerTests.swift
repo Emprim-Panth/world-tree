@@ -4,7 +4,7 @@ import GRDB
 
 // MARK: - MigrationManager Unit Tests
 
-/// Verifies all 22 migrations are idempotent, create the expected tables and indexes,
+/// Verifies all migrations are idempotent, create the expected tables and indexes,
 /// and enforce schema constraints. Each test gets a fresh temporary database.
 @MainActor
 final class MigrationManagerTests: XCTestCase {
@@ -66,114 +66,22 @@ final class MigrationManagerTests: XCTestCase {
     func testMigrationsAreIdempotent() throws {
         try MigrationManager.migrate(dbPool)
 
-        // Running again should be a no-op — GRDB tracks applied migrations
         XCTAssertNoThrow(try MigrationManager.migrate(dbPool),
                          "Migrations must be idempotent — running twice should not error")
     }
 
-    // MARK: - 3. Core Tables Created (v1)
-
-    func testV1CreatesCanvasTreesAndBranches() throws {
-        try MigrationManager.migrate(dbPool)
-
-        XCTAssertTrue(try tableExists("canvas_trees"), "canvas_trees should exist after v1")
-        XCTAssertTrue(try tableExists("canvas_branches"), "canvas_branches should exist after v1")
-        XCTAssertTrue(try tableExists("canvas_branch_tags"), "canvas_branch_tags should exist after v1")
-
-        // Verify key indexes
-        XCTAssertTrue(try indexExists("idx_branches_tree"), "idx_branches_tree index should exist")
-        XCTAssertTrue(try indexExists("idx_branches_parent"), "idx_branches_parent index should exist")
-        XCTAssertTrue(try indexExists("idx_branches_session"), "idx_branches_session index should exist")
-        XCTAssertTrue(try indexExists("idx_trees_project"), "idx_trees_project index should exist")
-    }
-
-    // MARK: - 4. API State and Token Tracking (v2)
-
-    func testV2CreatesApiStateAndTokenUsage() throws {
-        try MigrationManager.migrate(dbPool)
-
-        XCTAssertTrue(try tableExists("canvas_api_state"), "canvas_api_state should exist after v2")
-        XCTAssertTrue(try tableExists("canvas_token_usage"), "canvas_token_usage should exist after v2")
-    }
-
-    // MARK: - 5. Job Queue (v3)
-
-    func testV3CreatesJobQueue() throws {
-        try MigrationManager.migrate(dbPool)
-
-        XCTAssertTrue(try tableExists("canvas_jobs"), "canvas_jobs should exist after v3")
-        XCTAssertTrue(try indexExists("idx_jobs_status"), "idx_jobs_status index should exist")
-    }
-
-    // MARK: - 6. Standalone Core Tables (v11)
-
-    func testV11CreatesSessionsAndMessages() throws {
-        try MigrationManager.migrate(dbPool)
-
-        XCTAssertTrue(try tableExists("sessions"), "sessions should exist after v11")
-        XCTAssertTrue(try tableExists("messages"), "messages should exist after v11")
-    }
-
-    // MARK: - 7. FTS5 with Porter Stemming (v12)
-
-    func testV12CreatesFTS5WithTriggers() throws {
-        try MigrationManager.migrate(dbPool)
-
-        XCTAssertTrue(try tableExists("messages_fts"), "messages_fts should exist after v12")
-
-        // Verify sync triggers exist
-        let hasTrigger = try dbPool.read { db in
-            try Bool.fetchOne(db, sql: """
-                SELECT COUNT(*) > 0 FROM sqlite_master
-                WHERE type='trigger' AND name='messages_fts_ai'
-                """) ?? false
-        }
-        XCTAssertTrue(hasTrigger, "messages_fts_ai trigger should exist for FTS sync")
-    }
-
-    // MARK: - 8. Dispatches Table (v13)
+    // MARK: - 3. Dispatches Table (v13)
 
     func testV13CreatesDispatchesTable() throws {
         try MigrationManager.migrate(dbPool)
 
         XCTAssertTrue(try tableExists("canvas_dispatches"), "canvas_dispatches should exist after v13")
         XCTAssertTrue(try indexExists("idx_dispatches_status"), "idx_dispatches_status index should exist")
+        XCTAssertTrue(try indexExists("idx_dispatches_project"), "idx_dispatches_project index should exist")
+        XCTAssertTrue(try indexExists("idx_dispatches_created"), "idx_dispatches_created index should exist")
     }
 
-    // MARK: - 9. Denormalized Sidebar Stats (v17)
-
-    func testV17AddsDenormalizedColumnsToTrees() throws {
-        try MigrationManager.migrate(dbPool)
-
-        XCTAssertTrue(try columnExists(table: "canvas_trees", column: "message_count"),
-                      "canvas_trees should have message_count column after v17")
-        XCTAssertTrue(try columnExists(table: "canvas_trees", column: "last_message_at"),
-                      "canvas_trees should have last_message_at column after v17")
-        XCTAssertTrue(try columnExists(table: "canvas_trees", column: "last_assistant_snippet"),
-                      "canvas_trees should have last_assistant_snippet column after v17")
-    }
-
-    // MARK: - 10. Security Approvals (v18)
-
-    func testV18CreatesSecurityApprovalsTable() throws {
-        try MigrationManager.migrate(dbPool)
-
-        XCTAssertTrue(try tableExists("canvas_security_approvals"),
-                      "canvas_security_approvals should exist after v18")
-    }
-
-    // MARK: - 11. Branch Columns Added (v8, v20)
-
-    func testBranchColumnsAdded() throws {
-        try MigrationManager.migrate(dbPool)
-
-        XCTAssertTrue(try columnExists(table: "canvas_branches", column: "tmux_session_name"),
-                      "canvas_branches should have tmux_session_name after v8")
-        XCTAssertTrue(try columnExists(table: "canvas_branches", column: "compaction_mode"),
-                      "canvas_branches should have compaction_mode after v20")
-    }
-
-    // MARK: - 12. Tickets Table (v21)
+    // MARK: - 4. Tickets Table (v21)
 
     func testV21CreatesTicketsTable() throws {
         try MigrationManager.migrate(dbPool)
@@ -181,59 +89,57 @@ final class MigrationManagerTests: XCTestCase {
         XCTAssertTrue(try tableExists("canvas_tickets"), "canvas_tickets should exist after v21")
         XCTAssertTrue(try indexExists("idx_canvas_tickets_project"),
                       "idx_canvas_tickets_project index should exist")
+        XCTAssertTrue(try indexExists("idx_canvas_tickets_priority"),
+                      "idx_canvas_tickets_priority index should exist")
     }
 
-    // MARK: - 13. Pencil Assets (v22)
+    // MARK: - 5. Chat Tables Dropped (v29)
 
-    func testV22CreatesPenAssetTables() throws {
+    func testV29DropsChatTables() throws {
         try MigrationManager.migrate(dbPool)
 
-        XCTAssertTrue(try tableExists("pen_assets"), "pen_assets should exist after v22")
-        XCTAssertTrue(try tableExists("pen_frame_links"), "pen_frame_links should exist after v22")
+        XCTAssertFalse(try tableExists("canvas_trees"), "canvas_trees should be dropped after v29")
+        XCTAssertFalse(try tableExists("canvas_branches"), "canvas_branches should be dropped after v29")
+        XCTAssertFalse(try tableExists("canvas_jobs"), "canvas_jobs should be dropped after v29")
+        XCTAssertFalse(try tableExists("pen_assets"), "pen_assets should be dropped after v29")
+        XCTAssertFalse(try tableExists("pen_frame_links"), "pen_frame_links should be dropped after v29")
     }
 
-    // MARK: - 14. CHECK Constraints
+    // MARK: - 6. Agent Workspace (v30)
 
-    func testBranchTypeCheckConstraint() throws {
+    func testV30CreatesAgentWorkspaceTables() throws {
         try MigrationManager.migrate(dbPool)
 
-        // Insert a tree first (FK target)
-        try dbPool.write { db in
-            try db.execute(sql: "INSERT INTO canvas_trees (id, name) VALUES ('t1', 'Test')")
-        }
-
-        // Valid branch type should succeed
-        XCTAssertNoThrow(try dbPool.write { db in
-            try db.execute(sql: """
-                INSERT INTO canvas_branches (id, tree_id, branch_type, status)
-                VALUES ('b1', 't1', 'conversation', 'active')
-                """)
-        })
-
-        // Invalid branch type should fail
-        XCTAssertThrowsError(try dbPool.write { db in
-            try db.execute(sql: """
-                INSERT INTO canvas_branches (id, tree_id, branch_type, status)
-                VALUES ('b2', 't1', 'invalid_type', 'active')
-                """)
-        }, "Invalid branch_type should violate CHECK constraint")
+        XCTAssertTrue(try tableExists("agent_sessions"), "agent_sessions should exist after v30")
+        XCTAssertTrue(try tableExists("agent_screenshots"), "agent_screenshots should exist after v30")
+        XCTAssertTrue(try indexExists("idx_agent_sessions_project"), "idx_agent_sessions_project should exist")
+        XCTAssertTrue(try indexExists("idx_agent_screenshots_session"), "idx_agent_screenshots_session should exist")
     }
 
-    func testBranchStatusCheckConstraint() throws {
+    // MARK: - 7. Agent Columns Patched (v31)
+
+    func testV31PatchesAgentSessionColumns() throws {
         try MigrationManager.migrate(dbPool)
 
-        try dbPool.write { db in
-            try db.execute(sql: "INSERT INTO canvas_trees (id, name) VALUES ('t1', 'Test')")
-        }
-
-        // Invalid status should fail
-        XCTAssertThrowsError(try dbPool.write { db in
-            try db.execute(sql: """
-                INSERT INTO canvas_branches (id, tree_id, branch_type, status)
-                VALUES ('b1', 't1', 'conversation', 'bogus_status')
-                """)
-        }, "Invalid status should violate CHECK constraint")
+        XCTAssertTrue(try columnExists(table: "agent_sessions", column: "task"),
+                      "agent_sessions should have task column after v31")
+        XCTAssertTrue(try columnExists(table: "agent_sessions", column: "build_status"),
+                      "agent_sessions should have build_status column after v31")
+        XCTAssertTrue(try columnExists(table: "agent_sessions", column: "proof_path"),
+                      "agent_sessions should have proof_path column after v31")
     }
+
+    // MARK: - 8. Inference Log (v35)
+
+    func testV35CreatesInferenceLog() throws {
+        try MigrationManager.migrate(dbPool)
+
+        XCTAssertTrue(try tableExists("inference_log"), "inference_log should exist after v35")
+        XCTAssertTrue(try indexExists("idx_inference_log_date"), "idx_inference_log_date should exist")
+        XCTAssertTrue(try indexExists("idx_inference_log_provider"), "idx_inference_log_provider should exist")
+    }
+
+    // MARK: - 9. Dispatch Status CHECK Constraint
 
     func testDispatchStatusCheckConstraint() throws {
         try MigrationManager.migrate(dbPool)
@@ -255,23 +161,21 @@ final class MigrationManagerTests: XCTestCase {
         }, "Invalid dispatch status should violate CHECK constraint")
     }
 
-    // MARK: - 15. Unique Constraints
+    // MARK: - 10. Inference Log Insert Round-Trip
 
-    func testPenAssetsFilePathUnique() throws {
+    func testInferenceLogInsertAndRead() throws {
         try MigrationManager.migrate(dbPool)
 
         try dbPool.write { db in
             try db.execute(sql: """
-                INSERT INTO pen_assets (id, project, file_path, file_name)
-                VALUES ('pa1', 'TestProj', '/path/to/file.pen', 'file.pen')
+                INSERT INTO inference_log (task_type, provider, input_tokens, output_tokens, latency_ms, confidence)
+                VALUES ('code_review', 'ollama-72b', 1500, 800, 2300, 'high')
                 """)
         }
 
-        XCTAssertThrowsError(try dbPool.write { db in
-            try db.execute(sql: """
-                INSERT INTO pen_assets (id, project, file_path, file_name)
-                VALUES ('pa2', 'TestProj', '/path/to/file.pen', 'file.pen')
-                """)
-        }, "Duplicate file_path should violate UNIQUE constraint")
+        let count = try dbPool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM inference_log WHERE provider = 'ollama-72b'")
+        }
+        XCTAssertEqual(count, 1, "Inference log should persist routing entries")
     }
 }
