@@ -80,7 +80,8 @@ final class ContextServer {
     // MARK: — Routing
 
     private func route(method: String, path: String, body: String, conn: NWConnection) {
-        let segments = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        let pathOnly = path.components(separatedBy: "?").first ?? path
+        let segments = pathOnly.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
 
         switch (method, segments.first, segments.dropFirst().first) {
 
@@ -99,6 +100,12 @@ final class ContextServer {
 
         case ("POST", "session", "summary"):
             handleSessionSummary(body: body, conn: conn)
+
+        case ("GET", "brain", let second?) where second == "search":
+            handleBrainSearch(path: path, conn: conn)
+
+        case ("GET", "intelligence", let second?) where second == "status":
+            handleIntelligenceStatus(conn: conn)
 
         case ("GET", "agent", "active"):
             handleGetAgentActive(conn: conn)
@@ -183,6 +190,47 @@ final class ContextServer {
         Task { @MainActor in
             CompassStore.shared.updateLastSessionSummary(summary, for: project)
             self.send(conn, status: 200, json: #"{"ok":true}"#)
+        }
+    }
+
+    // MARK: — Brain Search & Intelligence
+
+    private func handleBrainSearch(path: String, conn: NWConnection) {
+        // Parse query params from path: /brain/search?q=...&limit=...
+        let components = URLComponents(string: "http://localhost\(path)")
+        let query = components?.queryItems?.first(where: { $0.name == "q" })?.value ?? ""
+        let limit = Int(components?.queryItems?.first(where: { $0.name == "limit" })?.value ?? "10") ?? 10
+
+        guard !query.isEmpty else {
+            send(conn, status: 400, json: #"{"error":"missing q parameter"}"#)
+            return
+        }
+
+        Task { @MainActor in
+            let results = await BrainIndexer.shared.search(query: query, limit: limit)
+            let items = results.map { r in
+                #"{"file":"\#(escapeJSONString(r.filePath))","chunk":"\#(escapeJSONString(String(r.content.prefix(500))))","score":\#(String(format: "%.3f", r.score)),"match_type":"\#(r.matchType)"}"#
+            }
+            let json = #"{"query":"\#(escapeJSONString(query))","results":[\#(items.joined(separator: ","))]}"#
+            self.send(conn, status: 200, json: json)
+        }
+    }
+
+    private func handleIntelligenceStatus(conn: NWConnection) {
+        Task { @MainActor in
+            let router = QualityRouter.shared
+            let indexer = BrainIndexer.shared
+            let models = await router.loadedModels()
+
+            let modelJSON = models.map { m in
+                #"{"name":"\#(escapeJSONString(m.name))","size":"\#(m.size)","loaded":\#(m.isLoaded)}"#
+            }.joined(separator: ",")
+
+            let stats = router.todayStats
+            let json = """
+            {"models":[\(modelJSON)],"routing":{"local":\(stats.localCount),"claude":\(stats.claudeCount),"local_percent":\(stats.localPercent)},"brain_index":{"chunks":\(indexer.chunkCount),"indexing":\(indexer.isIndexing),"last_index":"\(indexer.lastIndexDate.map { ISO8601DateFormatter().string(from: $0) } ?? "never")"}}
+            """
+            self.send(conn, status: 200, json: json)
         }
     }
 

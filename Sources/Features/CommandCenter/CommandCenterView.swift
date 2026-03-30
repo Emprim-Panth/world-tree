@@ -31,6 +31,7 @@ struct CommandCenterView: View {
                         )
                     }
                     projectGrid
+                    IntelligenceDashboard()
                     activeDispatches
                     recentCompletions
                 }

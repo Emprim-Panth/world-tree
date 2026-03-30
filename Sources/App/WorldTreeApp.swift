@@ -70,6 +70,12 @@ struct WorldTreeApp: App {
 
                     // TASK-20: ContextServer — serves project context to Claude sessions
                     contextServer.start()
+
+                    // TASK-45: BrainIndexer — index brain for semantic search
+                    Task {
+                        BrainIndexer.shared.startWatching()
+                        await BrainIndexer.shared.indexAll()
+                    }
                 }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { clearUpdateBadge() }

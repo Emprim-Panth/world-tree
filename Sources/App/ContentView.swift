@@ -28,6 +28,8 @@ struct ContentView: View {
                 .tag(NavigationPanel.tickets)
             Label("Brain", systemImage: "brain")
                 .tag(NavigationPanel.brain)
+            Label("Central Brain", systemImage: "brain.head.profile")
+                .tag(NavigationPanel.centralBrain)
             agentLabSidebarItem
             Divider()
             Label("Settings", systemImage: "gear")
@@ -61,6 +63,8 @@ struct ContentView: View {
             AllTicketsView()
         case .brain:
             BrainEditorView()
+        case .centralBrain:
+            CentralBrainView()
         case .agentLab:
             AgentLabView()
         case .settings:

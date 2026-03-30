@@ -274,6 +274,31 @@ final class CompassStore: ObservableObject {
         }
     }
 
+    /// Update path and optionally rename a project in compass.db
+    func updatePath(_ newPath: String, for project: String, newName: String? = nil) {
+        guard let dbPool else { return }
+        do {
+            try dbPool.write { db in
+                if let newName {
+                    try db.execute(
+                        sql: "UPDATE compass_state SET path = ?, project = ?, updated_at = datetime('now') WHERE project = ?",
+                        arguments: [newPath, newName, project]
+                    )
+                } else {
+                    try db.execute(
+                        sql: "UPDATE compass_state SET path = ?, updated_at = datetime('now') WHERE project = ?",
+                        arguments: [newPath, project]
+                    )
+                }
+            }
+            logEvent(project: newName ?? project, type: "path_update", summary: "Path updated to \(newPath)")
+            refresh()
+            wtLog("[CompassStore] Updated path for \(project) → \(newPath)")
+        } catch {
+            wtLog("[CompassStore] Failed to update path for \(project): \(error)")
+        }
+    }
+
     /// Update the last session summary for a project (called by ContextServer on POST /session/summary)
     func updateLastSessionSummary(_ summary: String, for project: String) {
         guard let dbPool else { return }

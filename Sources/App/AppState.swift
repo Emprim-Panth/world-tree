@@ -4,6 +4,7 @@ enum NavigationPanel: String, Hashable {
     case commandCenter
     case tickets
     case brain
+    case centralBrain
     case agentLab
     case settings
 }

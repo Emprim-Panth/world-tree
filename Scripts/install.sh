@@ -88,7 +88,7 @@ echo "▸ Installing build ${BUILD_NUM} → ${INSTALL_PATH}"
 # Sign the built app first (before any service disruption)
 echo "▸ Signing built app..."
 # Strip nested .app bundles from source bundle root (prevents codesign "unsealed contents" failure)
-find "${BUILT_APP}" -maxdepth 1 -name "*.app" -type d | while read -r nested; do
+find "${BUILT_APP}" -mindepth 1 -maxdepth 1 -name "*.app" -type d | while read -r nested; do
   echo "  ⚠ Removing stray nested bundle: $(basename "$nested")"
   rm -rf "$nested"
 done

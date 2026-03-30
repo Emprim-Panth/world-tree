@@ -12,6 +12,11 @@ struct CompassProjectCard: View {
     @State private var editGoal = ""
     @State private var editPhase = ""
     @State private var newBlocker = ""
+    @State private var isShowingRename = false
+    @State private var renameText = ""
+    @State private var isShowingDeleteConfirm = false
+    @State private var isShowingArchiveConfirm = false
+    @State private var fileError: String?
 
     @ObservedObject private var store = CompassStore.shared
 
@@ -39,7 +44,72 @@ struct CompassProjectCard: View {
             if let onSelect {
                 Button("Open Project") { onSelect() }
             }
+            Button("Resume in Terminal") {
+                TerminalLauncher.shared.openTerminal(
+                    projectName: compassState.project,
+                    projectPath: compassState.path
+                )
+            }
+            Divider()
             Button("Edit Project") { beginEditing() }
+            Button("Reveal in Finder") {
+                ProjectFileManager.shared.revealInFinder(
+                    project: compassState.project, path: compassState.path)
+            }
+            Divider()
+            Button("Rename…") {
+                renameText = compassState.project
+                isShowingRename = true
+            }
+            Button("Archive") { isShowingArchiveConfirm = true }
+            Divider()
+            Button("Move to Trash", role: .destructive) { isShowingDeleteConfirm = true }
+        }
+        .alert("Rename Project", isPresented: $isShowingRename) {
+            TextField("New name", text: $renameText)
+            Button("Rename") {
+                do {
+                    try ProjectFileManager.shared.rename(
+                        project: compassState.project, path: compassState.path, to: renameText)
+                } catch { fileError = error.localizedDescription }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Rename '\(compassState.project)' directory and update Compass.")
+        }
+        .confirmationDialog("Archive '\(compassState.project)'?",
+                            isPresented: $isShowingArchiveConfirm, titleVisibility: .visible) {
+            Button("Archive") {
+                do {
+                    try ProjectFileManager.shared.archive(
+                        project: compassState.project, path: compassState.path)
+                    store.refresh()
+                } catch { fileError = error.localizedDescription }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Moves to ~/Development/Archives/. Recoverable.")
+        }
+        .confirmationDialog("Move '\(compassState.project)' to Trash?",
+                            isPresented: $isShowingDeleteConfirm, titleVisibility: .visible) {
+            Button("Move to Trash", role: .destructive) {
+                do {
+                    try ProjectFileManager.shared.trash(
+                        project: compassState.project, path: compassState.path)
+                    store.refresh()
+                } catch { fileError = error.localizedDescription }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The project directory will be moved to Trash. You can recover it from there.")
+        }
+        .alert("File Operation Failed", isPresented: .init(
+            get: { fileError != nil },
+            set: { if !$0 { fileError = nil } }
+        )) {
+            Button("OK") { fileError = nil }
+        } message: {
+            Text(fileError ?? "")
         }
     }
 
@@ -228,6 +298,23 @@ struct CompassProjectCard: View {
                     }
                     .font(.system(size: 9)).controlSize(.mini)
                     .disabled(newBlocker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+
+            if !compassState.decisions.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "lightbulb.fill").font(.system(size: 8)).foregroundStyle(.yellow)
+                        Text("Decisions").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                    }
+                    ForEach(compassState.decisions.prefix(3), id: \.self) { decision in
+                        Text("• \(decision)")
+                            .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                    if compassState.decisions.count > 3 {
+                        Text("+\(compassState.decisions.count - 3) more")
+                            .font(.system(size: 8)).foregroundStyle(.tertiary)
+                    }
                 }
             }
 

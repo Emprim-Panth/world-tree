@@ -155,6 +155,27 @@ enum MigrationManager {
             migrationLog.info("v31: agent_sessions missing columns patched")
         }
 
+        // v35_inference_log — tracks routing decisions for the Intelligence Dashboard.
+        migrator.registerMigration("v35_inference_log") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS inference_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_type TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    input_tokens INTEGER,
+                    output_tokens INTEGER,
+                    latency_ms INTEGER,
+                    confidence TEXT,
+                    escalated INTEGER DEFAULT 0,
+                    escalation_reason TEXT,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_inference_log_date ON inference_log(created_at)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_inference_log_provider ON inference_log(provider)")
+            migrationLog.info("v35: inference_log table ready")
+        }
+
         try migrator.migrate(dbPool)
         migrationLog.info("Migration complete")
     }
