@@ -4,4 +4,4 @@
 **Fix:** Add GET /compass/{project}, GET /compass/overview, GET /tickets/{project}, POST /alerts, PATCH /alerts/{id}.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

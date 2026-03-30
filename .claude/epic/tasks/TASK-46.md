@@ -4,4 +4,4 @@
 **Fix:** Delete the 3 files, regenerate xcodeproj.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

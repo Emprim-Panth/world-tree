@@ -3,8 +3,8 @@ import SwiftUI
 struct CommandCenterView: View {
     @Environment(AppState.self) var appState
     @State private var viewModel = CommandCenterViewModel()
-    @ObservedObject private var heartbeatStore = HeartbeatStore.shared
-    @ObservedObject private var activityStore = DispatchActivityStore.shared
+    var heartbeatStore = HeartbeatStore.shared
+    var activityStore = DispatchActivityStore.shared
     @State private var ccTab: CCTab = .overview
     @State private var isShowingDispatchSheet = false
 

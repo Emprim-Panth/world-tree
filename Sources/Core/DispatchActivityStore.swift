@@ -1,19 +1,21 @@
 import Foundation
 import GRDB
+import Observation
 
 /// Tracks autonomous dispatch completions across projects.
 /// Maintains per-project "unread" state — a project is "ready" when a dispatch
 /// completed for it while it wasn't the currently selected project.
 /// Clears when the user enters that project.
 @MainActor
-final class DispatchActivityStore: ObservableObject {
+@Observable
+final class DispatchActivityStore {
     static let shared = DispatchActivityStore()
 
     /// All recent completions, newest first — drives the Activity tab.
-    @Published private(set) var recentCompletions: [WorldTreeDispatch] = []
+    private(set) var recentCompletions: [WorldTreeDispatch] = []
 
     /// project name (lowercased) → count of unread autonomous completions.
-    @Published private(set) var unreadCounts: [String: Int] = [:]
+    private(set) var unreadCounts: [String: Int] = [:]
 
     private var observationTask: Task<Void, Never>?
     private let seenKey = "DispatchActivityStore.lastSeen"

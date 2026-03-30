@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Starfleet Command panel — crew roster, agent status, and recent activity.
 struct StarfleetCommandView: View {
-    @ObservedObject private var store = StarfleetStore.shared
+    var store = StarfleetStore.shared
 
     var body: some View {
         ScrollView {

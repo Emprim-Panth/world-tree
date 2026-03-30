@@ -3,7 +3,7 @@ import SwiftUI
 /// All tickets across all projects — the global ticket dashboard.
 /// Accessed from the sidebar "Tickets" button.
 struct AllTicketsView: View {
-    @ObservedObject private var store = TicketStore.shared
+    var store = TicketStore.shared
     @State private var selectedTicket: Ticket?
     @State private var showCompleted = false
     @State private var completedByProject: [(String, [Ticket])] = []

@@ -1,15 +1,17 @@
 import Foundation
 import GRDB
+import Observation
 
 /// Reads today's briefing from ~/.cortana/briefings/ and active alerts from cortana_alerts table.
 @MainActor
-final class BriefingStore: ObservableObject {
+@Observable
+final class BriefingStore {
     static let shared = BriefingStore()
 
-    @Published private(set) var todayBriefing: String?
-    @Published private(set) var briefingDate: Date?
-    @Published private(set) var activeAlerts: [Alert] = []
-    @Published private(set) var alertCounts: (info: Int, warning: Int, critical: Int) = (0, 0, 0)
+    private(set) var todayBriefing: String?
+    private(set) var briefingDate: Date?
+    private(set) var activeAlerts: [Alert] = []
+    private(set) var alertCounts: (info: Int, warning: Int, critical: Int) = (0, 0, 0)
 
     private let fm = FileManager.default
     private let briefingsDir: String

@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import Observation
 
 // MARK: - Heartbeat Signal Model
 
@@ -75,26 +76,22 @@ struct CrewDispatchJob: Identifiable, Sendable {
 /// Reads heartbeat data from conversations.db (same DB World Tree already connects to).
 /// All data is written by cortana-cli heartbeat — World Tree only reads.
 @MainActor
-final class HeartbeatStore: ObservableObject {
+@Observable
+final class HeartbeatStore {
     static let shared = HeartbeatStore()
 
-    @Published private(set) var lastHeartbeat: Date?
-    @Published private(set) var lastIntensity: String = "unknown"
-    @Published private(set) var lastSignalCount: Int = 0
-    @Published private(set) var lastDispatchCount: Int = 0
-    @Published private(set) var activeDispatches: Int = 0
-    @Published private(set) var recentSignals: [HeartbeatSignal] = []
+    private(set) var lastHeartbeat: Date?
+    private(set) var lastIntensity: String = "unknown"
+    private(set) var lastSignalCount: Int = 0
+    private(set) var lastDispatchCount: Int = 0
+    private(set) var activeDispatches: Int = 0
+    private(set) var recentSignals: [HeartbeatSignal] = []
 
     // Crew dispatch queue
-    @Published private(set) var dispatchJobs: [CrewDispatchJob] = []
-    @Published private(set) var recentRuns: [HeartbeatRun] = []
+    private(set) var dispatchJobs: [CrewDispatchJob] = []
+    private(set) var recentRuns: [HeartbeatRun] = []
 
-    private static let dateFormatter: DateFormatter = {
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        df.timeZone = TimeZone(identifier: "UTC")
-        return df
-    }()
+    // Date parsing delegated to DateParsing shared utility
 
     /// Read-only pool for the gateway DB (cortana.db) which holds live dispatch_queue.
     /// Opened lazily — returns nil if the file doesn't exist yet.
@@ -135,155 +132,6 @@ final class HeartbeatStore: ObservableObject {
         }
     }
 
-    /// Pull latest heartbeat data from conversations.db.
-    func refresh() {
-        do {
-            // Last heartbeat run — table created by cortana-core, may not exist on fresh install
-            if let row = try DatabaseManager.shared.read({ db -> Row? in
-                guard try db.tableExists("heartbeat_runs") else { return nil }
-                return try Row.fetchOne(db, sql: """
-                    SELECT id, intensity, started_at, completed_at, signals_found, dispatches_made, summary
-                    FROM heartbeat_runs
-                    ORDER BY started_at DESC LIMIT 1
-                    """)
-            }) {
-                let startedStr: String? = row["started_at"]
-                lastHeartbeat = startedStr.flatMap { Self.dateFormatter.date(from: $0) }
-                lastIntensity = row["intensity"] ?? "unknown"
-                lastSignalCount = row["signals_found"] ?? 0
-                lastDispatchCount = row["dispatches_made"] ?? 0
-            }
-
-            // Active canvas dispatches (running or queued)
-            let count = try DatabaseManager.shared.read { db in
-                guard try db.tableExists("canvas_dispatches") else { return 0 }
-                return try Int.fetchOne(db, sql: """
-                    SELECT count(*) FROM canvas_dispatches
-                    WHERE status IN ('queued', 'running')
-                    """) ?? 0
-            }
-            activeDispatches = count
-
-            // Crew dispatch queue — read from gateway DB (cortana.db) where live dispatches live
-            if let pool = Self.gatewayPool {
-              let jobRows: [Row]?
-              do {
-                jobRows = try pool.read { db -> [Row]? in
-                    guard try db.tableExists("dispatch_queue") else { return nil }
-                    return try Row.fetchAll(db, sql: """
-                        SELECT id, project, model, source, message, status, created_at
-                        FROM dispatch_queue
-                        ORDER BY
-                            CASE status
-                                WHEN 'running'    THEN 0
-                                WHEN 'pending'    THEN 1
-                                WHEN 'dispatched' THEN 2
-                                ELSE 3
-                            END, created_at DESC LIMIT 60
-                        """)
-                }
-              } catch {
-                wtLog("[HeartbeatStore] Failed to read gateway dispatch queue: \(error)")
-                jobRows = nil
-              }
-              if let jobRows {
-                dispatchJobs = (jobRows ?? []).map { row in
-                    let fullPath: String = row["project"] ?? ""
-                    let lastComp = (fullPath as NSString).lastPathComponent
-                    let projectName = (lastComp.isEmpty || lastComp == "Development" || lastComp == "evanprimeau") ? "Workspace" : lastComp
-                    let createdMs: Int64? = row["created_at"]
-                    let createdAt = createdMs.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000.0) }
-                    return CrewDispatchJob(
-                        id: row["id"] ?? UUID().uuidString,
-                        project: projectName,
-                        model: row["model"] ?? "claude",
-                        crewAgent: row["source"] ?? "",
-                        prompt: row["message"] ?? "",
-                        ticketId: nil, status: row["status"] ?? "unknown",
-                        attempts: 1, maxAttempts: 3, lastError: nil, createdAt: createdAt
-                    )
-                }
-              }
-            } else {
-                // Fallback to conversations.db legacy table
-                let jobRows = try DatabaseManager.shared.read { db in
-                    guard try db.tableExists("dispatch_queue") else { return [Row]() }
-                    return try Row.fetchAll(db, sql: """
-                        SELECT id, project, model, crew_agent, prompt, ticket_id,
-                               status, attempts, max_attempts, last_error, created_at
-                        FROM dispatch_queue
-                        ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
-                                 created_at DESC LIMIT 40
-                        """)
-                }
-                dispatchJobs = jobRows.map { row in
-                    let dateStr: String? = row["created_at"]
-                    return CrewDispatchJob(
-                        id: row["id"] ?? UUID().uuidString,
-                        project: row["project"] ?? "",
-                        model: row["model"] ?? "sonnet",
-                        crewAgent: row["crew_agent"] ?? "unknown",
-                        prompt: row["prompt"] ?? "",
-                        ticketId: row["ticket_id"],
-                        status: row["status"] ?? "unknown",
-                        attempts: row["attempts"] ?? 0,
-                        maxAttempts: row["max_attempts"] ?? 3,
-                        lastError: row["last_error"],
-                        createdAt: dateStr.flatMap { Self.dateFormatter.date(from: $0) }
-                    )
-                }
-            }
-
-            // Recent heartbeat runs (last 10)
-            let runRows = try DatabaseManager.shared.read { db in
-                guard try db.tableExists("heartbeat_runs") else { return [Row]() }
-                return try Row.fetchAll(db, sql: """
-                    SELECT id, intensity, started_at, completed_at,
-                           signals_found, dispatches_made, summary
-                    FROM heartbeat_runs
-                    ORDER BY started_at DESC LIMIT 10
-                    """)
-            }
-            recentRuns = runRows.map { row in
-                let startStr: String? = row["started_at"]
-                let endStr: String? = row["completed_at"]
-                return HeartbeatRun(
-                    id: row["id"] ?? UUID().uuidString,
-                    intensity: row["intensity"] ?? "unknown",
-                    startedAt: startStr.flatMap { Self.dateFormatter.date(from: $0) },
-                    completedAt: endStr.flatMap { Self.dateFormatter.date(from: $0) },
-                    signalsFound: row["signals_found"] ?? 0,
-                    dispatchesMade: row["dispatches_made"] ?? 0,
-                    summary: row["summary"]
-                )
-            }
-
-            // Recent governance signals (last 24h)
-            let signalRows = try DatabaseManager.shared.read { db in
-                guard try db.tableExists("governance_journal") else { return [Row]() }
-                return try Row.fetchAll(db, sql: """
-                    SELECT id, category, content, project, action_taken, created_at
-                    FROM governance_journal
-                    ORDER BY created_at DESC
-                    LIMIT 20
-                    """)
-            }
-            recentSignals = signalRows.map { row in
-                let dateStr: String? = row["created_at"]
-                return HeartbeatSignal(
-                    id: row["id"] ?? UUID().uuidString,
-                    category: row["category"] ?? "unknown",
-                    content: row["content"] ?? "",
-                    project: row["project"],
-                    actionTaken: row["action_taken"],
-                    timestamp: dateStr.flatMap { Self.dateFormatter.date(from: $0) }
-                )
-            }
-        } catch {
-            wtLog("[HeartbeatStore] Error refreshing: \(error)")
-        }
-    }
-
     // MARK: - Background Fetch
 
     private struct FetchResult: Sendable {
@@ -299,8 +147,6 @@ final class HeartbeatStore: ObservableObject {
 
     /// All DB reads via asyncRead — runs on GRDB's reader queue, not MainActor.
     private static func fetchAllAsync() async throws -> FetchResult {
-        let df = dateFormatter
-
         let lastRunRow = try await DatabaseManager.shared.asyncRead { db -> Row? in
             guard try db.tableExists("heartbeat_runs") else { return nil }
             return try Row.fetchOne(db, sql: """
@@ -317,7 +163,7 @@ final class HeartbeatStore: ObservableObject {
 
         if let row = lastRunRow {
             let startedStr: String? = row["started_at"]
-            lastHeartbeat = startedStr.flatMap { df.date(from: $0) }
+            lastHeartbeat = startedStr.flatMap { DateParsing.parse($0) }
             lastIntensity = row["intensity"] ?? "unknown"
             lastSignalCount = row["signals_found"] ?? 0
             lastDispatchCount = row["dispatches_made"] ?? 0
@@ -417,7 +263,7 @@ final class HeartbeatStore: ObservableObject {
                     attempts: row["attempts"] ?? 0,
                     maxAttempts: row["max_attempts"] ?? 3,
                     lastError: row["last_error"],
-                    createdAt: dateStr.flatMap { df.date(from: $0) }
+                    createdAt: dateStr.flatMap { DateParsing.parse($0) }
                 )
             }
         }
@@ -437,8 +283,8 @@ final class HeartbeatStore: ObservableObject {
             return HeartbeatRun(
                 id: row["id"] ?? UUID().uuidString,
                 intensity: row["intensity"] ?? "unknown",
-                startedAt: startStr.flatMap { df.date(from: $0) },
-                completedAt: endStr.flatMap { df.date(from: $0) },
+                startedAt: startStr.flatMap { DateParsing.parse($0) },
+                completedAt: endStr.flatMap { DateParsing.parse($0) },
                 signalsFound: row["signals_found"] ?? 0,
                 dispatchesMade: row["dispatches_made"] ?? 0,
                 summary: row["summary"]
@@ -462,7 +308,7 @@ final class HeartbeatStore: ObservableObject {
                 content: row["content"] ?? "",
                 project: row["project"],
                 actionTaken: row["action_taken"],
-                timestamp: dateStr.flatMap { df.date(from: $0) }
+                timestamp: dateStr.flatMap { DateParsing.parse($0) }
             )
         }
 

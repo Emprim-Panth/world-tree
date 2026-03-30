@@ -3,7 +3,7 @@ import SwiftUI
 /// BRAIN.md editor for a project. Left: plain-text editor. Right: rendered markdown preview.
 /// Autosaves 1.5s after last keystroke via debounce.
 struct BrainEditorView: View {
-    @ObservedObject private var store = BrainFileStore.shared
+    var store = BrainFileStore.shared
     @State private var selectedProject: String = ""
     @State private var draft: String = ""
     @State private var saveTask: Task<Void, Never>?

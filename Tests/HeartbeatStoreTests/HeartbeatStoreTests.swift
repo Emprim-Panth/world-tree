@@ -293,7 +293,7 @@ final class HeartbeatStoreTests: XCTestCase {
         }
 
         let store = HeartbeatStore.shared
-        store.refresh()
+        await store.refreshAsync()
 
         XCTAssertEqual(store.lastIntensity, "deep", "Should load the most recent run by started_at")
         XCTAssertEqual(store.lastSignalCount, 10)
@@ -314,7 +314,7 @@ final class HeartbeatStoreTests: XCTestCase {
         }
 
         let store = HeartbeatStore.shared
-        store.refresh()
+        await store.refreshAsync()
 
         XCTAssertEqual(store.dispatchJobs.count, 2, "Should load all dispatch queue jobs")
         // Running should sort first
@@ -335,7 +335,7 @@ final class HeartbeatStoreTests: XCTestCase {
         }
 
         let store = HeartbeatStore.shared
-        store.refresh()
+        await store.refreshAsync()
 
         XCTAssertEqual(store.recentSignals.count, 2)
         // Most recent first
@@ -359,7 +359,7 @@ final class HeartbeatStoreTests: XCTestCase {
         }
 
         let store = HeartbeatStore.shared
-        store.refresh()
+        await store.refreshAsync()
 
         XCTAssertEqual(store.activeDispatches, 2,
                        "Should count only queued and running dispatches")
@@ -377,7 +377,7 @@ final class HeartbeatStoreTests: XCTestCase {
         }
 
         let store = HeartbeatStore.shared
-        store.refresh()
+        await store.refreshAsync()
 
         XCTAssertEqual(store.recentRuns.count, 10, "Should limit to 10 recent runs")
         // Most recent first

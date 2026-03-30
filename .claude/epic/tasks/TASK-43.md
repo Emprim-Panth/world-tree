@@ -4,4 +4,4 @@
 **Fix:** Accumulate reads until Content-Length satisfied or isComplete. Add 30s connection deadline. Add 50-connection limit.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

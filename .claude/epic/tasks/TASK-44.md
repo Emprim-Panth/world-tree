@@ -4,4 +4,4 @@
 **Fix:** Update line 39 to reference BIM Manager. Update projects/WorldTree.md to reflect Build 14. Update portfolio.md with all active projects.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

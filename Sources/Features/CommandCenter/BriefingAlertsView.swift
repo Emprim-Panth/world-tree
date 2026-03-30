@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Displays today's briefing, active alerts, and system health in the Command Center.
 struct BriefingAlertsView: View {
-    @ObservedObject private var briefingStore = BriefingStore.shared
-    @ObservedObject private var healthStore = SystemHealthStore.shared
+    var briefingStore = BriefingStore.shared
+    var healthStore = SystemHealthStore.shared
     @State private var isExpanded = true
 
     var body: some View {

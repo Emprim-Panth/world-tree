@@ -4,4 +4,4 @@
 **Fix:** Extract to `DateParsing.parseFlexible(_ str: String) -> Date?`.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

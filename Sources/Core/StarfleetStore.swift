@@ -1,13 +1,15 @@
 import Foundation
 import GRDB
+import Observation
 
 /// Manages the Starfleet crew roster and activity from starfleet_activity table.
 @MainActor
-final class StarfleetStore: ObservableObject {
+@Observable
+final class StarfleetStore {
     static let shared = StarfleetStore()
 
-    @Published private(set) var crewActivity: [String: CrewMember] = [:]
-    @Published private(set) var recentEvents: [ActivityEvent] = []
+    private(set) var crewActivity: [String: CrewMember] = [:]
+    private(set) var recentEvents: [ActivityEvent] = []
 
     struct CrewMember: Identifiable {
         let id: String  // agent name
@@ -41,6 +43,10 @@ final class StarfleetStore: ObservableObject {
         ("Spock", "Strategic planning, architecture", "brain"),
         ("Scotty", "Implementation, build systems", "hammer"),
         ("Friday", "Mobile, iOS development", "iphone"),
+        ("Chief", "Security operations, secret scanning, cert monitoring", "lock.shield"),
+        ("Keyes", "Revenue analytics, velocity metrics, cost tracking", "chart.bar.xaxis"),
+        ("Roland", "Log intelligence, anomaly detection, error patterns", "doc.text.magnifyingglass"),
+        ("Halsey", "Test automation, regression suites, coverage tracking", "testtube.2"),
     ]
 
     private init() {}

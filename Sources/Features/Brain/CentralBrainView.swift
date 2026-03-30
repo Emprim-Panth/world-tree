@@ -3,7 +3,7 @@ import SwiftUI
 /// Displays the central brain (~/.cortana/brain/) — DIRECTOR-BRIEF, corrections,
 /// patterns, anti-patterns, architecture decisions, and identity files.
 struct CentralBrainView: View {
-    @ObservedObject private var store = CentralBrainStore.shared
+    var store = CentralBrainStore.shared
     @State private var selectedSection: BrainSection = .directorBrief
 
     enum BrainSection: String, CaseIterable, Identifiable {

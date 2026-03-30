@@ -3,7 +3,7 @@ import SwiftUI
 /// Activity tab — full history of autonomous dispatch completions.
 /// Shows every crew agent run, what it did, which project, and when.
 struct DispatchActivityView: View {
-    @ObservedObject private var store = DispatchActivityStore.shared
+    var store = DispatchActivityStore.shared
     @State private var expandedId: String?
 
     var body: some View {

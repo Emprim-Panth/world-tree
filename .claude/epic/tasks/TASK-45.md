@@ -4,4 +4,4 @@
 **Fix:** Create com.cortana.dream.plist, load it. Set 5-day interval.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

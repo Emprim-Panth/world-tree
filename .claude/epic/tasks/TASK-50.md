@@ -4,4 +4,4 @@
 **Fix:** Delete sync `refresh()`, keep only `refreshAsync()`. Update callers.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

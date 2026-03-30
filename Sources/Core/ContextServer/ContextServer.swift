@@ -10,6 +10,18 @@ final class ContextServer {
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "com.forgeandcode.WorldTree.ContextServer")
 
+    /// Maximum allowed HTTP body size (1 MB).
+    private static let maxBodySize = 1_048_576
+
+    /// Maximum concurrent connections.
+    private static let maxConnections = 50
+
+    /// Per-connection timeout in seconds.
+    private static let connectionTimeout: TimeInterval = 30
+
+    /// Active connection count, accessed only on `queue`.
+    private var activeConnections = 0
+
     init(port: UInt16 = 4863) {
         self.port = port
     }
@@ -60,20 +72,96 @@ final class ContextServer {
     // MARK: — Connection
 
     private func handleConnection(_ conn: NWConnection) {
+        // Fix 3: Reject if at connection limit
+        guard activeConnections < Self.maxConnections else {
+            conn.start(queue: queue)
+            send(conn, status: 503, json: #"{"error":"too many connections"}"#)
+            return
+        }
+        activeConnections += 1
+
         conn.start(queue: queue)
-        readRequest(conn)
+
+        // Fix 2: Schedule a 30-second deadline for this connection
+        let deadline = DispatchWorkItem { [weak self] in
+            wtLog("[ContextServer] connection timed out")
+            conn.cancel()
+            self?.decrementConnections()
+        }
+        queue.asyncAfter(deadline: .now() + Self.connectionTimeout, execute: deadline)
+
+        readRequest(conn, deadline: deadline)
     }
 
-    private func readRequest(_ conn: NWConnection) {
+    private func decrementConnections() {
+        // Must be called on `queue`
+        activeConnections = max(0, activeConnections - 1)
+    }
+
+    private func readRequest(_ conn: NWConnection, deadline: DispatchWorkItem) {
         conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
             guard let self, let data, !data.isEmpty else {
+                deadline.cancel()
+                self?.decrementConnections()
                 conn.cancel()
                 return
             }
+
             let raw = String(data: data, encoding: .utf8) ?? ""
             let (method, path) = self.parseRequestLine(raw)
-            let body = self.extractBody(raw)
-            self.route(method: method, path: path, body: body, conn: conn)
+
+            // Fix 1: Parse Content-Length and continue reading if body is incomplete
+            let contentLength = self.parseContentLength(raw)
+            let partialBody = self.extractBody(raw)
+
+            if contentLength > Self.maxBodySize {
+                deadline.cancel()
+                self.decrementConnections()
+                self.send(conn, status: 413, json: #"{"error":"body too large"}"#)
+                return
+            }
+
+            let remaining = contentLength - partialBody.utf8.count
+            if remaining > 0 {
+                self.readRemainingBody(conn, existing: partialBody, remaining: remaining, method: method, path: path, deadline: deadline)
+            } else {
+                deadline.cancel()
+                self.decrementConnections()
+                self.route(method: method, path: path, body: partialBody, conn: conn)
+            }
+        }
+    }
+
+    /// Continue reading until the full Content-Length body is received.
+    private func readRemainingBody(_ conn: NWConnection, existing: String, remaining: Int, method: String, path: String, deadline: DispatchWorkItem) {
+        let toRead = min(remaining, 65536)
+        conn.receive(minimumIncompleteLength: 1, maximumLength: toRead) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            guard let data, !data.isEmpty else {
+                deadline.cancel()
+                self.decrementConnections()
+                conn.cancel()
+                return
+            }
+
+            let chunk = String(data: data, encoding: .utf8) ?? ""
+            let accumulated = existing + chunk
+            let newRemaining = remaining - data.count
+
+            if accumulated.utf8.count > Self.maxBodySize {
+                deadline.cancel()
+                self.decrementConnections()
+                self.send(conn, status: 413, json: #"{"error":"body too large"}"#)
+                return
+            }
+
+            if newRemaining > 0 {
+                self.readRemainingBody(conn, existing: accumulated, remaining: newRemaining, method: method, path: path, deadline: deadline)
+            } else {
+                deadline.cancel()
+                self.decrementConnections()
+                self.route(method: method, path: path, body: accumulated, conn: conn)
+            }
         }
     }
 
@@ -130,6 +218,22 @@ final class ContextServer {
 
         case ("GET", "agent", let sessionId?) where segments.count >= 4 && segments[3] == "screenshot":
             handleGetAgentScreenshotLatest(sessionId: sessionId, conn: conn)
+
+        // Fix 4: Compass, Ticket, and Alert API endpoints
+        case ("GET", "compass", "overview"):
+            handleGetCompassOverview(conn: conn)
+
+        case ("GET", "compass", let project?):
+            handleGetCompassProject(project: project, conn: conn)
+
+        case ("GET", "tickets", let project?):
+            handleGetTickets(project: project, conn: conn)
+
+        case ("POST", "alerts", nil):
+            handlePostAlert(body: body, conn: conn)
+
+        case ("PATCH", "alerts", let alertId?):
+            handlePatchAlertResolve(alertId: alertId, conn: conn)
 
         default:
             send(conn, status: 404, json: #"{"error":"not found"}"#)
@@ -298,14 +402,105 @@ final class ContextServer {
                 let items = rows.map { row -> String in
                     let taskType: String = row["task_type"] ?? ""
                     let provider: String = row["provider"] ?? ""
+                    let inputTokens: Int = row["input_tokens"] ?? 0
+                    let outputTokens: Int = row["output_tokens"] ?? 0
                     let latency: Int = row["latency_ms"] ?? 0
                     let confidence: String = row["confidence"] ?? ""
                     let escalated: Int = row["escalated"] ?? 0
                     let createdAt: String = row["created_at"] ?? ""
-                    return #"{"task_type":"\#(escapeJSONString(taskType))","provider":"\#(escapeJSONString(provider))","latency_ms":\#(latency),"confidence":"\#(escapeJSONString(confidence))","escalated":\#(escalated == 1),"created_at":"\#(escapeJSONString(createdAt))"}"#
+                    return #"{"task_type":"\#(escapeJSONString(taskType))","provider":"\#(escapeJSONString(provider))","input_tokens":\#(inputTokens),"output_tokens":\#(outputTokens),"latency_ms":\#(latency),"confidence":"\#(escapeJSONString(confidence))","escalated":\#(escalated == 1),"created_at":"\#(escapeJSONString(createdAt))"}"#
                 }
 
                 self.send(conn, status: 200, json: #"{"entries":[\#(items.joined(separator: ","))]}"#)
+            } catch {
+                self.send(conn, status: 500, json: #"{"error":"\#(escapeJSONString(error.localizedDescription))"}"#)
+            }
+        }
+    }
+
+    // MARK: — Compass & Ticket Handlers
+
+    private func handleGetCompassProject(project: String, conn: NWConnection) {
+        Task { @MainActor in
+            guard let state = CompassStore.shared.states[project] else {
+                self.send(conn, status: 404, json: #"{"error":"project not found"}"#)
+                return
+            }
+            do {
+                let data = try JSONEncoder().encode(state)
+                let json = String(data: data, encoding: .utf8) ?? "{}"
+                self.send(conn, status: 200, json: json)
+            } catch {
+                self.send(conn, status: 500, json: #"{"error":"\#(escapeJSONString(error.localizedDescription))"}"#)
+            }
+        }
+    }
+
+    private func handleGetCompassOverview(conn: NWConnection) {
+        Task { @MainActor in
+            let allStates = Array(CompassStore.shared.states.values)
+            do {
+                let data = try JSONEncoder().encode(allStates)
+                let json = String(data: data, encoding: .utf8) ?? "[]"
+                self.send(conn, status: 200, json: json)
+            } catch {
+                self.send(conn, status: 500, json: #"{"error":"\#(escapeJSONString(error.localizedDescription))"}"#)
+            }
+        }
+    }
+
+    private func handleGetTickets(project: String, conn: NWConnection) {
+        Task { @MainActor in
+            let tickets = TicketStore.shared.tickets(for: project)
+            do {
+                let data = try JSONEncoder().encode(tickets)
+                let json = String(data: data, encoding: .utf8) ?? "[]"
+                self.send(conn, status: 200, json: json)
+            } catch {
+                self.send(conn, status: 500, json: #"{"error":"\#(escapeJSONString(error.localizedDescription))"}"#)
+            }
+        }
+    }
+
+    private func handlePostAlert(body: String, conn: NWConnection) {
+        guard let data = body.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = json["type"] as? String,
+              let message = json["message"] as? String else {
+            send(conn, status: 400, json: #"{"error":"missing type or message"}"#)
+            return
+        }
+
+        let id = json["id"] as? String ?? UUID().uuidString
+        let project = json["project"] as? String
+        let severity = json["severity"] as? String ?? "info"
+        let source = json["source"] as? String ?? "api"
+
+        Task { @MainActor in
+            do {
+                try DatabaseManager.shared.write { db in
+                    try db.execute(sql: """
+                        INSERT INTO cortana_alerts (id, type, project, message, severity, source, resolved, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, 0, datetime('now'))
+                    """, arguments: [id, type, project, message, severity, source])
+                }
+                self.send(conn, status: 200, json: #"{"ok":true,"id":"\#(escapeJSONString(id))"}"#)
+            } catch {
+                self.send(conn, status: 500, json: #"{"error":"\#(escapeJSONString(error.localizedDescription))"}"#)
+            }
+        }
+    }
+
+    private func handlePatchAlertResolve(alertId: String, conn: NWConnection) {
+        Task { @MainActor in
+            do {
+                try DatabaseManager.shared.write { db in
+                    try db.execute(
+                        sql: "UPDATE cortana_alerts SET resolved = 1, resolved_at = datetime('now') WHERE id = ?",
+                        arguments: [alertId]
+                    )
+                }
+                self.send(conn, status: 200, json: #"{"ok":true}"#)
             } catch {
                 self.send(conn, status: 500, json: #"{"error":"\#(escapeJSONString(error.localizedDescription))"}"#)
             }
@@ -519,6 +714,8 @@ final class ContextServer {
         case 200: "OK"
         case 400: "Bad Request"
         case 404: "Not Found"
+        case 413: "Payload Too Large"
+        case 503: "Service Unavailable"
         case 500: "Internal Server Error"
         default: "Unknown"
         }
@@ -534,5 +731,17 @@ final class ContextServer {
     private func extractBody(_ raw: String) -> String {
         guard let range = raw.range(of: "\r\n\r\n") else { return "" }
         return String(raw[range.upperBound...])
+    }
+
+    /// Parse Content-Length from HTTP headers. Returns 0 if absent.
+    private func parseContentLength(_ raw: String) -> Int {
+        let lines = raw.components(separatedBy: "\r\n")
+        for line in lines {
+            if line.lowercased().hasPrefix("content-length:") {
+                let value = line.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)
+                return Int(value) ?? 0
+            }
+        }
+        return 0
     }
 }

@@ -18,7 +18,7 @@ struct CompassProjectCard: View {
     @State private var isShowingArchiveConfirm = false
     @State private var fileError: String?
 
-    @ObservedObject private var store = CompassStore.shared
+    var store = CompassStore.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

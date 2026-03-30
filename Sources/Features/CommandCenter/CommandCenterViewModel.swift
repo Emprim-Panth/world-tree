@@ -73,7 +73,7 @@ final class CommandCenterViewModel {
     func refreshProjects() {
         CompassStore.shared.refresh()
         TicketStore.shared.scanAll()
-        HeartbeatStore.shared.refresh()
+        Task { await HeartbeatStore.shared.refreshAsync() }
 
         // Sort projects: attention score descending, then alphabetical
         compassProjects = CompassStore.shared.states.values.sorted {

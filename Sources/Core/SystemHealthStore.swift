@@ -1,14 +1,16 @@
 import Foundation
+import Observation
 
 /// Checks health of local infrastructure: Ollama, ContextServer, Compass DB, brain-index.
 @MainActor
-final class SystemHealthStore: ObservableObject {
+@Observable
+final class SystemHealthStore {
     static let shared = SystemHealthStore()
 
-    @Published private(set) var checks: [HealthCheck] = []
-    @Published private(set) var lastCheckDate: Date?
-    @Published private(set) var isChecking = false
-    @Published private(set) var overallStatus: OverallStatus = .unknown
+    private(set) var checks: [HealthCheck] = []
+    private(set) var lastCheckDate: Date?
+    private(set) var isChecking = false
+    private(set) var overallStatus: OverallStatus = .unknown
 
     enum OverallStatus: String {
         case healthy, degraded, down, unknown

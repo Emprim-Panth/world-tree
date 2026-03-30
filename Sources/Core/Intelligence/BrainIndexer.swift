@@ -1,22 +1,25 @@
 import Foundation
 import GRDB
+import Observation
 
 /// Indexes ~/.cortana/brain/ content with local embeddings for semantic search.
 /// Uses nomic-embed-text via Ollama API. Stores chunks + embeddings in brain-index.db.
 /// File watcher auto-reindexes on changes.
 @MainActor
-final class BrainIndexer: ObservableObject {
+@Observable
+final class BrainIndexer {
     static let shared = BrainIndexer()
 
-    @Published private(set) var chunkCount: Int = 0
-    @Published private(set) var lastIndexDate: Date?
-    @Published private(set) var isIndexing: Bool = false
+    private(set) var chunkCount: Int = 0
+    private(set) var lastIndexDate: Date?
+    private(set) var isIndexing: Bool = false
 
     private var dbPool: DatabasePool?
     private let fm = FileManager.default
     private let brainDir: URL
     private let dbPath: String
     private var watchers: [DispatchSourceFileSystemObject] = []
+    private var checkpointTimer: DispatchSourceTimer?
 
     private let ollamaURL = "http://localhost:11434/api/embed"
     private let embeddingModel = "nomic-embed-text"
@@ -28,6 +31,20 @@ final class BrainIndexer: ObservableObject {
         brainDir = home.appendingPathComponent(".cortana/brain")
         dbPath = home.appendingPathComponent(".cortana/brain-index.db").path
         openDatabase()
+        startCheckpointTimer()
+    }
+
+    private func startCheckpointTimer() {
+        guard dbPool != nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now() + 30, repeating: 30)
+        timer.setEventHandler { [weak self] in
+            try? self?.dbPool?.writeWithoutTransaction { db in
+                try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE)")
+            }
+        }
+        timer.resume()
+        checkpointTimer = timer
     }
 
     // MARK: - Database

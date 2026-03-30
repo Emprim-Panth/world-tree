@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import Observation
 
 // MARK: - Ticket Model
 
@@ -97,14 +98,15 @@ struct Ticket: Codable, FetchableRecord, PersistableRecord, Identifiable, Equata
 // MARK: - Ticket Store
 
 @MainActor
-final class TicketStore: ObservableObject {
+@Observable
+final class TicketStore {
     static let shared = TicketStore()
 
-    @Published private(set) var tickets: [String: [Ticket]] = [:] // project → tickets
+    private(set) var tickets: [String: [Ticket]] = [:] // project → tickets
     /// Last time `scanAll()` completed successfully. Nil = never scanned this session.
-    @Published private(set) var lastScanDate: Date?
+    private(set) var lastScanDate: Date?
     /// True when a scan is currently running.
-    @Published private(set) var isScanning = false
+    private(set) var isScanning = false
 
     /// DispatchSource file-descriptor watchers keyed by tasks-directory path.
     private var dirWatchers: [String: DispatchSourceFileSystemObject] = [:]

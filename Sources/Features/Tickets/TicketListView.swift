@@ -4,7 +4,7 @@ import SwiftUI
 /// Supports inline status toggling and navigation to detail view.
 struct TicketListView: View {
     let project: String
-    @ObservedObject private var store = TicketStore.shared
+    var store = TicketStore.shared
     @State private var selectedTicket: Ticket?
     @State private var showCompleted = false
     @State private var completedTickets: [Ticket] = []

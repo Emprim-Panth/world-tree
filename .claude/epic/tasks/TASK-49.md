@@ -4,4 +4,4 @@
 **Fix:** Add indexes in v39 migration.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

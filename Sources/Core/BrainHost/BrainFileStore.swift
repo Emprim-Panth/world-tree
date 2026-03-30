@@ -1,15 +1,17 @@
 import Foundation
+import Observation
 
 /// Reads and writes BRAIN.md files for each project.
 /// - Path convention: ~/Development/{project}/.claude/BRAIN.md
 /// - Writes use atomic rename (write to .tmp, then rename) so readers never see partial content.
 /// - File watching via DispatchSource — change callbacks fire on the main queue.
 @MainActor
-final class BrainFileStore: ObservableObject {
+@Observable
+final class BrainFileStore {
     static let shared = BrainFileStore()
 
     /// Latest content keyed by project name.
-    @Published private(set) var content: [String: String] = [:]
+    private(set) var content: [String: String] = [:]
 
     private var watchers: [String: DispatchSourceFileSystemObject] = [:]
     private let fm = FileManager.default
@@ -71,7 +73,8 @@ final class BrainFileStore: ObservableObject {
             try? "".write(to: url, atomically: true, encoding: .utf8)
         }
 
-        guard let fd = open(url.path, O_EVTONLY) != -1 ? open(url.path, O_EVTONLY) : nil else { return }
+        let fd = open(url.path, O_EVTONLY)
+        guard fd != -1 else { return }
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd,
             eventMask: [.write, .rename, .delete],

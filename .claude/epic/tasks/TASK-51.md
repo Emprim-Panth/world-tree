@@ -4,4 +4,4 @@
 **Fix:** Add write to `~/.cortana/briefings/YYYY-MM-DD.md` in morning-briefing.sh. Re-register morning briefing LaunchAgent on Mac Studio.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

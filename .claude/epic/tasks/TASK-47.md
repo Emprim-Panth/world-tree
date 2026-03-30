@@ -4,4 +4,4 @@
 **Fix:** Change to `let fd = open(url.path, O_EVTONLY); guard fd != -1 else { return }`.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

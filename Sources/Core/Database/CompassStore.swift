@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import Observation
 
 // MARK: - Compass State Model
 
@@ -118,19 +119,35 @@ struct CompassEvent: Codable, FetchableRecord, Identifiable {
 /// Supports both reads and writes — goal, phase, blockers, and decisions
 /// can be edited from the Command Center UI.
 @MainActor
-final class CompassStore: ObservableObject {
+@Observable
+final class CompassStore {
     static let shared = CompassStore()
 
-    @Published private(set) var states: [String: CompassState] = [:]
-    @Published private(set) var lastRefresh: Date?
+    private(set) var states: [String: CompassState] = [:]
+    private(set) var lastRefresh: Date?
 
     private var dbPool: DatabasePool?
+    private var checkpointTimer: DispatchSourceTimer?
 
     /// Valid phases for project lifecycle
     static let phases = ["exploring", "planning", "implementing", "debugging", "testing", "shipping"]
 
     private init() {
         openDatabase()
+        startCheckpointTimer()
+    }
+
+    private func startCheckpointTimer() {
+        guard dbPool != nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now() + 30, repeating: 30)
+        timer.setEventHandler { [weak self] in
+            try? self?.dbPool?.writeWithoutTransaction { db in
+                try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE)")
+            }
+        }
+        timer.resume()
+        checkpointTimer = timer
     }
 
     // MARK: - Database Connection

@@ -232,6 +232,38 @@ enum MigrationManager {
             migrationLog.info("v38: hook_events table ready")
         }
 
+        // v39_cleanup — drop broken triggers from chat era, fix duplicate indexes, add missing indexes.
+        migrator.registerMigration("v39_cleanup") { db in
+            // Drop triggers that reference dropped canvas_trees/canvas_branches tables
+            try db.execute(sql: "DROP TRIGGER IF EXISTS canvas_trees_msg_insert")
+            try db.execute(sql: "DROP TRIGGER IF EXISTS canvas_trees_msg_delete")
+
+            // Drop duplicate FTS triggers (messages_ai/ad/au duplicate messages_fts_ai/ad/au)
+            try db.execute(sql: "DROP TRIGGER IF EXISTS messages_ai")
+            try db.execute(sql: "DROP TRIGGER IF EXISTS messages_ad")
+            try db.execute(sql: "DROP TRIGGER IF EXISTS messages_au")
+
+            // Drop orphaned table referencing dropped canvas_branches
+            try db.execute(sql: "DROP TABLE IF EXISTS canvas_branch_tags")
+
+            // Drop duplicate index on knowledge_domains
+            try db.execute(sql: "DROP INDEX IF EXISTS idx_kd_domain")
+
+            // Add missing indexes on frequently-queried columns
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_dispatches_completed ON canvas_dispatches(completed_at)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_agent_sessions_started ON agent_sessions(started_at)")
+
+            // Rebuild FTS index to remove duplicates from double-trigger era
+            let hasFts = try Bool.fetchOne(db, sql: """
+                SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='messages_fts'
+            """) ?? false
+            if hasFts {
+                try db.execute(sql: "INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+            }
+
+            migrationLog.info("v39: cleanup complete — broken triggers dropped, indexes fixed, FTS rebuilt")
+        }
+
         try migrator.migrate(dbPool)
         migrationLog.info("Migration complete")
     }

@@ -3,8 +3,8 @@ import SwiftUI
 /// Displays local model status, routing stats, brain index health,
 /// and recent escalations in the Command Center.
 struct IntelligenceDashboard: View {
-    @ObservedObject private var router = QualityRouter.shared
-    @ObservedObject private var indexer = BrainIndexer.shared
+    var router = QualityRouter.shared
+    var indexer = BrainIndexer.shared
     @State private var models: [QualityRouter.ModelStatus] = []
     @State private var isExpanded = false
 

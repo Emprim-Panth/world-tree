@@ -4,4 +4,4 @@
 **Fix:** Add sed deletion after the logging loop.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

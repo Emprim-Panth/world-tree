@@ -4,4 +4,4 @@
 **Stores to migrate:** CompassStore, HeartbeatStore, DispatchActivityStore, BrainFileStore, CentralBrainStore, BriefingStore, SystemHealthStore, StarfleetStore, QualityRouter, BrainIndexer, TicketStore (11 stores).
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

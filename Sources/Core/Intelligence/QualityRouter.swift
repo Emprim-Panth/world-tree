@@ -1,15 +1,17 @@
 import Foundation
 import GRDB
+import Observation
 
 /// Routes inference tasks to the cheapest capable provider.
 /// Rule-based, not ML. Claude is the surgeon — local models handle triage.
 @MainActor
-final class QualityRouter: ObservableObject {
+@Observable
+final class QualityRouter {
     static let shared = QualityRouter()
 
-    @Published private(set) var todayStats = RoutingStats()
-    @Published private(set) var ollamaOnline = true
-    @Published private(set) var lastOllamaCheck: Date?
+    private(set) var todayStats = RoutingStats()
+    private(set) var ollamaOnline = true
+    private(set) var lastOllamaCheck: Date?
 
     private let ollamaBase = "http://localhost:11434"
     private var healthCheckTask: Task<Void, Never>?

@@ -1,23 +1,25 @@
 import Foundation
+import Observation
 
 /// Reads the central brain at ~/.cortana/brain/ — corrections, patterns,
 /// anti-patterns, architecture decisions, DIRECTOR-BRIEF, and identity files.
 /// This is the shared knowledge store that persists across all sessions.
 @MainActor
-final class CentralBrainStore: ObservableObject {
+@Observable
+final class CentralBrainStore {
     static let shared = CentralBrainStore()
 
-    @Published private(set) var directorBrief: String?
-    @Published private(set) var corrections: String?
-    @Published private(set) var patterns: String?
-    @Published private(set) var antiPatterns: String?
-    @Published private(set) var architectureDecisions: String?
-    @Published private(set) var projectNotes: [String: String] = [:]  // keyed by project name
-    @Published private(set) var lastRefresh: Date?
+    private(set) var directorBrief: String?
+    private(set) var corrections: String?
+    private(set) var patterns: String?
+    private(set) var antiPatterns: String?
+    private(set) var architectureDecisions: String?
+    private(set) var projectNotes: [String: String] = [:]  // keyed by project name
+    private(set) var lastRefresh: Date?
 
     // Identity files
-    @Published private(set) var whoIAm: String?
-    @Published private(set) var operatingPrinciples: String?
+    private(set) var whoIAm: String?
+    private(set) var operatingPrinciples: String?
 
     private let fm = FileManager.default
     private let brainDir: URL

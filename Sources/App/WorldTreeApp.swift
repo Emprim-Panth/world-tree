@@ -57,7 +57,7 @@ struct WorldTreeApp: App {
                     // Core data refresh
                     CompassStore.shared.refresh()
                     TicketStore.shared.scanAll()
-                    HeartbeatStore.shared.refresh()
+                    Task { await HeartbeatStore.shared.refreshAsync() }
 
                     // Gateway: check for pending handoffs
                     Task {

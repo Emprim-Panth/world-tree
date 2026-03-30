@@ -4,4 +4,4 @@
 **Fix:** Add checkpoint timer to CompassStore and BrainIndexer (30-second interval like DatabaseManager).
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done
