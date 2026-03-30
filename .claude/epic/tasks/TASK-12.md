@@ -1,6 +1,6 @@
 # TASK-12: Delete Shared chat infrastructure
 
-**Status:** open
+**Status:** done
 **Priority:** critical
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 1 — Deletion

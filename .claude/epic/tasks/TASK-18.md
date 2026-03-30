@@ -1,6 +1,6 @@
 # TASK-18: Build BrainHost (filesystem BRAIN.md reader/writer)
 
-**Status:** open
+**Status:** done
 **Priority:** high
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 3 — New Features

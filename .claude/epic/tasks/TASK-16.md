@@ -1,6 +1,6 @@
 # TASK-16: Rebuild ContentView (3-panel navigation)
 
-**Status:** open
+**Status:** done
 **Priority:** high
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 2 — Build Stabilize

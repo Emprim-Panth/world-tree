@@ -1,6 +1,6 @@
 # TASK-22: Wire SessionEnd hook to POST summaries to ContextServer
 
-**Status:** open
+**Status:** done
 **Priority:** high
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 4 — Integration

@@ -1,6 +1,6 @@
 # TASK-13: Delete Database chat stores and trim MigrationManager
 
-**Status:** open
+**Status:** done
 **Priority:** critical
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 1 — Deletion

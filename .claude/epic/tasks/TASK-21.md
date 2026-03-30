@@ -1,6 +1,6 @@
 # TASK-21: Wire SessionStart hook to pull from ContextServer
 
-**Status:** open
+**Status:** done
 **Priority:** high
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 4 — Integration

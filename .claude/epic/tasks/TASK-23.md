@@ -1,6 +1,6 @@
 # TASK-23: Update launchd plist and entitlements
 
-**Status:** open
+**Status:** done
 **Priority:** medium
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 4 — Integration

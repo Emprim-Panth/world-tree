@@ -1,6 +1,6 @@
 # TASK-19: Build BrainEditorView (native SwiftUI BRAIN.md editor)
 
-**Status:** open
+**Status:** done
 **Priority:** high
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 3 — New Features

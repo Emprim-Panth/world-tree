@@ -1,6 +1,6 @@
 # TASK-24: Wire PreCompact hook to ContextServer (within-session compaction resilience)
 
-**Status:** open
+**Status:** done
 **Priority:** high
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 4 — Integration

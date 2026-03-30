@@ -1,6 +1,6 @@
 # TASK-15: Trim AppState to command center scope
 
-**Status:** open
+**Status:** done
 **Priority:** high
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 2 — Build Stabilize

@@ -1,6 +1,6 @@
 # TASK-14: Rebuild project.yml (remove SwiftTerm, clean sources)
 
-**Status:** open
+**Status:** done
 **Priority:** critical
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 2 — Build Stabilize

@@ -1,6 +1,6 @@
 # TASK-17: Audit and trim CommandCenter (remove deleted section references)
 
-**Status:** open
+**Status:** done
 **Priority:** high
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 2 — Build Stabilize

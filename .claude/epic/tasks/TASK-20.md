@@ -1,6 +1,6 @@
 # TASK-20: Build ContextServer (HTTP API for session context pull)
 
-**Status:** open
+**Status:** done
 **Priority:** critical
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 3 — New Features

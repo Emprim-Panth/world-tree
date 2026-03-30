@@ -1,6 +1,6 @@
 # TASK-10: Delete Core chat modules
 
-**Status:** open
+**Status:** done
 **Priority:** critical
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 1 — Deletion

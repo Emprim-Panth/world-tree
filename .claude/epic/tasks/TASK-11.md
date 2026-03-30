@@ -1,6 +1,6 @@
 # TASK-11: Delete Feature chat modules
 
-**Status:** open
+**Status:** done
 **Priority:** critical
 **Epic:** EPIC-WT-SIMPLIFY
 **Phase:** 1 — Deletion

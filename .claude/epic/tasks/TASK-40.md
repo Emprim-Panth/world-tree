@@ -1,7 +1,7 @@
 ---
 id: TASK-40
 title: End-to-end validation — dispatch real ticket, verify proof in World Tree
-status: todo
+status: done
 priority: critical
 epic: EPIC-WT-AGENT-WORKSPACE
 phase: 5
