@@ -353,9 +353,9 @@ final class ContextServer {
         let escalated = json["escalated"] as? Bool ?? false
         let escalationReason = json["escalation_reason"] as? String
 
-        Task { @MainActor in
+        Task {
             do {
-                try DatabaseManager.shared.write { db in
+                try await DatabaseManager.shared.asyncWrite { db in
                     try db.execute(sql: """
                         INSERT INTO inference_log
                             (task_type, provider, input_tokens, output_tokens, latency_ms,
@@ -377,9 +377,9 @@ final class ContextServer {
         let components = URLComponents(string: "http://localhost\(path)")
         let limit = Int(components?.queryItems?.first(where: { $0.name == "limit" })?.value ?? "20") ?? 20
 
-        Task { @MainActor in
+        Task {
             do {
-                let rows = try DatabaseManager.shared.read { db in
+                let rows = try await DatabaseManager.shared.asyncRead { db in
                     guard try db.tableExists("inference_log") else { return [Row]() }
                     return try Row.fetchAll(db, sql: """
                         SELECT task_type, provider, input_tokens, output_tokens,
@@ -467,9 +467,9 @@ final class ContextServer {
         let severity = json["severity"] as? String ?? "info"
         let source = json["source"] as? String ?? "api"
 
-        Task { @MainActor in
+        Task {
             do {
-                try DatabaseManager.shared.write { db in
+                try await DatabaseManager.shared.asyncWrite { db in
                     try db.execute(sql: """
                         INSERT INTO cortana_alerts (id, type, project, message, severity, source, resolved, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, 0, datetime('now'))
@@ -483,9 +483,9 @@ final class ContextServer {
     }
 
     private func handlePatchAlertResolve(alertId: String, conn: NWConnection) {
-        Task { @MainActor in
+        Task {
             do {
-                try DatabaseManager.shared.write { db in
+                try await DatabaseManager.shared.asyncWrite { db in
                     try db.execute(
                         sql: "UPDATE cortana_alerts SET resolved = 1, resolved_at = datetime('now') WHERE id = ?",
                         arguments: [alertId]

@@ -47,7 +47,8 @@ struct CompassProjectCard: View {
             Button("Resume in Terminal") {
                 TerminalLauncher.shared.openTerminal(
                     projectName: compassState.project,
-                    projectPath: compassState.path
+                    projectPath: compassState.path,
+                    skipPermissions: true
                 )
             }
             Divider()

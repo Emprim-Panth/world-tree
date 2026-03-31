@@ -21,7 +21,7 @@ final class TerminalLauncher {
 
     // MARK: - Public
 
-    func openTerminal(projectName: String, projectPath: String?) {
+    func openTerminal(projectName: String, projectPath: String?, skipPermissions: Bool = false) {
         let rawPath  = projectPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "~/Development"
         let expanded = (rawPath as NSString).expandingTildeInPath
         let resumeId = latestResumeId(forPath: rawPath)
@@ -29,7 +29,7 @@ final class TerminalLauncher {
 
         // Run synchronous process launches off the main thread
         Task.detached { [tmuxName, expanded, resumeId] in
-            TerminalLauncher.launchTerminal(tmuxName: tmuxName, cwd: expanded, resumeId: resumeId)
+            TerminalLauncher.launchTerminal(tmuxName: tmuxName, cwd: expanded, resumeId: resumeId, skipPermissions: skipPermissions)
         }
     }
 
@@ -57,7 +57,7 @@ final class TerminalLauncher {
 
     // MARK: - Launch (nonisolated — only uses Process, no actor state)
 
-    nonisolated private static func launchTerminal(tmuxName: String, cwd: String, resumeId: String?) {
+    nonisolated private static func launchTerminal(tmuxName: String, cwd: String, resumeId: String?, skipPermissions: Bool) {
         let tmux    = "/opt/homebrew/bin/tmux"
         let ghostty = "/opt/homebrew/bin/ghostty"
         let zsh     = "/bin/zsh"
@@ -70,7 +70,8 @@ final class TerminalLauncher {
             return
         }
 
-        var claudeCmd = "claude --dangerously-skip-permissions"
+        var claudeCmd = "claude"
+        if skipPermissions { claudeCmd += " --dangerously-skip-permissions" }
         if let sid = resumeId { claudeCmd += " --resume \(sid)" }
 
         _ = shell(tmux, ["new-session", "-d", "-s", tmuxName, "-c", cwd, claudeCmd])

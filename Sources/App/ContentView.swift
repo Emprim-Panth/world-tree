@@ -33,6 +33,8 @@ struct ContentView: View {
             agentLabSidebarItem
             Label("Starfleet", systemImage: "person.2.badge.gearshape")
                 .tag(NavigationPanel.starfleet)
+            Label("Sessions", systemImage: "terminal.fill")
+                .tag(NavigationPanel.sessions)
             Divider()
             Label("Settings", systemImage: "gear")
                 .tag(NavigationPanel.settings)
@@ -71,6 +73,8 @@ struct ContentView: View {
             AgentLabView()
         case .starfleet:
             StarfleetCommandView()
+        case .sessions:
+            SessionWorkspaceView()
         case .settings:
             SettingsView()
         }

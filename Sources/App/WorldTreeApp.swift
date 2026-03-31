@@ -17,6 +17,7 @@ struct WorldTreeApp: App {
         signal(SIGTERM, SIG_IGN)
         let src = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         src.setEventHandler {
+            WorldTreeApp.killWorldTreeTmuxSessions()
             CrashSentinel.shared.markCleanExit()
             NSApplication.shared.terminate(nil)
         }
@@ -86,6 +87,7 @@ struct WorldTreeApp: App {
                     if phase == .active { clearUpdateBadge() }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                    WorldTreeApp.killWorldTreeTmuxSessions()
                     CrashSentinel.shared.markCleanExit()
                 }
         }
@@ -112,6 +114,29 @@ struct WorldTreeApp: App {
             Image(systemName: "tree.fill")
         }
         .menuBarExtraStyle(.menu)
+    }
+
+    /// Kill all wt-* tmux sessions spawned by World Tree.
+    static func killWorldTreeTmuxSessions() {
+        let tmuxPath = "/opt/homebrew/bin/tmux"
+        let listP = Process()
+        listP.executableURL = URL(fileURLWithPath: tmuxPath)
+        listP.arguments = ["list-sessions", "-F", "#{session_name}"]
+        let pipe = Pipe()
+        listP.standardOutput = pipe
+        listP.standardError = FileHandle.nullDevice
+        try? listP.run()
+        listP.waitUntilExit()
+        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        for session in output.components(separatedBy: "\n") where session.hasPrefix("wt-") {
+            let killP = Process()
+            killP.executableURL = URL(fileURLWithPath: tmuxPath)
+            killP.arguments = ["kill-session", "-t", session]
+            killP.standardOutput = FileHandle.nullDevice
+            killP.standardError = FileHandle.nullDevice
+            try? killP.run()
+            killP.waitUntilExit()
+        }
     }
 
     private func checkForUpdateBadge() {
