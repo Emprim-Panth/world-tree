@@ -5,4 +5,4 @@
 **Why:** Incorrect HTTP semantics (minor).
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

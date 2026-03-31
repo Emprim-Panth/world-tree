@@ -4,4 +4,4 @@
 **Fix:** Cache embeddings in memory after indexAll(). Invalidate on re-index. Consider sqlite-vss for vector search.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

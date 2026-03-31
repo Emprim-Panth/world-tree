@@ -4,4 +4,4 @@
 ---
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

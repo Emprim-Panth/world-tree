@@ -5,4 +5,4 @@
 **Why:** Data is queried from DB but dropped in JSON construction.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

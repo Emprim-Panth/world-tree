@@ -5,4 +5,4 @@
 **Why:** Written but never read by any view. Dead state.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

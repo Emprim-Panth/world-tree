@@ -18,13 +18,14 @@ final class BrainIndexer {
     private let fm = FileManager.default
     private let brainDir: URL
     private let dbPath: String
-    private var watchers: [DispatchSourceFileSystemObject] = []
+    private var fileWatcher = FileWatcher()
     private var checkpointTimer: DispatchSourceTimer?
 
     private let ollamaURL = "http://localhost:11434/api/embed"
     private let embeddingModel = "nomic-embed-text"
     private let chunkSize = 512
     private let chunkOverlap = 128
+    private var embeddingCache: [(Int64, Data)] = []
 
     private init() {
         let home = fm.homeDirectoryForCurrentUser
@@ -137,6 +138,19 @@ final class BrainIndexer {
             wtLog("[BrainIndexer] FTS rebuild failed: \(error)")
         }
 
+        // Refresh embedding cache for fast semantic search
+        if let dbPool {
+            do {
+                embeddingCache = try await dbPool.read { db in
+                    try Row.fetchAll(db, sql: "SELECT id, embedding FROM brain_chunks").map { row in
+                        (row["id"] as Int64, row["embedding"] as Data)
+                    }
+                }
+            } catch {
+                wtLog("[BrainIndexer] Failed to refresh embedding cache: \(error)")
+            }
+        }
+
         wtLog("[BrainIndexer] Index complete — \(chunkCount) chunks")
     }
 
@@ -216,25 +230,32 @@ final class BrainIndexer {
             ftsResults = []
         }
 
-        // Semantic results
+        // Semantic results — use in-memory cache instead of DB query
         var semanticScores: [Int64: Float] = [:]
         if let queryEmb = queryEmbedding {
-            do {
-                let allChunks = try await dbPool.read { db in
-                    try Row.fetchAll(db, sql: "SELECT id, embedding FROM brain_chunks").map { row in
-                        let id: Int64 = row["id"]
-                        let emb: Data = row["embedding"]
-                        return (id, emb)
+            // Fall back to DB if cache is empty (first search before indexAll completes)
+            let chunks: [(Int64, Data)]
+            if !embeddingCache.isEmpty {
+                chunks = embeddingCache
+            } else {
+                do {
+                    chunks = try await dbPool.read { db in
+                        try Row.fetchAll(db, sql: "SELECT id, embedding FROM brain_chunks").map { row in
+                            let id: Int64 = row["id"]
+                            let emb: Data = row["embedding"]
+                            return (id, emb)
+                        }
                     }
+                } catch {
+                    wtLog("[BrainIndexer] Semantic search failed: \(error)")
+                    chunks = []
                 }
-                for (id, embData) in allChunks {
-                    let similarity = cosineSimilarity(queryEmb, embData)
-                    if similarity > 0.5 {
-                        semanticScores[id] = similarity
-                    }
+            }
+            for (id, embData) in chunks {
+                let similarity = cosineSimilarity(queryEmb, embData)
+                if similarity > 0.5 {
+                    semanticScores[id] = similarity
                 }
-            } catch {
-                wtLog("[BrainIndexer] Semantic search failed: \(error)")
             }
         }
 
@@ -360,29 +381,23 @@ final class BrainIndexer {
     // MARK: - Watch
 
     func startWatching() {
-        guard watchers.isEmpty else { return }
+        fileWatcher.stopAll()
         let dirs = [brainDir,
                     brainDir.appendingPathComponent("knowledge"),
                     brainDir.appendingPathComponent("identity"),
                     brainDir.appendingPathComponent("projects")]
+        var count = 0
         for dir in dirs {
             guard fm.fileExists(atPath: dir.path) else { continue }
-            let fd = open(dir.path, O_EVTONLY)
-            guard fd != -1 else { continue }
-            let source = DispatchSource.makeFileSystemObjectSource(
-                fileDescriptor: fd, eventMask: [.write, .rename], queue: .main)
-            source.setEventHandler { [weak self] in
+            fileWatcher.watch(dir.path, events: [.write, .rename]) { [weak self] in
                 Task { @MainActor in await self?.indexAll() }
             }
-            source.setCancelHandler { close(fd) }
-            source.resume()
-            watchers.append(source)
+            count += 1
         }
-        wtLog("[BrainIndexer] Watching \(watchers.count) brain directories")
+        wtLog("[BrainIndexer] Watching \(count) brain directories")
     }
 
     func stopWatching() {
-        for w in watchers { w.cancel() }
-        watchers.removeAll()
+        fileWatcher.stopAll()
     }
 }

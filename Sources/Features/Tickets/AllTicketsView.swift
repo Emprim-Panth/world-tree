@@ -202,7 +202,7 @@ struct AllTicketsView: View {
 
             // Ticket rows
             let grouped = Dictionary(grouping: tickets) { $0.status }
-            let statusOrder = ["blocked", "in_progress", "review", "pending"]
+            let statusOrder: [TicketStatus] = [.blocked, .inProgress, .review, .pending]
 
             ForEach(statusOrder, id: \.self) { status in
                 if let group = grouped[status], !group.isEmpty {

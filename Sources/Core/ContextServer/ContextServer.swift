@@ -43,14 +43,8 @@ final class ContextServer {
                 switch state {
                 case .ready:
                     wtLog("[ContextServer] listening on 127.0.0.1:\(self.port)")
-                    Task { @MainActor in
-                        AppState.shared.contextServerReachable = true
-                    }
                 case .failed(let err):
                     wtLog("[ContextServer] failed: \(err)")
-                    Task { @MainActor in
-                        AppState.shared.contextServerReachable = false
-                    }
                 default:
                     break
                 }
@@ -64,9 +58,6 @@ final class ContextServer {
     func stop() {
         listener?.cancel()
         listener = nil
-        Task { @MainActor in
-            AppState.shared.contextServerReachable = false
-        }
     }
 
     // MARK: — Connection

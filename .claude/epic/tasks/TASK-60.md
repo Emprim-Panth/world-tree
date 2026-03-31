@@ -4,4 +4,4 @@
 **Fix:** Audit each, activate or remove. Deploy dream and morning briefing.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

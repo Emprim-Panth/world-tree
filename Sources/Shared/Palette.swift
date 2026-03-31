@@ -73,7 +73,20 @@ enum Palette {
 
     // MARK: - Resolvers
 
-    /// Map a ticket status string to its color.
+    /// Map a TicketStatus enum to its color.
+    static func forStatus(_ status: TicketStatus) -> Color {
+        switch status {
+        case .done: return done
+        case .inProgress: return inProgress
+        case .blocked: return blocked
+        case .review: return review
+        case .cancelled: return cancelled
+        case .pending: return pending
+        case .unknown: return neutral
+        }
+    }
+
+    /// Map a status string to its color (for non-ticket contexts like alerts, agent sessions).
     static func forStatus(_ status: String) -> Color {
         switch status {
         case "done": return done

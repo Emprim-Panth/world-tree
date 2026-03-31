@@ -4,4 +4,4 @@
 **Fix:** Remove Pantheon references. Standardize on Starfleet names in all config files.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

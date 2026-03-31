@@ -21,11 +21,6 @@ final class AppState {
     var selectedProject: String?
     var selectedTicketId: String?
 
-    // MARK: — System Status (polled)
-    var gatewayReachable: Bool = false
-    var contextServerReachable: Bool = false
-    var lastHeartbeatAt: Date?
-
     // MARK: — Setup
     /// Non-nil if the database failed to initialize — surfaced as an alert in WorldTreeApp.
     var dbSetupError: Error?

@@ -101,14 +101,14 @@ struct TicketListView: View {
         }
     }
 
-    private func statusSection(status: String, tickets: [Ticket]) -> some View {
+    private func statusSection(status: TicketStatus, tickets: [Ticket]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             // Section header
             HStack(spacing: 6) {
                 Image(systemName: sectionIcon(status))
                     .font(.system(size: 9))
                     .foregroundStyle(sectionColor(status))
-                Text(status.replacingOccurrences(of: "_", with: " ").uppercased())
+                Text(status.rawValue.replacingOccurrences(of: "_", with: " ").uppercased())
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Text("(\(tickets.count))")
@@ -143,24 +143,24 @@ struct TicketListView: View {
 
     // MARK: - Helpers
 
-    private let statusOrder = ["blocked", "in_progress", "review", "pending"]
+    private let statusOrder: [TicketStatus] = [.blocked, .inProgress, .review, .pending]
 
-    private func sectionIcon(_ status: String) -> String {
+    private func sectionIcon(_ status: TicketStatus) -> String {
         switch status {
-        case "blocked": return "exclamationmark.triangle.fill"
-        case "in_progress": return "play.circle.fill"
-        case "review": return "eye.circle.fill"
-        case "pending": return "circle"
+        case .blocked: return "exclamationmark.triangle.fill"
+        case .inProgress: return "play.circle.fill"
+        case .review: return "eye.circle.fill"
+        case .pending: return "circle"
         default: return "circle"
         }
     }
 
-    private func sectionColor(_ status: String) -> Color {
+    private func sectionColor(_ status: TicketStatus) -> Color {
         switch status {
-        case "blocked": return .red
-        case "in_progress": return .blue
-        case "review": return .purple
-        case "pending": return .secondary
+        case .blocked: return .red
+        case .inProgress: return .blue
+        case .review: return .purple
+        case .pending: return .secondary
         default: return .secondary
         }
     }
@@ -171,7 +171,9 @@ struct TicketListView: View {
 struct TicketRowView: View {
     let ticket: Ticket
     var onTap: () -> Void
-    var onStatusChange: (String) -> Void
+    var onStatusChange: (TicketStatus) -> Void
+
+    private static let menuStatuses: [TicketStatus] = [.pending, .inProgress, .review, .blocked, .done]
 
     var body: some View {
         HStack(spacing: 8) {
@@ -200,8 +202,8 @@ struct TicketRowView: View {
 
             // Status toggle menu
             Menu {
-                ForEach(["pending", "in_progress", "review", "blocked", "done"], id: \.self) { status in
-                    Button(status.replacingOccurrences(of: "_", with: " ").capitalized) {
+                ForEach(Self.menuStatuses, id: \.self) { status in
+                    Button(status.rawValue.replacingOccurrences(of: "_", with: " ").capitalized) {
                         onStatusChange(status)
                     }
                 }
@@ -250,7 +252,7 @@ struct TicketDetailView: View {
                         .clipShape(Capsule())
 
                     // Status
-                    Text(ticket.status.replacingOccurrences(of: "_", with: " ").capitalized)
+                    Text(ticket.status.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 8)
@@ -362,10 +364,10 @@ struct TicketDetailView: View {
 
     private var statusBackground: Color {
         switch ticket.status {
-        case "done": return .green
-        case "in_progress": return .blue
-        case "blocked": return .red
-        case "review": return .purple
+        case .done: return .green
+        case .inProgress: return .blue
+        case .blocked: return .red
+        case .review: return .purple
         default: return .gray
         }
     }

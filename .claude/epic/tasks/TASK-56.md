@@ -4,4 +4,4 @@
 **Fix:** Create minimal project files from DIRECTOR-BRIEF data.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

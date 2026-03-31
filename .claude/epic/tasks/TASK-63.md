@@ -5,4 +5,4 @@
 **Why:** DispatchSource file-watching pattern repeated in 4 files.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

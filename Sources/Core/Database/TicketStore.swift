@@ -2,6 +2,18 @@ import Foundation
 import GRDB
 import Observation
 
+// MARK: - Ticket Status Enum
+
+enum TicketStatus: String, Codable {
+    case pending, inProgress = "in_progress", review, blocked, done, cancelled
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = TicketStatus(rawValue: raw) ?? .unknown
+    }
+}
+
 // MARK: - Ticket Model
 
 struct Ticket: Codable, FetchableRecord, PersistableRecord, Identifiable, Equatable {
@@ -11,7 +23,7 @@ struct Ticket: Codable, FetchableRecord, PersistableRecord, Identifiable, Equata
     let project: String
     var title: String
     var description: String?
-    var status: String          // pending, in_progress, review, blocked, done, cancelled
+    var status: TicketStatus    // pending, in_progress, review, blocked, done, cancelled
     var priority: String        // critical, high, medium, low
     var assignee: String?
     var sprint: String?
@@ -35,11 +47,11 @@ struct Ticket: Codable, FetchableRecord, PersistableRecord, Identifiable, Equata
     // MARK: - Computed
 
     var isOpen: Bool {
-        status != "done" && status != "cancelled"
+        status != .done && status != .cancelled
     }
 
     var isBlocked: Bool {
-        status == "blocked"
+        status == .blocked
     }
 
     var priorityOrder: Int {
@@ -54,23 +66,23 @@ struct Ticket: Codable, FetchableRecord, PersistableRecord, Identifiable, Equata
 
     var statusIcon: String {
         switch status {
-        case "done": return "checkmark.circle.fill"
-        case "in_progress": return "play.circle.fill"
-        case "blocked": return "exclamationmark.triangle.fill"
-        case "review": return "eye.circle.fill"
-        case "cancelled": return "xmark.circle.fill"
-        default: return "circle"
+        case .done: return "checkmark.circle.fill"
+        case .inProgress: return "play.circle.fill"
+        case .blocked: return "exclamationmark.triangle.fill"
+        case .review: return "eye.circle.fill"
+        case .cancelled: return "xmark.circle.fill"
+        case .pending, .unknown: return "circle"
         }
     }
 
     var statusColor: String {
         switch status {
-        case "done": return "green"
-        case "in_progress": return "blue"
-        case "blocked": return "red"
-        case "review": return "purple"
-        case "cancelled": return "gray"
-        default: return "secondary"
+        case .done: return "green"
+        case .inProgress: return "blue"
+        case .blocked: return "red"
+        case .review: return "purple"
+        case .cancelled: return "gray"
+        case .pending, .unknown: return "secondary"
         }
     }
 
@@ -280,14 +292,24 @@ final class TicketStore {
 
     /// Scan all projects for TASK-*.md files and upsert into canvas_tickets.
     /// Also starts file-system watching so future external edits are picked up automatically.
+    /// File scanning runs off the main thread; DB writes and state updates happen on MainActor.
     func scanAll(developmentDir: String? = nil) {
         isScanning = true
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let devDir = developmentDir ?? "\(home)/Development"
-        let fm = FileManager.default
 
-        guard let dbPool = DatabaseManager.shared.dbPool else { isScanning = false; return }
-        guard let contents = try? fm.contentsOfDirectory(atPath: devDir) else { isScanning = false; return }
+        Task.detached(priority: .utility) { [weak self] in
+            let tickets = await Self.scanFilesystem(devDir: devDir)
+            await MainActor.run {
+                self?.commitScanResults(tickets, devDir: devDir)
+            }
+        }
+    }
+
+    /// Iterate project directories and parse TASK-*.md files (no DB access, pure file reads).
+    private nonisolated static func scanFilesystem(devDir: String) async -> [Ticket] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(atPath: devDir) else { return [] }
 
         var allTickets: [Ticket] = []
 
@@ -300,48 +322,49 @@ final class TicketStore {
 
             let taskFiles = files.filter { $0.hasPrefix("TASK-") && $0.hasSuffix(".md") }
             for file in taskFiles {
-                if let ticket = parseTaskFile(path: "\(tasksDir)/\(file)", project: dir) {
+                if let ticket = parseTaskFileStatic(path: "\(tasksDir)/\(file)", project: dir) {
                     allTickets.append(ticket)
                 }
             }
         }
 
-        // Upsert all tickets
+        return allTickets
+    }
+
+    /// Commit scanned tickets to DB and update published state.
+    private func commitScanResults(_ tickets: [Ticket], devDir: String) {
+        guard let dbPool = DatabaseManager.shared.dbPool else { isScanning = false; return }
         do {
             try dbPool.write { db in
-                for ticket in allTickets {
-                    try ticket.upsert(db)
-                }
+                for ticket in tickets { try ticket.upsert(db) }
             }
             refresh()
             lastScanDate = Date()
-            wtLog("[TicketStore] Scanned \(allTickets.count) tickets across projects")
+            wtLog("[TicketStore] Scanned \(tickets.count) tickets across projects")
         } catch {
             wtLog("[TicketStore] Failed to save tickets: \(error)")
         }
-
         isScanning = false
-        // Start watching for external file changes now that directories are known
         startWatching(developmentDir: devDir)
     }
 
     // MARK: - Mutations (writes back to TASK-*.md)
 
     /// Update ticket status in DB and write back to markdown file
-    func updateStatus(ticket: Ticket, newStatus: String) {
+    func updateStatus(ticket: Ticket, newStatus: TicketStatus) {
         guard let dbPool = DatabaseManager.shared.dbPool else { return }
 
         do {
             try dbPool.write { db in
                 try db.execute(
                     sql: "UPDATE canvas_tickets SET status = ?, updated_at = datetime('now') WHERE id = ? AND project = ?",
-                    arguments: [newStatus, ticket.id, ticket.project]
+                    arguments: [newStatus.rawValue, ticket.id, ticket.project]
                 )
             }
 
             // Write back to TASK-*.md file
             if let filePath = ticket.filePath {
-                writeStatusToFile(filePath: filePath, newStatus: newStatus)
+                writeStatusToFile(filePath: filePath, newStatus: newStatus.rawValue)
             }
 
             refresh()
@@ -353,29 +376,35 @@ final class TicketStore {
     // MARK: - Parsing
 
     private func parseTaskFile(path: String, project: String) -> Ticket? {
+        Self.parseTaskFileStatic(path: path, project: project)
+    }
+
+    /// Static parsing — callable from nonisolated context (detached task).
+    private nonisolated static func parseTaskFileStatic(path: String, project: String) -> Ticket? {
         guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
 
         let filename = (path as NSString).lastPathComponent
         guard let idMatch = filename.range(of: #"TASK-\d+"#, options: .regularExpression) else { return nil }
         let id = String(filename[idMatch])
 
-        let title = extractField(content, pattern: #"^#\s+TASK-\d+:\s*(.+)"#) ?? id
-        let status = extractField(content, pattern: #"\*\*Status(?::\*\*|\*\*:)\s*(.+)"#)?.lowercased().replacingOccurrences(of: " ", with: "_") ?? "pending"
-        let priority = extractField(content, pattern: #"\*\*Priority(?::\*\*|\*\*:)\s*(.+)"#)?.lowercased() ?? "medium"
-        let assignee = extractField(content, pattern: #"\*\*Assignee(?::\*\*|\*\*:)\s*(.+)"#)
-        let sprint = extractField(content, pattern: #"\*\*Sprint(?::\*\*|\*\*:)\s*(.+)"#)
-        let created = extractField(content, pattern: #"\*\*Created(?::\*\*|\*\*:)\s*(.+)"#)
-        let updated = extractField(content, pattern: #"\*\*Updated(?::\*\*|\*\*:)\s*(.+)"#)
+        let title = extractFieldStatic(content, pattern: #"^#\s+TASK-\d+:\s*(.+)"#) ?? id
+        let statusRaw = extractFieldStatic(content, pattern: #"\*\*Status(?::\*\*|\*\*:)\s*(.+)"#)?.lowercased().replacingOccurrences(of: " ", with: "_") ?? "pending"
+        let status = TicketStatus(rawValue: statusRaw) ?? .unknown
+        let priority = extractFieldStatic(content, pattern: #"\*\*Priority(?::\*\*|\*\*:)\s*(.+)"#)?.lowercased() ?? "medium"
+        let assignee = extractFieldStatic(content, pattern: #"\*\*Assignee(?::\*\*|\*\*:)\s*(.+)"#)
+        let sprint = extractFieldStatic(content, pattern: #"\*\*Sprint(?::\*\*|\*\*:)\s*(.+)"#)
+        let created = extractFieldStatic(content, pattern: #"\*\*Created(?::\*\*|\*\*:)\s*(.+)"#)
+        let updated = extractFieldStatic(content, pattern: #"\*\*Updated(?::\*\*|\*\*:)\s*(.+)"#)
 
         // Extract description (between ## Description and next ##)
-        let description = extractSection(content, header: "## Description")
+        let description = extractSectionStatic(content, header: "## Description")
 
         // Extract acceptance criteria as JSON array
-        let criteria = extractCheckboxItems(content, header: "## Acceptance Criteria")
+        let criteria = extractCheckboxItemsStatic(content, header: "## Acceptance Criteria")
         let criteriaJSON = (try? String(data: JSONEncoder().encode(criteria), encoding: .utf8)) ?? "[]"
 
         // Extract blockers
-        let blockerItems = extractCheckboxItems(content, header: "## Blockers")
+        let blockerItems = extractCheckboxItemsStatic(content, header: "## Blockers")
         let blockersJSON = (try? String(data: JSONEncoder().encode(blockerItems), encoding: .utf8)) ?? "[]"
 
         return Ticket(
@@ -396,7 +425,7 @@ final class TicketStore {
         )
     }
 
-    private func extractField(_ content: String, pattern: String) -> String? {
+    private nonisolated static func extractFieldStatic(_ content: String, pattern: String) -> String? {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .anchorsMatchLines) else { return nil }
         let range = NSRange(content.startIndex..., in: content)
         guard let match = regex.firstMatch(in: content, range: range) else { return nil }
@@ -404,7 +433,7 @@ final class TicketStore {
         return String(content[captureRange]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func extractSection(_ content: String, header: String) -> String? {
+    private nonisolated static func extractSectionStatic(_ content: String, header: String) -> String? {
         guard let headerRange = content.range(of: header) else { return nil }
         let afterHeader = content[headerRange.upperBound...]
         // Find next ## header or end of string
@@ -415,8 +444,8 @@ final class TicketStore {
         return String(afterHeader).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func extractCheckboxItems(_ content: String, header: String) -> [String] {
-        guard let section = extractSection(content, header: header) else { return [] }
+    private nonisolated static func extractCheckboxItemsStatic(_ content: String, header: String) -> [String] {
+        guard let section = extractSectionStatic(content, header: header) else { return [] }
         let pattern = #"^-\s*\[[ x]\]\s*(.+)"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines, .caseInsensitive]) else { return [] }
         let range = NSRange(section.startIndex..., in: section)

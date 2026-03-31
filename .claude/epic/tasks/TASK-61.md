@@ -4,4 +4,4 @@
 **Fix:** Define Codable response structs, use JSONEncoder for all responses.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

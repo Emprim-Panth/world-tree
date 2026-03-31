@@ -4,4 +4,4 @@
 **Fix:** Add retention sweep: keep 30 days of signal_log, 90 days of dispatches, 14 days of inference_log. Schedule via dream agent or cron.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done

@@ -4,4 +4,4 @@
 **Fix:** Move file scanning to Task.detached, update published state on completion.
 
 **Epic:** EPIC-WT-DEEP-INSPECT
-**Status:** open
+**Status:** done
