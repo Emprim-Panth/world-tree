@@ -1,6 +1,6 @@
 # TASK-75: Integrate SwiftTerm as SPM dependency
 
-**Status:** open
+**Status:** done
 **Priority:** high
 **Epic:** EPIC-WT-SESSIONS
 **Phase:** 1 (Single Session)

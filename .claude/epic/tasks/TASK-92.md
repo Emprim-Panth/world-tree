@@ -1,6 +1,6 @@
 # TASK-92: Agent session progress indicators (files changed, tools used, elapsed time)
 
-**Status:** open
+**Status:** done
 **Priority:** medium
 **Epic:** EPIC-WT-SESSIONS
 **Phase:** 4 (Dispatch)

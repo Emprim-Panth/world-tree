@@ -18,6 +18,7 @@ final class SessionManager {
         var state: SessionState = .running
         let createdAt: Date = Date()
         var skipPermissions: Bool = false
+        var isDispatch: Bool = false  // Read-only agent session
 
         enum SessionState: String {
             case running, paused, ended, crashed
@@ -90,6 +91,33 @@ final class SessionManager {
     var claudeExecutable: String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/.local/bin/claude"
+    }
+
+    // MARK: - Dispatch
+
+    func dispatchSession(project: String, projectPath: String, ticketID: String, prompt: String) -> ManagedSession {
+        let sessionID = UUID()
+        let claudeID = sessionID.uuidString
+
+        var session = ManagedSession(
+            id: sessionID,
+            claudeSessionID: claudeID,
+            project: project,
+            projectPath: projectPath,
+            skipPermissions: true  // Agent sessions run unattended
+        )
+        session.isDispatch = true
+
+        sessions.append(session)
+        wtLog("[SessionManager] Dispatched session \(sessionID) for \(project)/\(ticketID)")
+        return session
+    }
+
+    // MARK: - Conflict Detection
+
+    /// Check if another session is already targeting this project.
+    func hasConflict(project: String, excluding sessionID: UUID? = nil) -> Bool {
+        sessions.contains { $0.project == project && $0.state == .running && $0.id != sessionID }
     }
 
     // MARK: - Cleanup

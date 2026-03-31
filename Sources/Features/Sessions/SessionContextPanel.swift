@@ -10,6 +10,7 @@ struct SessionContextPanel: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 projectCard
+                LiveDiffView(projectPath: session.projectPath)
                 activeTickets
                 sessionInfo
             }

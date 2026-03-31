@@ -1,6 +1,6 @@
 # TASK-84: HookRouter — route hook_events by session_id to correct panel
 
-**Status:** open
+**Status:** done
 **Priority:** medium
 **Epic:** EPIC-WT-SESSIONS
 **Phase:** 2 (Context Chrome)

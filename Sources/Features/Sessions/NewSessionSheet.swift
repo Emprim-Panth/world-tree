@@ -43,6 +43,12 @@ struct NewSessionSheet: View {
             }
             .formStyle(.grouped)
 
+            if !selectedProject.isEmpty && manager.hasConflict(project: selectedProject) {
+                Label("Another session is already active for this project", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(Palette.warning)
+            }
+
             HStack {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
