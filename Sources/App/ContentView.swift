@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(AppState.self) var appState
-    @State private var agentLabVM = AgentLabViewModel()
 
     var body: some View {
         NavigationSplitView {
@@ -28,9 +27,6 @@ struct ContentView: View {
                 .tag(NavigationPanel.tickets)
             Label("Brain", systemImage: "brain")
                 .tag(NavigationPanel.brain)
-            Label("Central Brain", systemImage: "brain.head.profile")
-                .tag(NavigationPanel.centralBrain)
-            agentLabSidebarItem
             Label("Starfleet", systemImage: "person.2.badge.gearshape")
                 .tag(NavigationPanel.starfleet)
             Label("Sessions", systemImage: "terminal.fill")
@@ -40,20 +36,6 @@ struct ContentView: View {
                 .tag(NavigationPanel.settings)
         }
         .listStyle(.sidebar)
-    }
-
-    @ViewBuilder
-    private var agentLabSidebarItem: some View {
-        HStack {
-            Label("Agent Lab", systemImage: "theatermasks.fill")
-            if agentLabVM.activeSession != nil {
-                Spacer()
-                Circle()
-                    .fill(.green)
-                    .frame(width: 7, height: 7)
-            }
-        }
-        .tag(NavigationPanel.agentLab)
     }
 
     // MARK: — Detail
@@ -66,11 +48,7 @@ struct ContentView: View {
         case .tickets:
             AllTicketsView()
         case .brain:
-            BrainEditorView()
-        case .centralBrain:
-            CentralBrainView()
-        case .agentLab:
-            AgentLabView()
+            UnifiedBrainView()
         case .starfleet:
             StarfleetCommandView()
         case .sessions:
