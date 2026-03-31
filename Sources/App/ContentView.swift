@@ -40,21 +40,33 @@ struct ContentView: View {
 
     // MARK: — Detail
 
+    /// Sessions view is kept alive in a ZStack so PTY processes survive tab switches.
+    /// Other panels are created/destroyed normally (they're stateless dashboards).
     @ViewBuilder
     private var detailPanel: some View {
-        switch appState.navigationPanel {
-        case .commandCenter:
-            CommandCenterView()
-        case .tickets:
-            AllTicketsView()
-        case .brain:
-            UnifiedBrainView()
-        case .starfleet:
-            StarfleetCommandView()
-        case .sessions:
+        ZStack {
+            // Sessions layer — always in the hierarchy, hidden when not selected
             SessionWorkspaceView()
-        case .settings:
-            SettingsView()
+                .opacity(appState.navigationPanel == .sessions ? 1 : 0)
+                .allowsHitTesting(appState.navigationPanel == .sessions)
+
+            // Other panels — only created when selected
+            if appState.navigationPanel != .sessions {
+                switch appState.navigationPanel {
+                case .commandCenter:
+                    CommandCenterView()
+                case .tickets:
+                    AllTicketsView()
+                case .brain:
+                    UnifiedBrainView()
+                case .starfleet:
+                    StarfleetCommandView()
+                case .settings:
+                    SettingsView()
+                case .sessions:
+                    EmptyView() // handled above
+                }
+            }
         }
     }
 }
