@@ -61,10 +61,14 @@ struct CommandCenterView: View {
                 // Dispatch via gateway
                 Task {
                     guard let gateway = GatewayClient.fromLocalConfig() else { return }
-                    _ = try? await gateway.createHandoff(
-                        message: "\(message)\n\n[model: \(model ?? "claude-sonnet-4-6")]",
-                        project: project
-                    )
+                    do {
+                        _ = try await gateway.createHandoff(
+                            message: "\(message)\n\n[model: \(model ?? "claude-sonnet-4-6")]",
+                            project: project
+                        )
+                    } catch {
+                        wtLog("[CommandCenter] Failed to create handoff: \(error)")
+                    }
                 }
             }
         }
