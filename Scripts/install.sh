@@ -9,7 +9,7 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="World Tree"
 INSTALL_PATH="/Applications/${APP_NAME}.app"
-SIGN_IDENTITY="4B1FEE2344F79AD30E99304B6454317CDEAB3878"
+SIGN_IDENTITY="B7DA7F20A87B9A13EDF094BE8243A06FC43CB2AD"
 LAUNCHD_LABEL="com.forgeandcode.world-tree"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
 UID_NUM=$(id -u)

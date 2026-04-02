@@ -17,6 +17,7 @@ struct CompassProjectCard: View {
     @State private var isShowingDeleteConfirm = false
     @State private var isShowingArchiveConfirm = false
     @State private var fileError: String?
+    @State private var qaStatus: String? // "pass", "fail", "running", nil
 
     var store = CompassStore.shared
 
@@ -63,6 +64,15 @@ struct CompassProjectCard: View {
                 isShowingRename = true
             }
             Button("Archive") { isShowingArchiveConfirm = true }
+            // ── QA Tools (project-specific) ──────────────────────────────
+            if compassState.project.lowercased().contains("archon") {
+                Divider()
+                Button("Run Archon QA Self-Test") {
+                    Task {
+                        await runArchonQA()
+                    }
+                }
+            }
             Divider()
             Button("Move to Trash", role: .destructive) { isShowingDeleteConfirm = true }
         }
@@ -302,6 +312,21 @@ struct CompassProjectCard: View {
                 }
             }
 
+            // QA Status badge (Archon-CAD only)
+            if compassState.project.lowercased().contains("archon"), let qa = qaStatus {
+                HStack(spacing: 4) {
+                    Image(systemName: qa == "pass" ? "checkmark.seal.fill" : qa == "running" ? "arrow.trianglehead.2.counterclockwise" : "xmark.seal.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(qa == "pass" ? .green : qa == "running" ? .orange : .red)
+                    Text(qa == "running" ? "QA Running…" : qa == "pass" ? "QA Passed" : "QA Failed")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(qa == "pass" ? .green : qa == "running" ? .orange : .red)
+                    if qa == "pass" || qa == "fail" {
+                        Text("9/9 entities").font(.system(size: 8)).foregroundStyle(.tertiary)
+                    }
+                }
+            }
+
             if !compassState.decisions.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 4) {
@@ -370,6 +395,31 @@ struct CompassProjectCard: View {
         case "planning": return .cyan
         case "exploring": return .indigo
         default: return .gray
+        }
+    }
+
+    // MARK: — Archon QA Integration
+
+    private func runArchonQA() async {
+        qaStatus = "running"
+        do {
+            let url = URL(string: "http://127.0.0.1:4863/tools/archon-qa")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 300 // 5 min for build + test
+            let (data, _) = try await URLSession.shared.data(for: request)
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let report = json["report"] as? [String: Any],
+               let pass = report["overall_pass"] as? Bool {
+                qaStatus = pass ? "pass" : "fail"
+            } else if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let error = json["error"] as? String {
+                qaStatus = "fail"
+                wtLog("Archon QA failed: \(error)")
+            }
+        } catch {
+            qaStatus = "fail"
+            wtLog("Archon QA request failed: \(error.localizedDescription)")
         }
     }
 }

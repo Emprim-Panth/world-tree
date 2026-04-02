@@ -25,11 +25,13 @@ struct ContentView: View {
                 .tag(NavigationPanel.commandCenter)
             Label("Tickets", systemImage: "checklist")
                 .tag(NavigationPanel.tickets)
+            Label("Scratchpad", systemImage: "note.text")
+                .tag(NavigationPanel.scratchpad)
             Label("Brain", systemImage: "brain")
                 .tag(NavigationPanel.brain)
             Label("Starfleet", systemImage: "person.2.badge.gearshape")
                 .tag(NavigationPanel.starfleet)
-            Label("Sessions", systemImage: "terminal.fill")
+            Label("Session Pool", systemImage: "square.stack.3d.up")
                 .tag(NavigationPanel.sessions)
             Divider()
             Label("Settings", systemImage: "gear")
@@ -40,33 +42,23 @@ struct ContentView: View {
 
     // MARK: — Detail
 
-    /// Sessions view is kept alive in a ZStack so PTY processes survive tab switches.
-    /// Other panels are created/destroyed normally (they're stateless dashboards).
     @ViewBuilder
     private var detailPanel: some View {
-        ZStack {
-            // Sessions layer — always in the hierarchy, hidden when not selected
-            SessionWorkspaceView()
-                .opacity(appState.navigationPanel == .sessions ? 1 : 0)
-                .allowsHitTesting(appState.navigationPanel == .sessions)
-
-            // Other panels — only created when selected
-            if appState.navigationPanel != .sessions {
-                switch appState.navigationPanel {
-                case .commandCenter:
-                    CommandCenterView()
-                case .tickets:
-                    AllTicketsView()
-                case .brain:
-                    UnifiedBrainView()
-                case .starfleet:
-                    StarfleetCommandView()
-                case .settings:
-                    SettingsView()
-                case .sessions:
-                    EmptyView() // handled above
-                }
-            }
+        switch appState.navigationPanel {
+        case .commandCenter:
+            CommandCenterView()
+        case .tickets:
+            AllTicketsView()
+        case .scratchpad:
+            ScratchpadView()
+        case .brain:
+            UnifiedBrainView()
+        case .starfleet:
+            StarfleetCommandView()
+        case .sessions:
+            SessionPoolView()
+        case .settings:
+            SettingsView()
         }
     }
 }

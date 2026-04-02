@@ -264,6 +264,34 @@ enum MigrationManager {
             migrationLog.info("v39: cleanup complete — broken triggers dropped, indexes fixed, FTS rebuilt")
         }
 
+        // ── v40: Scratchpad — shared agent state (Cortana Harness Phase 1) ──
+        migrator.registerMigration("v40_scratchpad") { db in
+            // cortana-core creates this table via ensureSchema() on first write.
+            // This migration ensures WorldTree can read it even if cortana-core
+            // hasn't written yet (CREATE IF NOT EXISTS is safe either way).
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS scratchpad (
+                    id TEXT PRIMARY KEY,
+                    project TEXT NOT NULL,
+                    topic TEXT NOT NULL,
+                    agent TEXT NOT NULL DEFAULT 'cortana',
+                    session_id TEXT NOT NULL DEFAULT '',
+                    entry_type TEXT NOT NULL CHECK(entry_type IN ('finding', 'decision', 'blocker', 'handoff')),
+                    content TEXT NOT NULL,
+                    promoted INTEGER NOT NULL DEFAULT 0,
+                    promoted_to TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    expires_at TEXT NOT NULL DEFAULT (datetime('now', '+7 days'))
+                )
+            """)
+
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_scratchpad_project ON scratchpad(project, created_at DESC)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_scratchpad_unpromoted ON scratchpad(promoted) WHERE promoted = 0")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_scratchpad_topic ON scratchpad(project, topic)")
+
+            migrationLog.info("v40: scratchpad table ready for Cortana Harness")
+        }
+
         try migrator.migrate(dbPool)
         migrationLog.info("Migration complete")
     }

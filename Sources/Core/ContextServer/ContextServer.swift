@@ -223,8 +223,18 @@ final class ContextServer {
         case ("POST", "alerts", nil):
             handlePostAlert(body: body, conn: conn)
 
+        case ("POST", "telegram", nil):
+            handlePostTelegram(body: body, conn: conn)
+
         case ("PATCH", "alerts", let alertId?):
             handlePatchAlertResolve(alertId: alertId, conn: conn)
+
+        // ── Project QA tools ──────────────────────────────────────────────
+        case ("POST", "tools", let toolName?) where toolName == "archon-qa":
+            handleArchonQA(conn: conn)
+
+        case ("GET", "tools", let toolName?) where toolName == "archon-qa":
+            handleGetArchonQAStatus(conn: conn)
 
         default:
             send(conn, status: 404, json: #"{"error":"not found"}"#)
@@ -482,6 +492,23 @@ final class ContextServer {
         }
     }
 
+    private func handlePostTelegram(body: String, conn: NWConnection) {
+        guard let data = body.data(using: .utf8),
+              var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let _ = json["type"] as? String,
+              let _ = json["message"] as? String else {
+            send(conn, status: 400, json: #"{"error":"missing type or message"}"#)
+            return
+        }
+        json["source"] = "telegram"
+        guard let tagged = try? JSONSerialization.data(withJSONObject: json),
+              let taggedBody = String(data: tagged, encoding: .utf8) else {
+            send(conn, status: 500, json: #"{"error":"serialization failed"}"#)
+            return
+        }
+        handlePostAlert(body: taggedBody, conn: conn)
+    }
+
     private func handlePatchAlertResolve(alertId: String, conn: NWConnection) {
         Task {
             do {
@@ -725,6 +752,78 @@ final class ContextServer {
     }
 
     /// Parse Content-Length from HTTP headers. Returns 0 if absent.
+    // MARK: — Archon QA Tool
+
+    private func handleArchonQA(conn: NWConnection) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let projectPath = "\(NSHomeDirectory())/Development/Archon-CAD"
+            let reportPath = "/tmp/archon-self-test-report.json"
+            let screenshotPath = "/tmp/archon-self-test.png"
+
+            // Clean previous
+            try? FileManager.default.removeItem(atPath: reportPath)
+            try? FileManager.default.removeItem(atPath: screenshotPath)
+
+            // Build
+            let buildProc = Process()
+            buildProc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            buildProc.arguments = ["-c", "source ~/.zshenv 2>/dev/null; cd \(projectPath) && cargo build -p cad-app 2>&1"]
+            let buildPipe = Pipe()
+            buildProc.standardOutput = buildPipe
+            buildProc.standardError = buildPipe
+            do {
+                try buildProc.run()
+                buildProc.waitUntilExit()
+            } catch {
+                self.send(conn, status: 500, json: #"{"error":"build launch failed: \#(error.localizedDescription)"}"#)
+                return
+            }
+            guard buildProc.terminationStatus == 0 else {
+                let output = String(data: buildPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                let escaped = output.suffix(500).replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: "\\n")
+                self.send(conn, status: 500, json: #"{"error":"build failed","output":"\#(escaped)"}"#)
+                return
+            }
+
+            // Run self-test
+            let testProc = Process()
+            testProc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            testProc.arguments = ["-c", "source ~/.zshenv 2>/dev/null; cd \(projectPath) && cargo run -p cad-app -- --self-test 2>&1"]
+            do {
+                try testProc.run()
+                testProc.waitUntilExit()
+            } catch {
+                self.send(conn, status: 500, json: #"{"error":"self-test launch failed"}"#)
+                return
+            }
+
+            // Read report
+            if let data = FileManager.default.contents(atPath: reportPath),
+               let json = String(data: data, encoding: .utf8) {
+                let hasScreenshot = FileManager.default.fileExists(atPath: screenshotPath)
+                self.send(conn, status: 200, json: """
+                {"status":"complete","exit_code":\(testProc.terminationStatus),"report":\(json),"screenshot":"\(hasScreenshot ? screenshotPath : "")"}
+                """)
+            } else {
+                self.send(conn, status: 200, json: #"{"status":"complete","exit_code":\#(testProc.terminationStatus),"error":"report not found"}"#)
+            }
+        }
+    }
+
+    private func handleGetArchonQAStatus(conn: NWConnection) {
+        let reportPath = "/tmp/archon-self-test-report.json"
+        if let data = FileManager.default.contents(atPath: reportPath),
+           let json = String(data: data, encoding: .utf8) {
+            let hasScreenshot = FileManager.default.fileExists(atPath: "/tmp/archon-self-test.png")
+            send(conn, status: 200, json: """
+            {"status":"available","report":\(json),"screenshot":"\(hasScreenshot ? "/tmp/archon-self-test.png" : "")"}
+            """)
+        } else {
+            send(conn, status: 200, json: #"{"status":"no_results","message":"No self-test results found. POST /tools/archon-qa to run."}"#)
+        }
+    }
+
     private func parseContentLength(_ raw: String) -> Int {
         let lines = raw.components(separatedBy: "\r\n")
         for line in lines {

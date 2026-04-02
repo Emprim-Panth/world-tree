@@ -3,6 +3,7 @@ import Foundation
 enum NavigationPanel: String, Hashable {
     case commandCenter
     case tickets
+    case scratchpad
     case brain
     case starfleet
     case sessions

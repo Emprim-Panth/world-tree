@@ -127,6 +127,12 @@ struct BriefingAlertsView: View {
 
             Spacer()
 
+            if alert.source == "telegram" {
+                Text("📱")
+                    .font(.system(size: 8))
+                    .help("From Telegram")
+            }
+
             Button {
                 briefingStore.resolveAlert(id: alert.id)
             } label: {
