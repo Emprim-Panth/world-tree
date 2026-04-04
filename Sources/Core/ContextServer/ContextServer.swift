@@ -229,6 +229,16 @@ final class ContextServer {
         case ("PATCH", "alerts", let alertId?):
             handlePatchAlertResolve(alertId: alertId, conn: conn)
 
+        // ── Harness Bridge — event channel ────────────────────────────────
+        case ("GET", "bridge", let second?) where second == "events":
+            handleGetBridgeEvents(path: path, conn: conn)
+
+        case ("POST", "bridge", let second?) where second == "command":
+            handlePostBridgeCommand(body: body, conn: conn)
+
+        case ("GET", "bridge", let second?) where second == "pool":
+            handleGetBridgePool(conn: conn)
+
         // ── Project QA tools ──────────────────────────────────────────────
         case ("POST", "tools", let toolName?) where toolName == "archon-qa":
             handleArchonQA(conn: conn)
@@ -821,6 +831,98 @@ final class ContextServer {
             """)
         } else {
             send(conn, status: 200, json: #"{"status":"no_results","message":"No self-test results found. POST /tools/archon-qa to run."}"#)
+        }
+    }
+
+    // ── Harness Bridge Handlers ───────────────────────────────────────────────
+
+    /// GET /bridge/events?since=2026-04-02T19:00:00Z
+    /// Returns bridge_events written by the harness since the given timestamp.
+    private func handleGetBridgeEvents(path: String, conn: NWConnection) {
+        let query = path.components(separatedBy: "?").dropFirst().first ?? ""
+        let params = query.components(separatedBy: "&").reduce(into: [String: String]()) { dict, pair in
+            let kv = pair.components(separatedBy: "=")
+            if kv.count == 2 { dict[kv[0]] = kv[1].removingPercentEncoding ?? kv[1] }
+        }
+        let since = params["since"] ?? "2000-01-01"
+
+        Task { @MainActor in
+            do {
+                let rows = try DatabaseManager.shared.read { db in
+                    try Row.fetchAll(db, sql: """
+                        SELECT id, event_type, payload, created_at
+                        FROM bridge_events
+                        WHERE created_at > ?
+                        ORDER BY created_at ASC
+                        LIMIT 200
+                        """, arguments: [since])
+                }
+                func esc(_ s: String) -> String {
+                    s.replacingOccurrences(of: "\\", with: "\\\\")
+                     .replacingOccurrences(of: "\"", with: "\\\"")
+                }
+                let items = rows.map { row -> String in
+                    let id = esc(row["id"] as? String ?? "")
+                    let type_ = esc(row["event_type"] as? String ?? "")
+                    let payload = row["payload"] as? String ?? "{}"
+                    let createdAt = esc(row["created_at"] as? String ?? "")
+                    return #"{"id":"\#(id)","type":"\#(type_)","payload":\#(payload),"created_at":"\#(createdAt)"}"#
+                }
+                let json = "[\(items.joined(separator: ","))]"
+                self.send(conn, status: 200, json: json)
+            } catch {
+                self.send(conn, status: 500, json: #"{"error":"db error"}"#)
+            }
+        }
+    }
+
+    /// POST /bridge/command — WorldTree sends a command for the harness to consume
+    private func handlePostBridgeCommand(body: String, conn: NWConnection) {
+        guard let data = body.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type_ = json["type"] as? String else {
+            send(conn, status: 400, json: #"{"error":"type required"}"#)
+            return
+        }
+        let payload = (try? JSONSerialization.data(withJSONObject: json["payload"] ?? [:]))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+
+        Task { @MainActor in
+            do {
+                let id = UUID().uuidString
+                try DatabaseManager.shared.write { db in
+                    try db.execute(sql: """
+                        INSERT INTO bridge_commands (id, command_type, payload, created_at)
+                        VALUES (?, ?, ?, datetime('now'))
+                        """, arguments: [id, type_, payload])
+                }
+                self.send(conn, status: 201, json: #"{"id":"\#(id)","ok":true}"#)
+            } catch {
+                self.send(conn, status: 500, json: #"{"error":"db error"}"#)
+            }
+        }
+    }
+
+    /// GET /bridge/pool — snapshot of harness session pool
+    private func handleGetBridgePool(conn: NWConnection) {
+        Task { @MainActor in
+            do {
+                // Most recent pool_status event contains the full pool JSON
+                let row = try DatabaseManager.shared.read { db in
+                    try Row.fetchOne(db, sql: """
+                        SELECT payload FROM bridge_events
+                        WHERE event_type = 'pool_status'
+                        ORDER BY created_at DESC LIMIT 1
+                        """)
+                }
+                if let row = row, let payload = row["payload"] as? String {
+                    self.send(conn, status: 200, json: payload)
+                } else {
+                    self.send(conn, status: 200, json: #"{"sessions":{}}"#)
+                }
+            } catch {
+                self.send(conn, status: 500, json: #"{"error":"db error"}"#)
+            }
         }
     }
 

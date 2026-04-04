@@ -383,8 +383,10 @@ final class BrainIndexer {
     func startWatching() {
         fileWatcher.stopAll()
         let dirs = [brainDir,
-                    brainDir.appendingPathComponent("knowledge"),
-                    brainDir.appendingPathComponent("identity"),
+                    brainDir.appendingPathComponent("CIC"),
+                    brainDir.appendingPathComponent("Galactica"),
+                    brainDir.appendingPathComponent("Pegasus"),
+                    brainDir.appendingPathComponent("Knowledge"),
                     brainDir.appendingPathComponent("projects")]
         var count = 0
         for dir in dirs {

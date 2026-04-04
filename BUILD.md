@@ -1,7 +1,7 @@
 # World Tree — Integration Guide
 
 > A native macOS conversation app with tree-structured branching timelines for AI sessions.
-> Built for Evan's Cortana setup. This guide covers what Friday and Jarvis need to adapt it for their own AI assistants and infrastructure.
+> Built for Evan's Cortana setup. This guide covers what Ryan and Joel need to adapt it for their own AI assistants and infrastructure.
 
 ---
 

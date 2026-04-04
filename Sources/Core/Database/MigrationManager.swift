@@ -292,6 +292,136 @@ enum MigrationManager {
             migrationLog.info("v40: scratchpad table ready for Cortana Harness")
         }
 
+        // ── v41: Bridge events — DB-backed harness ↔ WorldTree channel ──
+        migrator.registerMigration("v41_bridge_events") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS bridge_events (
+                    id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    payload TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_bridge_events_created ON bridge_events(created_at DESC)")
+
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS bridge_commands (
+                    id TEXT PRIMARY KEY,
+                    command_type TEXT NOT NULL,
+                    payload TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    consumed_at TEXT
+                )
+            """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_bridge_commands_consumed ON bridge_commands(consumed_at) WHERE consumed_at IS NULL")
+
+            migrationLog.info("v41: bridge_events + bridge_commands tables ready")
+        }
+
+        // ── v42: Crew Registry — canonical org chart, seeded from CONSTITUTION.md ──
+        // This is the single source of truth for crew hierarchy that all views and agents
+        // reference. Pre-seeded with all 24 crew members. Never modified by agents directly —
+        // only Evan can amend the roster (see ~/.cortana/CONSTITUTION.md §III–IV).
+        migrator.registerMigration("v42_crew_registry") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS crew_registry (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    department TEXT NOT NULL DEFAULT 'coding',
+                    tier INTEGER NOT NULL,
+                    model TEXT NOT NULL DEFAULT 'sonnet',
+                    game_dev_role TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_crew_dept ON crew_registry(department)")
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_crew_tier ON crew_registry(tier)")
+
+            // Pre-seed all crew. INSERT OR IGNORE — idempotent if re-run.
+            let crew: [(id: String, name: String, role: String, dept: String, tier: Int, model: String, gameDevRole: String?)] = [
+                // Tier 1 — CTO
+                ("cortana",   "Cortana",   "CTO",                              "command",  1, "sonnet", nil),
+                // Tier 2 — Department Head (both coding + game-dev)
+                ("picard",    "Picard",    "Mission Lead / Epic Architect",     "coding",   2, "sonnet", "Mission Lead"),
+                // Tier 3 — Leads (coding + dual game-dev role)
+                ("bashir",    "Bashir",    "Debugging Lead",                    "coding",   3, "sonnet", nil),
+                ("composer",  "Composer",  "Music / Audio Lead",               "game-dev", 3, "haiku",  "Music / Audio Lead"),
+                ("data",      "Data",      "UI/UX Designer",                   "coding",   3, "sonnet", "Art Director"),
+                ("dax",       "Dax",       "Integration / Knowledge Lead",     "coding",   3, "haiku",  nil),
+                ("garak",     "Garak",     "Adversarial QA",                   "coding",   3, "haiku",  nil),
+                ("geordi",    "Geordi",    "Software Architect",               "coding",   3, "sonnet", "Game Architect"),
+                ("kim",       "Kim",       "Documentation Lead",               "coding",   3, "haiku",  nil),
+                ("q",         "Q",         "Research / Exploration",           "coding",   3, "opus",   nil),
+                ("quark",     "Quark",     "Marketing / Revenue",              "coding",   3, "haiku",  "Game Marketing"),
+                ("scotty",    "Scotty",    "Build / DevOps",                   "coding",   3, "haiku",  "Game Build Systems"),
+                ("seven",     "Seven",     "Competitive Intelligence",         "coding",   3, "sonnet", nil),
+                ("spock",     "Spock",     "Strategist / Orchestrator",        "coding",   3, "sonnet", "Game Director / Design Strategist"),
+                ("torres",    "Torres",    "Performance Lead",                 "coding",   3, "sonnet", "Game Performance"),
+                ("troi",      "Troi",      "UX Research",                      "coding",   3, "haiku",  "Player Experience / UX"),
+                ("uhura",     "Uhura",     "Copy / Docs",                      "coding",   3, "haiku",  "Narrative Designer"),
+                ("worf",      "Worf",      "QA Lead",                          "coding",   3, "sonnet", "Game QA"),
+                // Tier 4 — Workers
+                ("nog",       "Nog",       "Data layer, SwiftData, CloudKit",  "coding",   4, "haiku",  "Game data, save systems, analytics"),
+                ("obrien",    "O'Brien",   "CI/CD pipeline, release, App Store","coding",  4, "haiku",  nil),
+                ("odo",       "Odo",       "Security, audit",                  "coding",   4, "haiku",  nil),
+                ("paris",     "Paris",     "Feature implementation",           "coding",   4, "haiku",  "Level Design"),
+                ("sato",      "Sato",      "Localization, accessibility",      "coding",   4, "haiku",  "Localization, platform compliance"),
+                ("zimmerman", "Zimmerman", "Diagnostics, crash analysis",      "coding",   4, "haiku",  nil),
+            ]
+
+            for c in crew {
+                try db.execute(sql: """
+                    INSERT OR IGNORE INTO crew_registry (id, name, role, department, tier, model, game_dev_role)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [c.id, c.name, c.role, c.dept, c.tier, c.model, c.gameDevRole])
+            }
+
+            migrationLog.info("v42: crew_registry seeded with \(crew.count) crew members")
+        }
+
+        // v43_goal_engine — project goals, gap analysis, and project context for Brain Goal Engine.
+        // Stores in compass.db alongside Compass project/ticket data.
+        migrator.registerMigration("v43_goal_engine") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS project_goals (
+                    id TEXT PRIMARY KEY,
+                    project TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'Active'
+                        CHECK(status IN ('Active', 'Achieved', 'Superseded')),
+                    file_path TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_project_goals_project ON project_goals(project, status)")
+
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS goal_gaps (
+                    id TEXT PRIMARY KEY,
+                    goal_id TEXT NOT NULL REFERENCES project_goals(id) ON DELETE CASCADE,
+                    description TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open'
+                        CHECK(status IN ('open', 'in_progress', 'closed')),
+                    tickets TEXT,
+                    notes TEXT
+                )
+            """)
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_goal_gaps_goal ON goal_gaps(goal_id, status)")
+
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS project_context (
+                    project TEXT PRIMARY KEY,
+                    fleet TEXT,
+                    lead TEXT,
+                    active_goal_id TEXT REFERENCES project_goals(id),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
+            migrationLog.info("v43: project_goals, goal_gaps, project_context tables created")
+        }
+
         try migrator.migrate(dbPool)
         migrationLog.info("Migration complete")
     }

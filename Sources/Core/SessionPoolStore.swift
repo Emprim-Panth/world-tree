@@ -1,10 +1,10 @@
 import Foundation
 import os.log
 
-private let poolLog = Logger(subsystem: "com.forgeandcode.WorldTree", category: "SessionPool")
+private let poolLog = Logger(subsystem: "com.forgeandcode.WorldTree", category: "Dispatcher")
 
-/// Tracks Harness session pool state by watching pool-state.json.
-/// Provides observable session list for the Session Pool View.
+/// Tracks Harness dispatcher + interactive session state by watching JSON files.
+/// Provides observable state for the Dispatcher View.
 @MainActor
 @Observable
 final class SessionPoolStore {
@@ -12,28 +12,36 @@ final class SessionPoolStore {
 
     // MARK: — Observable State
 
-    var sessions: [PoolSession] = []
-    var total: Int = 0
-    var ready: Int = 0
-    var busy: Int = 0
-    var warming: Int = 0
-    var maxSize: Int = 3
-    var warmTarget: Int = 2
+    /// Headless tasks running via `claude -p`
+    var runningTasks: [DispatcherTask] = []
+    /// Tasks waiting for capacity
+    var queuedCount: Int = 0
+    /// Recently completed tasks
+    var recentCompleted: [CompletedTask] = []
+    /// Interactive tmux sessions (for Evan's direct use)
+    var interactiveSessions: [InteractiveSession] = []
+
+    var maxConcurrent: Int = 3
     var lastUpdate: Date?
     var isHarnessRunning: Bool = false
+
+    // Convenience
+    var runningCount: Int { runningTasks.count }
+    var completedCount: Int { recentCompleted.filter { $0.status == "completed" }.count }
+    var failedCount: Int { recentCompleted.filter { $0.status == "failed" }.count }
 
     // MARK: — Internal
 
     private var watcher: DispatchSourceFileSystemObject?
     private var pollTimer: Timer?
-    private let stateFilePath: String
-    private let healthFilePath: String
+    private let dispatcherStatePath: String
+    private let interactiveStatePath: String
     private let pidFilePath: String
 
     private init() {
         let cortanaDir = NSHomeDirectory() + "/.cortana/harness"
-        stateFilePath = cortanaDir + "/pool-state.json"
-        healthFilePath = cortanaDir + "/.health"
+        dispatcherStatePath = cortanaDir + "/dispatcher-state.json"
+        interactiveStatePath = cortanaDir + "/interactive-sessions.json"
         pidFilePath = cortanaDir + "/harness.pid"
     }
 
@@ -42,7 +50,6 @@ final class SessionPoolStore {
     func start() {
         refresh()
         startWatching()
-        // Poll every 10 seconds as backup (file watcher may miss changes)
         pollTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -59,7 +66,9 @@ final class SessionPoolStore {
 
     func refresh() {
         checkHarnessRunning()
-        loadPoolState()
+        loadDispatcherState()
+        loadInteractiveState()
+        lastUpdate = Date()
     }
 
     private func checkHarnessRunning() {
@@ -69,55 +78,91 @@ final class SessionPoolStore {
             isHarnessRunning = false
             return
         }
-        // kill(pid, 0) returns 0 if process exists
         isHarnessRunning = kill(pid, 0) == 0
     }
 
-    private func loadPoolState() {
-        guard FileManager.default.fileExists(atPath: stateFilePath),
-              let data = try? Data(contentsOf: URL(fileURLWithPath: stateFilePath)),
+    private func loadDispatcherState() {
+        guard FileManager.default.fileExists(atPath: dispatcherStatePath),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: dispatcherStatePath)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            sessions = []
+            runningTasks = []
+            queuedCount = 0
+            recentCompleted = []
             return
         }
 
         let config = json["config"] as? [String: Any]
-        maxSize = config?["maxSize"] as? Int ?? 3
-        warmTarget = config?["warmSize"] as? Int ?? 2
+        maxConcurrent = config?["maxConcurrent"] as? Int ?? 3
 
-        guard let sessionsDict = json["sessions"] as? [String: [String: Any]] else {
-            sessions = []
+        // Running tasks
+        if let running = json["running"] as? [[String: Any]] {
+            runningTasks = running.map { info in
+                DispatcherTask(
+                    id: info["id"] as? String ?? "",
+                    status: info["status"] as? String ?? "running",
+                    agent: info["agent"] as? String,
+                    agentRole: info["agentRole"] as? String,
+                    project: info["project"] as? String ?? "",
+                    model: info["model"] as? String ?? "sonnet",
+                    startedAt: info["startedAt"] as? String,
+                    pid: info["pid"] as? Int
+                )
+            }
+        } else {
+            runningTasks = []
+        }
+
+        // Queued
+        if let queued = json["queued"] as? [[String: Any]] {
+            queuedCount = queued.count
+        } else {
+            queuedCount = 0
+        }
+
+        // Recent completed
+        if let completed = json["recentCompleted"] as? [[String: Any]] {
+            recentCompleted = completed.map { info in
+                CompletedTask(
+                    id: info["id"] as? String ?? "",
+                    status: info["status"] as? String ?? "completed",
+                    agent: info["agent"] as? String,
+                    project: info["project"] as? String ?? "",
+                    exitCode: info["exitCode"] as? Int,
+                    costUsd: info["costUsd"] as? Double,
+                    startedAt: info["startedAt"] as? String,
+                    completedAt: info["completedAt"] as? String,
+                    toolCount: info["toolCount"] as? Int ?? 0
+                )
+            }
+        } else {
+            recentCompleted = []
+        }
+    }
+
+    private func loadInteractiveState() {
+        guard FileManager.default.fileExists(atPath: interactiveStatePath),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: interactiveStatePath)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sessions = json["sessions"] as? [String: [String: Any]] else {
+            interactiveSessions = []
             return
         }
 
-        var parsed: [PoolSession] = []
-        for (id, info) in sessionsDict {
-            parsed.append(PoolSession(
+        interactiveSessions = sessions.map { (id, info) in
+            InteractiveSession(
                 id: id,
                 tmuxName: info["tmuxName"] as? String ?? "",
-                status: info["status"] as? String ?? "dead",
                 project: info["project"] as? String,
-                taskId: info["taskId"] as? String,
-                pid: info["pid"] as? Int,
-                createdAt: info["createdAt"] as? String,
-                busySince: info["busySince"] as? String,
-                lastActivity: info["lastActivity"] as? String
-            ))
-        }
-
-        sessions = parsed.sorted { ($0.createdAt ?? "") < ($1.createdAt ?? "") }
-        total = sessions.count
-        ready = sessions.filter { $0.status == "ready" }.count
-        busy = sessions.filter { $0.status == "busy" }.count
-        warming = sessions.filter { $0.status == "warming" }.count
-        lastUpdate = Date()
+                model: info["model"] as? String ?? "sonnet",
+                createdAt: info["createdAt"] as? String
+            )
+        }.sorted { ($0.createdAt ?? "") < ($1.createdAt ?? "") }
     }
 
     // MARK: — File Watching
 
     private func startWatching() {
-        // Watch the harness directory for changes to pool-state.json
-        let dirPath = (stateFilePath as NSString).deletingLastPathComponent
+        let dirPath = (dispatcherStatePath as NSString).deletingLastPathComponent
         let fd = open(dirPath, O_EVTONLY)
         guard fd >= 0 else { return }
 
@@ -140,7 +185,6 @@ final class SessionPoolStore {
         let socketPath = NSHomeDirectory() + "/.cortana/harness/harness.sock"
         guard FileManager.default.fileExists(atPath: socketPath) else { return nil }
 
-        // Use a simple synchronous Unix socket call
         return await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
                 let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -169,7 +213,6 @@ final class SessionPoolStore {
                     return
                 }
 
-                // Send command
                 do {
                     let jsonData = try JSONSerialization.data(withJSONObject: command)
                     _ = jsonData.withUnsafeBytes { buf in
@@ -180,7 +223,6 @@ final class SessionPoolStore {
                     return
                 }
 
-                // Read response
                 var response = Data()
                 var buffer = [UInt8](repeating: 0, count: 8192)
                 while true {
@@ -195,50 +237,79 @@ final class SessionPoolStore {
         }
     }
 
-    /// Send text to a specific session via harness.
-    func sendToSession(sessionId: String, text: String) async -> Bool {
-        let result = await sendCommand([
-            "action": "send",
-            "session_id": sessionId,
-            "text": text
-        ])
-        return result?["ok"] as? Bool ?? false
-    }
-
-    /// Request a session for a project.
-    func requestSession(project: String?) async -> [String: Any]? {
-        var cmd: [String: Any] = ["action": "request"]
-        if let project { cmd["project"] = project }
+    /// Dispatch a task headlessly.
+    func dispatchTask(message: String, project: String, model: String? = nil) async -> [String: Any]? {
+        var cmd: [String: Any] = ["action": "dispatch", "message": message, "project": project]
+        if let model { cmd["model"] = model }
         return await sendCommand(cmd)
     }
 
-    /// Release a session back to pool.
+    /// Cancel a running or queued task.
+    func cancelTask(taskId: String) async -> Bool {
+        let result = await sendCommand(["action": "cancel", "task_id": taskId])
+        refresh()
+        return result?["ok"] as? Bool ?? false
+    }
+
+    /// Request an interactive session for a project.
+    func requestSession(project: String?, model: String? = nil) async -> [String: Any]? {
+        var cmd: [String: Any] = ["action": "request"]
+        if let project { cmd["project"] = project }
+        if let model { cmd["model"] = model }
+        return await sendCommand(cmd)
+    }
+
+    /// Release an interactive session.
     func releaseSession(sessionId: String) async {
         _ = await sendCommand(["action": "release", "session_id": sessionId])
         refresh()
     }
 }
 
-// MARK: — Model
+// MARK: — Models
 
-struct PoolSession: Identifiable, Hashable {
+struct DispatcherTask: Identifiable, Hashable {
     let id: String
-    let tmuxName: String
     let status: String
-    let project: String?
-    let taskId: String?
+    let agent: String?
+    let agentRole: String?
+    let project: String
+    let model: String
+    let startedAt: String?
     let pid: Int?
-    let createdAt: String?
-    let busySince: String?
-    let lastActivity: String?
+
+    var displayName: String {
+        if let agent { return "\(agent) (\(agentRole ?? "agent"))" }
+        return "Direct task"
+    }
 
     var statusColor: String {
         switch status {
-        case "ready": return "green"
-        case "busy": return "orange"
-        case "warming": return "cyan"
-        case "dead": return "red"
+        case "running": return "orange"
+        case "queued": return "cyan"
         default: return "gray"
         }
     }
+}
+
+struct CompletedTask: Identifiable, Hashable {
+    let id: String
+    let status: String
+    let agent: String?
+    let project: String
+    let exitCode: Int?
+    let costUsd: Double?
+    let startedAt: String?
+    let completedAt: String?
+    let toolCount: Int
+
+    var isSuccess: Bool { status == "completed" }
+}
+
+struct InteractiveSession: Identifiable, Hashable {
+    let id: String
+    let tmuxName: String
+    let project: String?
+    let model: String
+    let createdAt: String?
 }

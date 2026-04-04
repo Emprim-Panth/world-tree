@@ -1,29 +1,32 @@
 import SwiftUI
 
-/// Session Pool dashboard — replaces the old terminal-embedding SessionWorkspaceView.
-/// Shows harness session rooms, their status, and provides a direct channel
-/// to send messages into running sessions.
+/// Dispatcher dashboard — shows headless tasks, interactive sessions, and queue status.
 struct SessionPoolView: View {
     @State private var store = SessionPoolStore.shared
-    @State private var selectedSession: PoolSession?
-    @State private var messageText = ""
-    @State private var sendingMessage = false
+    @State private var selectedTab = 0
 
     var body: some View {
         VStack(spacing: 0) {
-            poolHeader
+            dispatcherHeader
             Divider()
 
             if !store.isHarnessRunning {
                 harnessOfflineView
-            } else if store.sessions.isEmpty {
-                emptyPoolView
             } else {
-                HSplitView {
-                    sessionList
-                        .frame(minWidth: 300)
-                    sessionDetail
-                        .frame(minWidth: 400)
+                Picker("", selection: $selectedTab) {
+                    Text("Tasks (\(store.runningCount))").tag(0)
+                    Text("Sessions (\(store.interactiveSessions.count))").tag(1)
+                    Text("History (\(store.recentCompleted.count))").tag(2)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+
+                switch selectedTab {
+                case 0: taskListView
+                case 1: interactiveSessionsView
+                case 2: completedListView
+                default: EmptyView()
                 }
             }
         }
@@ -33,15 +36,20 @@ struct SessionPoolView: View {
 
     // MARK: — Header
 
-    private var poolHeader: some View {
+    private var dispatcherHeader: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Session Pool")
+                Text("Dispatcher")
                     .font(.title2.bold())
                 HStack(spacing: 12) {
-                    poolBadge("\(store.ready) ready", color: .green)
-                    poolBadge("\(store.busy) busy", color: .orange)
-                    poolBadge("\(store.total)/\(store.maxSize) total", color: .secondary)
+                    statusBadge("\(store.runningCount) running", color: .orange)
+                    if store.queuedCount > 0 {
+                        statusBadge("\(store.queuedCount) queued", color: Palette.accent)
+                    }
+                    statusBadge("\(store.completedCount) done", color: Palette.success)
+                    if store.failedCount > 0 {
+                        statusBadge("\(store.failedCount) failed", color: Palette.error)
+                    }
                 }
             }
 
@@ -66,7 +74,7 @@ struct SessionPoolView: View {
         .padding()
     }
 
-    private func poolBadge(_ text: String, color: Color) -> some View {
+    private func statusBadge(_ text: String, color: Color) -> some View {
         Text(text)
             .font(.caption.monospaced())
             .padding(.horizontal, 8)
@@ -76,26 +84,111 @@ struct SessionPoolView: View {
             .clipShape(Capsule())
     }
 
-    // MARK: — Session List
+    // MARK: — Running Tasks
 
-    private var sessionList: some View {
-        List(store.sessions, selection: $selectedSession) { session in
-            sessionCard(session)
-                .tag(session)
+    @ViewBuilder
+    private var taskListView: some View {
+        if store.runningTasks.isEmpty {
+            VStack(spacing: 16) {
+                Image(systemName: "bolt.circle")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.quaternary)
+                Text("No tasks running")
+                    .font(.title3)
+                Text("Dispatch tasks via socket, queue, or WorldTree")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List(store.runningTasks) { task in
+                taskRow(task)
+            }
+            .listStyle(.inset)
         }
-        .listStyle(.inset)
     }
 
-    private func sessionCard(_ session: PoolSession) -> some View {
+    private func taskRow(_ task: DispatcherTask) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                statusIndicator(session.status)
+                Circle()
+                    .fill(.orange)
+                    .frame(width: 10, height: 10)
+                Text(task.displayName)
+                    .font(.headline.monospaced())
+                Spacer()
+                Text(task.model.uppercased())
+                    .font(.caption2.bold())
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Label(task.project, systemImage: "folder.fill")
+                    .font(.caption)
+                    .foregroundStyle(Palette.accent)
+
+                Spacer()
+
+                if let pid = task.pid {
+                    Text("PID \(pid)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            if let startedAt = task.startedAt {
+                Text("Running for \(timeSince(startedAt))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
+        .contextMenu {
+            Button("Cancel Task") {
+                Task { await store.cancelTask(taskId: task.id) }
+            }
+        }
+    }
+
+    // MARK: — Interactive Sessions
+
+    @ViewBuilder
+    private var interactiveSessionsView: some View {
+        if store.interactiveSessions.isEmpty {
+            VStack(spacing: 16) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.quaternary)
+                Text("No interactive sessions")
+                    .font(.title3)
+                Text("Request a session from a project card")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List(store.interactiveSessions) { session in
+                interactiveRow(session)
+            }
+            .listStyle(.inset)
+        }
+    }
+
+    private func interactiveRow(_ session: InteractiveSession) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Circle()
+                    .fill(Palette.success)
+                    .frame(width: 10, height: 10)
                 Text(session.id)
                     .font(.headline.monospaced())
                 Spacer()
-                Text(session.status.uppercased())
-                    .font(.caption2.bold())
-                    .foregroundStyle(colorForStatus(session.status))
+                Button("Open in Terminal") {
+                    openInTerminal(session.tmuxName)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Palette.accent)
+                .controlSize(.small)
             }
 
             HStack {
@@ -103,117 +196,86 @@ struct SessionPoolView: View {
                     Label(project, systemImage: "folder.fill")
                         .font(.caption)
                         .foregroundStyle(Palette.accent)
-                } else {
-                    Label("idle", systemImage: "moon.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
                 Spacer()
+
+                Text(session.model)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
 
                 Text("tmux: \(session.tmuxName)")
                     .font(.caption2.monospaced())
                     .foregroundStyle(.tertiary)
             }
+        }
+        .padding(.vertical, 4)
+    }
 
-            if let busySince = session.busySince {
-                let duration = timeSince(busySince)
-                Text("Busy for \(duration)")
-                    .font(.caption2)
+    // MARK: — Completed History
+
+    @ViewBuilder
+    private var completedListView: some View {
+        if store.recentCompleted.isEmpty {
+            VStack(spacing: 16) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.quaternary)
+                Text("No recent tasks")
+                    .font(.title3)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List(store.recentCompleted.reversed()) { task in
+                completedRow(task)
+            }
+            .listStyle(.inset)
+        }
+    }
+
+    private func completedRow(_ task: CompletedTask) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Circle()
+                    .fill(task.isSuccess ? Palette.success : Palette.error)
+                    .frame(width: 10, height: 10)
+                Text(task.agent ?? "Direct")
+                    .font(.headline.monospaced())
+                Spacer()
+                if let cost = task.costUsd {
+                    Text("$\(cost, specifier: "%.4f")")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+                Text(task.status.uppercased())
+                    .font(.caption2.bold())
+                    .foregroundStyle(task.isSuccess ? Palette.success : Palette.error)
+            }
+
+            HStack {
+                Label(task.project, systemImage: "folder.fill")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Spacer()
+
+                if task.toolCount > 0 {
+                    Text("\(task.toolCount) tools")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                if let exitCode = task.exitCode {
+                    Text("exit \(exitCode)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
         .padding(.vertical, 4)
     }
 
-    // MARK: — Session Detail
-
-    @ViewBuilder
-    private var sessionDetail: some View {
-        if let session = selectedSession {
-            VStack(spacing: 0) {
-                // Session info header
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        statusIndicator(session.status)
-                        Text("Session \(session.id)")
-                            .font(.title3.bold())
-                        Spacer()
-
-                        Button("Open in Terminal") {
-                            openInTerminal(session.tmuxName)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(Palette.accent)
-                    }
-
-                    Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 4) {
-                        GridRow {
-                            Text("tmux").foregroundStyle(.secondary).font(.caption)
-                            Text(session.tmuxName).font(.caption.monospaced())
-                        }
-                        if let pid = session.pid {
-                            GridRow {
-                                Text("PID").foregroundStyle(.secondary).font(.caption)
-                                Text("\(pid)").font(.caption.monospaced())
-                            }
-                        }
-                        if let project = session.project {
-                            GridRow {
-                                Text("Project").foregroundStyle(.secondary).font(.caption)
-                                Text(project).font(.caption)
-                            }
-                        }
-                        if let taskId = session.taskId {
-                            GridRow {
-                                Text("Task").foregroundStyle(.secondary).font(.caption)
-                                Text(taskId).font(.caption.monospaced())
-                            }
-                        }
-                    }
-                }
-                .padding()
-
-                Divider()
-
-                // Direct channel
-                Spacer()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Direct Channel")
-                        .font(.headline)
-                    Text("Send a message to this session's Claude instance")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    HStack {
-                        TextField("Type a message...", text: $messageText)
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit { sendMessage(session) }
-
-                        Button(action: { sendMessage(session) }) {
-                            Image(systemName: "paperplane.fill")
-                        }
-                        .disabled(messageText.isEmpty || sendingMessage)
-                        .buttonStyle(.borderedProminent)
-                        .tint(Palette.accent)
-                    }
-                }
-                .padding()
-            }
-        } else {
-            VStack {
-                Image(systemName: "terminal.fill")
-                    .font(.system(size: 48))
-                    .foregroundStyle(.quaternary)
-                Text("Select a session")
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-
-    // MARK: — Empty/Offline States
+    // MARK: — Offline State
 
     private var harnessOfflineView: some View {
         VStack(spacing: 16) {
@@ -225,53 +287,19 @@ struct SessionPoolView: View {
             Text("Start it with: cortana-harness")
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
-            Text("Or: launchctl bootstrap gui/$(id -u) ~/.cortana/harness/com.cortana.harness.plist")
-                .font(.caption2.monospaced())
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var emptyPoolView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "square.stack.3d.up")
-                .font(.system(size: 48))
-                .foregroundStyle(.quaternary)
-            Text("No sessions in pool")
-                .font(.title3)
-            Text("The harness will warm up sessions automatically")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: — Actions
 
-    private func sendMessage(_ session: PoolSession) {
-        guard !messageText.isEmpty else { return }
-        let text = messageText
-        messageText = ""
-        sendingMessage = true
-
-        Task {
-            let success = await store.sendToSession(sessionId: session.id, text: text)
-            sendingMessage = false
-            if !success {
-                wtLog("[SessionPool] Failed to send message to session \(session.id)")
-            }
-        }
-    }
-
     private func openInTerminal(_ tmuxName: String) {
-        // Launch Ghostty with tmux attach as the command — one click, you're in
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/ghostty")
         task.arguments = ["-e", "/opt/homebrew/bin/tmux", "attach-session", "-t", tmuxName]
         do {
             try task.run()
         } catch {
-            // Fallback: open Ghostty and let user attach manually
             if let ghosttyURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.mitchellh.ghostty") {
                 NSWorkspace.shared.open(ghosttyURL)
             }
@@ -279,22 +307,6 @@ struct SessionPoolView: View {
     }
 
     // MARK: — Helpers
-
-    private func statusIndicator(_ status: String) -> some View {
-        Circle()
-            .fill(colorForStatus(status))
-            .frame(width: 10, height: 10)
-    }
-
-    private func colorForStatus(_ status: String) -> Color {
-        switch status {
-        case "ready": return Palette.success
-        case "busy": return .orange
-        case "warming": return Palette.accent
-        case "dead": return Palette.error
-        default: return Palette.neutral
-        }
-    }
 
     private func timeSince(_ isoString: String) -> String {
         let formatter = DateFormatter()

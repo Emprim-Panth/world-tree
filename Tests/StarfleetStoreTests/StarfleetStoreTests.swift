@@ -31,32 +31,62 @@ final class StarfleetStoreTests: XCTestCase {
         try await super.tearDown()
     }
 
-    // MARK: - Roster
+    // MARK: - Crew Registry (DB-driven — seeded by v42 migration)
 
-    func testRosterHasExpectedCount() {
-        XCTAssertEqual(StarfleetStore.roster.count, 12, "Roster should have 12 agents")
+    func testRegistryLoadsFromDB() {
+        let store = StarfleetStore.shared
+        store.refresh()
+        XCTAssertFalse(store.crewRegistry.isEmpty, "crewRegistry should be populated from crew_registry table")
     }
 
-    func testRosterContainsAllExpectedNames() {
-        let names = StarfleetStore.roster.map(\.name)
-        let expected = ["Cortana", "Geordi", "Torres", "Data", "Worf", "Spock",
-                        "Scotty", "Friday", "Chief", "Keyes", "Roland", "Halsey"]
-        for name in expected {
-            XCTAssertTrue(names.contains(name), "Roster should contain \(name)")
+    func testRegistryContainsFullHierarchy() {
+        let store = StarfleetStore.shared
+        store.refresh()
+        let names = store.crewRegistry.map(\.name)
+
+        // Command tier
+        XCTAssertTrue(names.contains("Cortana"), "CTO must be present")
+        // Department Head
+        XCTAssertTrue(names.contains("Picard"), "Dept Head must be present")
+        // Key leads
+        for lead in ["Geordi", "Torres", "Data", "Worf", "Spock", "Scotty"] {
+            XCTAssertTrue(names.contains(lead), "\(lead) (lead) must be present")
         }
     }
 
-    func testRosterEntriesHaveSpecializations() {
-        for member in StarfleetStore.roster {
-            XCTAssertFalse(member.specialization.isEmpty,
-                           "\(member.name) should have a specialization")
-        }
+    func testRegistryTierHierarchyIsCorrect() {
+        let store = StarfleetStore.shared
+        store.refresh()
+
+        let cortana = store.crewRegistry.first { $0.name == "Cortana" }
+        XCTAssertEqual(cortana?.tier, 1, "Cortana should be Tier 1")
+
+        let picard = store.crewRegistry.first { $0.name == "Picard" }
+        XCTAssertEqual(picard?.tier, 2, "Picard should be Tier 2 (Dept Head)")
+
+        let geordi = store.crewRegistry.first { $0.name == "Geordi" }
+        XCTAssertEqual(geordi?.tier, 3, "Geordi should be Tier 3 (Lead)")
     }
 
-    func testRosterEntriesHaveIcons() {
-        for member in StarfleetStore.roster {
-            XCTAssertFalse(member.icon.isEmpty,
-                           "\(member.name) should have an icon")
+    func testRegistryGameDevRolesAssigned() {
+        let store = StarfleetStore.shared
+        store.refresh()
+
+        let picard = store.crewRegistry.first { $0.name == "Picard" }
+        XCTAssertNotNil(picard?.gameDevRole, "Picard should have a game dev role")
+
+        let spock = store.crewRegistry.first { $0.name == "Spock" }
+        XCTAssertNotNil(spock?.gameDevRole, "Spock should have a game dev role")
+
+        let composer = store.crewRegistry.first { $0.name == "Composer" }
+        XCTAssertEqual(composer?.department, "game-dev", "Composer is game-dev dept")
+    }
+
+    func testRegistryIconsResolvable() {
+        let store = StarfleetStore.shared
+        store.refresh()
+        for member in store.crewRegistry {
+            XCTAssertFalse(member.icon.isEmpty, "\(member.name) should have an icon")
         }
     }
 
@@ -103,11 +133,8 @@ final class StarfleetStoreTests: XCTestCase {
         let store = StarfleetStore.shared
         store.refresh()
 
-        // All roster members should appear with 0 events
-        XCTAssertEqual(store.crewActivity.count, StarfleetStore.roster.count,
-                       "All roster members should appear even with no activity")
-
-        for member in StarfleetStore.roster {
+        // All registry members should appear in crewActivity with 0 events
+        for member in store.crewRegistry {
             let crew = store.crewActivity[member.name]
             XCTAssertNotNil(crew, "\(member.name) should be in crewActivity")
             XCTAssertEqual(crew?.eventCount, 0, "\(member.name) should have 0 events")
@@ -139,17 +166,17 @@ final class StarfleetStoreTests: XCTestCase {
         XCTAssertEqual(geordi?.lastProject, "BIMManager")
     }
 
-    func testRefreshIncludesNonRosterAgents() throws {
+    func testRefreshIncludesNonRegistryAgents() throws {
         try insertActivity(agent: "CustomAgent", eventType: "start", project: "TestProj")
 
         let store = StarfleetStore.shared
         store.refresh()
 
         let custom = store.crewActivity["CustomAgent"]
-        XCTAssertNotNil(custom, "Non-roster agents with activity should appear")
+        XCTAssertNotNil(custom, "Agents with activity but no registry entry should appear")
         XCTAssertEqual(custom?.eventCount, 1)
-        XCTAssertEqual(custom?.specialization, "General",
-                       "Non-roster agent should get 'General' specialization")
+        XCTAssertEqual(custom?.role, "General",
+                       "Unknown agent should get 'General' role")
     }
 
     // MARK: - Recent Events
@@ -188,9 +215,12 @@ final class StarfleetStoreTests: XCTestCase {
 
     private func makeCrewMember(lastEvent: String?) -> StarfleetStore.CrewMember {
         StarfleetStore.CrewMember(
-            id: "TestAgent",
+            id: "testagent",
             name: "TestAgent",
-            specialization: "Testing",
+            role: "Testing",
+            gameDevRole: nil,
+            department: "coding",
+            tier: 4,
             icon: "testtube.2",
             lastEvent: lastEvent,
             lastProject: nil,

@@ -25,6 +25,8 @@ struct ContentView: View {
                 .tag(NavigationPanel.commandCenter)
             Label("Tickets", systemImage: "checklist")
                 .tag(NavigationPanel.tickets)
+            Label("The Forge", systemImage: "hammer.fill")
+                .tag(NavigationPanel.forge)
             Label("Scratchpad", systemImage: "note.text")
                 .tag(NavigationPanel.scratchpad)
             Label("Brain", systemImage: "brain")
@@ -49,6 +51,8 @@ struct ContentView: View {
             CommandCenterView()
         case .tickets:
             AllTicketsView()
+        case .forge:
+            ForgeView()
         case .scratchpad:
             ScratchpadView()
         case .brain:
